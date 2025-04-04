@@ -14,9 +14,9 @@ import logging
 import numpy as np
 import psutil
 from ctypes import windll
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 from src.audio_processing import AudioRecorder, AudioProcessingError
-from src.file_manager import FileManager, ANDROID_ENABLED
+from src.file_manager import FileManager
 from src.speaker_diarization import SpeakerDiarization
 from src.subtitle_generator import generate_srt
 from src.transcription import transcribe_audio_with_progress
@@ -25,15 +25,6 @@ from src.logging_setup import setup_app_logging
 from tests.conftest import generate_test_audio
 
 logger = setup_app_logging()
-
-@pytest.mark.timeout(30)
-def pytest_configure(config):
-    config.addinivalue_line("markers", "android: mark test as Android-only")
-
-def pytest_runtest_setup(item):
-    android_marker = item.get_closest_marker("android")
-    if android_marker and not FileManager.is_mobile():
-        pytest.skip("Requires Android environment")
 
 class AsyncTestCase(unittest.IsolatedAsyncioTestCase):
     @pytest.mark.timeout(30)
@@ -49,13 +40,12 @@ class AsyncTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await super().asyncTearDown()
         temp_dir = FileManager.get_data_path("temp")
-        if sys.platform == "win32":
-            for proc in psutil.process_iter(["pid", "name"]):
-                try:
-                    if "ffmpeg" in proc.info["name"].lower():
-                        proc.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                if "ffmpeg" in proc.info["name"].lower():
+                    proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
             await asyncio.sleep(1)
         cutoff = time.time() - 300 # only remove files older than current test   # 5min. safety window
         try:
@@ -73,18 +63,17 @@ class AsyncTestCase(unittest.IsolatedAsyncioTestCase):
 class TestAudioRecorder:
     def cleanup_audio_processes(self):
     # Ensure all audio procs. are terminated
-        if sys.platform == "win32":
-            try:
-                # Kill ffmpeg procs.
-                for proc in psutil.process_iter(["pid", "name"]):
-                    try:
-                        if any(x in proc.name().lower() for x in ["ffmpeg", "ffprobe"]):
-                            logger.debug(f"Terminating audio process {proc.pid}")
-                            proc.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue
-            except Exception as e:
-                logger.debug(f"Audio process cleanup error: {e}")
+        try:
+            # Kill ffmpeg procs.
+            for proc in psutil.process_iter(["pid", "name"]):
+                try:
+                    if any(x in proc.name().lower() for x in ["ffmpeg", "ffprobe"]):
+                        logger.debug(f"Terminating audio process {proc.pid}")
+                        proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception as e:
+            logger.debug(f"Audio process cleanup error: {e}")
 
     @pytest.fixture(scope="function", autouse=True)
     def setup_method(self, temp_path):
@@ -101,12 +90,6 @@ class TestAudioRecorder:
                 logger.error(f"Cleanup error: {e}")
         shutil.rmtree(self.audio_dir, ignore_errors=True)
 
-    @pytest.fixture
-    def mock_android(self):
-        with patch("src.file_manager.FileManager.is_mobile", return_value=True), \
-             patch("src.file_manager.FileManager.get_data_path", return_value="/mock/path"):
-            yield Mock()
-
     @pytest.mark.asyncio
     @pytest.mark.timeout(30)
     async def test_audio_capture(self):
@@ -114,66 +97,56 @@ class TestAudioRecorder:
         output_path = Path(output_file)
         self._recorder = AudioRecorder(output_file=output_file)
         try:
-            if FileManager.is_mobile() and ANDROID_ENABLED:
-                with patch("jnius.autoclass") as mock_autoclass:
-                    mock_media = Mock()
-                    mock_media.AudioSource.MIC = 1
-                    mock_autoclass.return_value = mock_media
-                    await self._recorder.start_recording()
-            else:
-                with patch("sounddevice.InputStream") as mock_stream:
-                    mock_stream_instance = MagicMock()
+            with patch("sounddevice.InputStream") as mock_stream:
+                mock_stream_instance = MagicMock()
 
-                    def mock_start():
-                        # Simulate audio data callback after recording starts
-                        fake_data = np.random.rand(1024, 1).astype(np.float32)
-                        for _ in range(10):  # Simulate multiple callbacks
-                            self._recorder._audio_callback(fake_data, 1024, None, None)
-                    mock_stream_instance.start.side_effect = mock_start
-                    mock_stream.return_value = mock_stream_instance
-                    await self._recorder.start_recording()
-                    await asyncio.sleep(1.5)
+                def mock_start():
+                    # Simulate audio data callback after recording starts
+                    fake_data = np.random.rand(1024, 1).astype(np.float32)
+                    for _ in range(10):  # Simulate multiple callbacks
+                        self._recorder._audio_callback(fake_data, 1024, None, None)
+                
+                mock_stream_instance.start.side_effect = mock_start
+                mock_stream.return_value = mock_stream_instance
+
+                await self._recorder.start_recording()
+                await asyncio.sleep(1.5)
             frames_copy = self._recorder._frames.copy() 
             await self._recorder.stop_recording()
-            if sys.platform == "win32":
-                validated = False
-                output_path = Path(output_file)
-                for _ in range(40):  # 0.5s delays = 20s total
-                    try:
-                        if output_path.exists():
-                            # FFprobe-based validation for audio capture
-                            cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(output_path)]
-                            result = subprocess.run(cmd, capture_output=True, text=True)
-                            if result.returncode == 0:
-                                converted_duration = float(result.stdout.strip())
-                                source_duration = sum(frame.shape[0] for frame in frames_copy) / self._recorder.sample_rate
-                                if abs(source_duration - converted_duration) <= 0.15:
-                                    validated = True
-                                    break
-                                else:
-                                    logger.warning(f"Duration mismatch: {source_duration:.2f} vs {converted_duration:.2f}")
+            validated = False
+            output_path = Path(output_file)
+            for _ in range(40):  # 0.5s delays = 20s total
+                try:
+                    if output_path.exists():
+                        # FFprobe-based validation for audio capture
+                        cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(output_path)]
+                        result = subprocess.run(cmd, capture_output=True, text=True)
+                        if result.returncode == 0:
+                            converted_duration = float(result.stdout.strip())
+                            source_duration = sum(frame.shape[0] for frame in frames_copy) / self._recorder.sample_rate
+                            if abs(source_duration - converted_duration) <= 0.15:
+                                validated = True
+                                break
                             else:
-                                logger.warning(f"FFprobe error: {result.stderr[:200]}")
-                        await asyncio.sleep(0.5)
-                    except (Exception, PermissionError, OSError) as e:
-                        logger.warning(f".mp4 validation attempt {_} failed: {str(e)}")
-                        subprocess.run(["powershell", f"Get-Process *ffmpeg*,*ffprobe*" 
-                                                      f"| Where-Object {{$_.Path -like '*{output_path.name}*'}} "
-                                                      f"| Stop-Process -Force -ErrorAction SilentlyContinue"], shell=True, check=False)
+                                logger.warning(f"Duration mismatch: {source_duration:.2f} vs {converted_duration:.2f}")
+                        else:
+                            logger.warning(f"FFprobe error: {result.stderr[:200]}")
+                    await asyncio.sleep(0.5)
+                except (Exception, PermissionError, OSError) as e:
+                    logger.warning(f".mp4 validation attempt {_} failed: {str(e)}")
+                    subprocess.run(["powershell", f"Get-Process *ffmpeg*,*ffprobe*" 
+                                                  f"| Where-Object {{$_.Path -like '*{output_path.name}*'}} "
+                                                  f"| Stop-Process -Force -ErrorAction SilentlyContinue"], shell=True, check=False)
                 if not validated:
                     pytest.fail(f".mp4 validation failed after 40 attempts. Final state: Exists={output_path.exists()}, Size={output_path.stat().st_size if output_path.exists() else 0}")
+            # Windows validation
             assert Path(output_file).exists(), "Output file not created"
             assert Path(output_file).stat().st_size > 1024, "Output file too small"
             with sf.SoundFile(output_file) as sf_file:
                 assert sf_file.samplerate in [16000, 44100], "Invalid sample rate"
                 assert sf_file.channels in [1, 2], "Invalid channel count"
-        except RuntimeError as e:
-            if "Android components unavailable" in str(e):
-                pytest.skip("Android test requires mobile environment")
-            raise
         finally:
-            if sys.platform == "win32":
-                await self._windows_process_cleanup(Path(output_file))
+            await self._windows_process_cleanup(Path(output_file))
             await asyncio.sleep(0.5)  # Cleanup delay
 
     async def _windows_file_validation(self, path):
@@ -220,9 +193,8 @@ class TestAudioRecorder:
         output_file = self.audio_dir / "test.mp4"
         self._recorder = AudioRecorder(output_file=str(output_file))
         try:
-            if sys.platform == "win32":
-                if not os.access(str(source_file), os.R_OK):
-                    pytest.skip("Windows file access issues")
+            if not os.access(str(source_file), os.R_OK):
+                pytest.skip("Windows file access issues")
             for _ in range(15):
                 if Path(source_file).exists():
                     try:
@@ -249,6 +221,7 @@ class TestAudioRecorder:
                         self._recorder._audio_callback(chunk, len(chunk), None, None)
                         current_pos = end_pos
                         time.sleep(0.1)  # simulate real-time delay
+
                 mock_stream_instance.start.side_effect = mock_start
                 mock_stream.return_value = mock_stream_instance
                 await self._recorder.start_recording()
@@ -256,29 +229,28 @@ class TestAudioRecorder:
                 await asyncio.sleep(source_duration + 0.5)  # Buffer to ensure data is processed
                 frames_copy = self._recorder._frames.copy()
                 await self._recorder.stop_recording()
-                if sys.platform == "win32":
-                    validated = False
-                    output_path = Path(output_file)
-                    for _ in range(60):  # 0.5s delays: 30s total
-                        try:
-                            if output_path.exists():
-                                # FFprobe-based validation for .mp4
-                                cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(output_path)]
-                                result = subprocess.run(cmd, capture_output=True, text=True)
-                                if result.returncode == 0:
-                                    converted_duration = float(result.stdout.strip())
-                                    source_duration = sum(frame.shape[0] for frame in frames_copy) / self._recorder.sample_rate
-                                    if abs(source_duration - converted_duration) <= 0.15:
-                                        validated = True
-                                        break
-                                else:
-                                    logger.warning(f"FFprobe MP4 error: {result.stderr[:200]}")
-                            await asyncio.sleep(0.25)
-                        except Exception as e:
-                            logger.warning(f".mp4 validation attempt {_} failed: {str(e)}")
-                            # Before:
-                            # subprocess.run(["powershell", "Get-Process *ffmpeg* | Stop-Process -Force"], shell=True, check=False)
-                            subprocess.run(["powershell", f"Get-Process *ffmpeg* | Where-Object {{$_.Path -like '*{output_path.name}*'}} | Stop-Process -Force"], shell=True, check=False)
+                validated = False
+                output_path = Path(output_file)
+                for _ in range(60):  # 0.5s delays: 30s total
+                    try:
+                        if output_path.exists():
+                            # FFprobe-based validation for .mp4
+                            cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(output_path)]
+                            result = subprocess.run(cmd, capture_output=True, text=True)
+                            if result.returncode == 0:
+                                converted_duration = float(result.stdout.strip())
+                                source_duration = sum(frame.shape[0] for frame in frames_copy) / self._recorder.sample_rate
+                                if abs(source_duration - converted_duration) <= 0.15:
+                                    validated = True
+                                    break
+                            else:
+                                logger.warning(f"FFprobe MP4 error: {result.stderr[:200]}")
+                        await asyncio.sleep(0.25)
+                    except Exception as e:
+                        logger.warning(f".mp4 validation attempt {_} failed: {str(e)}")
+                    # Before:
+                    # subprocess.run(["powershell", "Get-Process *ffmpeg* | Stop-Process -Force"], shell=True, check=False)
+                    subprocess.run(["powershell", f"Get-Process *ffmpeg* | Where-Object {{$_.Path -like '*{output_path.name}*'}} | Stop-Process -Force"], shell=True, check=False)
                     if not validated:
                         pytest.fail(f"MP4 validation failed after 60 attempts. Duration: {converted_duration if 'converted_duration' in locals() else 'N/A'}")
             converted_duration = float(result.stdout.strip())
@@ -409,17 +381,16 @@ class TestPerformance():
         path = Path(path)
         for i in range(max_retries):
             try:
-                if sys.platform == "win32": 
-                    if not path.exists():
-                        return True
-                    # add process tree termination
-                    for proc in psutil.process_iter():
-                        try:
-                            open_files = proc.open_files()
-                            if any(str(path) in f.path for f in open_files):
-                                proc.kill()
-                        except (psutil.AccessDenied, psutil.NoSuchProcess):
-                            continue
+                if not path.exists():
+                    return True
+                # add process tree termination
+                for proc in psutil.process_iter():
+                    try:
+                        open_files = proc.open_files()
+                        if any(str(path) in f.path for f in open_files):
+                            proc.kill()
+                    except (psutil.AccessDenied, psutil.NoSuchProcess):
+                        continue
                     await asyncio.sleep(0.5)
                 path.unlink(missing_ok=True)
                 return True

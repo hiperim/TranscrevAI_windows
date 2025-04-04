@@ -13,24 +13,9 @@ from ctypes import windll
 import psutil
 from unittest.mock import Mock, patch
 from src.logging_setup import setup_app_logging
-from src.file_manager import FileManager, ANDROID_ENABLED
-from src.audio_processing import AudioRecorder
+from src.file_manager import FileManager
 
 logger = setup_app_logging()
-
-def mock_audio_record():
-    class MockAudioRecord:
-        def __init__(self, *args, **kwargs):
-            pass
-        def startRecording(self):
-            pass
-        def read(self, size):
-            return bytes(size)
-        def stop(self):
-            pass
-        def release(self):
-            pass
-    return MockAudioRecord
 
 @pytest.fixture
 def generate_test_audio():
@@ -58,10 +43,10 @@ def generate_test_audio():
 
 @pytest.fixture
 def temp_path(tmp_path_factory):
-    """Cross-platform compatible temporary directory fixture with enhanced Windows cleaning"""
+    """Windows temporary directory fixture with enhanced cleaning"""
     base_temp = tmp_path_factory.getbasetemp()
     test_temp = base_temp / "test_audio"
-        # Remove existing directory first with proper Windows handling
+        # Remove existing directory first with Windows handling
     if test_temp.exists():
         if sys.platform == "win32":
             try:
@@ -82,7 +67,7 @@ def temp_path(tmp_path_factory):
                                 pass
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue
-                # Use more robust Windows API for permission reset
+                # Use robust Windows API for permission reset
                 try:
                     import win32security
                     import win32con
@@ -141,32 +126,30 @@ def temp_path(tmp_path_factory):
         except Exception as e:
             logger.debug(f"Permission setting error: {e}")
     yield test_temp
-    # Enhanced cleanup after yield
-    if sys.platform == "win32":
-        # Ensure all audio processes are terminated
+    # Enhanced cleanup after yield, ensure all audio procecess are terminated
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", "ffmpeg.exe", "/IM", "ffprobe.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    except Exception:
+        pass
+    # Wait for windows to release handles
+    time.sleep(2.0)
+    # Multiple strategies for cleanup
+    try:
+        # Force directory handle closure with robocopy empty trick
+        temp_empty = tmp_path_factory.getbasetemp() / f"empty_{int(time.time())}"
+        temp_empty.mkdir(exist_ok=True)
         try:
-            subprocess.run(["taskkill", "/F", "/IM", "ffmpeg.exe", "/IM", "ffprobe.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            # Use robocopy to mirror an empty directory (deletes content)
+            subprocess.run(["robocopy", str(temp_empty), str(test_temp), "/MIR", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         except Exception:
             pass
-        # Wait for windows to release handles
-        time.sleep(2.0)
-        # Multiple strategies for cleanup
+        # Remove empty directory
         try:
-            # Force directory handle closure with robocopy empty trick
-            temp_empty = tmp_path_factory.getbasetemp() / f"empty_{int(time.time())}"
-            temp_empty.mkdir(exist_ok=True)
-            try:
-                # Use robocopy to mirror an empty directory (deletes content)
-                subprocess.run(["robocopy", str(temp_empty), str(test_temp), "/MIR", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            except Exception:
-                pass
-            # Remove empty directory
-            try:
-                temp_empty.rmdir()
-            except Exception:
-                pass
-        except Exception as e:
-            logger.debug(f"Advanced cleanup error: {e}")
+            temp_empty.rmdir()
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug(f"Advanced cleanup error: {e}")
     # Recursive error handler on final cleanup
     def on_rm_error(func, path, exc_info):
         # Make read-only files writable and retry
@@ -175,48 +158,15 @@ def temp_path(tmp_path_factory):
             func(path)
         except Exception:
             # Last resort: try to use the shell to delete
-            if sys.platform == "win32":
-                try:
-                    subprocess.run(["cmd", "/c", f"rd /s /q \"{path}\""], shell=True, check=False)
-                except Exception:
-                    logger.debug(f"Failed to remove {path}")
-            else:
+            try:
+                subprocess.run(["cmd", "/c", f"rd /s /q \"{path}\""], shell=True, check=False)
+            except Exception:
                 logger.debug(f"Failed to remove {path}")
     # Final cleanup
     try:
         shutil.rmtree(test_temp, onerror=on_rm_error)
     except Exception as e:
         logger.debug(f"Final cleanup failed: {e}")
-
-@pytest.fixture
-def mock_paths(monkeypatch):
-    # mock android package name
-    monkeypatch.setattr('config.app_config.APP_PACKAGE_NAME', 'com.transcrevai.app')
-    # mock SharedStorage for android
-    mock_storage = Mock()
-    mock_storage.return_value.get_cache_dir.return_value = "C:\\mock\\android\\path" if sys.platform == "win32" else "/mock/android/path"
-    monkeypatch.setattr('src.file_manager.SharedStorage', mock_storage)
-    # mock windows paths
-    if sys.platform == 'win32':
-        monkeypatch.setattr('pathlib.Path.home', lambda: Path("C:/FakeUser"))
-
-@pytest.fixture(scope="function")
-def mock_android(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setenv("ANDROID_ARGUMENT", "1")
-    with patch("src.file_manager.FileManager.is_mobile", return_value=True), \
-         patch("src.file_manager.ANDROID_ENABLED", True), \
-         patch("jnius.autoclass") as mock_autoclass:
-            android_classes = {"androidx.core.content.ContextCompat": Mock(checkSelfPermission=Mock(return_value=0)),
-                               "android.content.pm.PackageManager": Mock(PERMISSION_GRANTED=0, PERMISSION_DENIED=1),
-                               "android.Manifest$permission": Mock(RECORD_AUDIO="android.permission.RECORD_AUDIO", WRITE_EXTERNAL_STORAGE="android.permission.WRITE_EXTERNAL_STORAGE"),
-                               "org.kivy.android.PythonActivity": Mock(mActivity=Mock()),
-                               "android.media.MediaRecorder": Mock(AudioSource=Mock(MIC=1), OutputFormat=Mock(MPEG_4=2), AudioEncoder=Mock(AAC=3))}
-            # Return appropriate mock based on requested class
-            def get_android_class(cls_name):
-                return android_classes.get(cls_name, Mock())
-            mock_autoclass.side_effect = get_android_class
-            yield
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "asyncio: mark test as async")
