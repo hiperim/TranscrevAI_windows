@@ -2,26 +2,15 @@ import os
 import logging
 import zipfile
 import requests
-import hashlib
 import asyncio
 import time
 import tempfile
-import platform # ?Replace it, as it's used only once?
 import sys
 import shutil   
 from pathlib import Path
 from typing import Union
 from src.logging_setup import setup_app_logging
 from config.app_config import APP_PACKAGE_NAME
-
-ANDROID_ENABLED = False
-try:
-    if sys.platform == 'linux' and 'ANDROID_ARGUMENT' in os.environ:
-        from androidstorage4kivy import SharedStorage
-        from jnius import autoclass
-        ANDROID_ENABLED = True
-except ImportError:
-    pass
 
 logger = setup_app_logging()
 
@@ -37,9 +26,6 @@ class SecurityError(RuntimeError):
         super().__init__(message)
 
 class FileManager():
-    def is_mobile():
-        return sys.platform != 'win32' and hasattr(sys, 'getandroidapilevel')
-
     @staticmethod
     def get_base_directory(subdir=""):
         from pathlib import Path
@@ -48,15 +34,7 @@ class FileManager():
         
     @staticmethod
     def get_data_path(subdir="") -> str:
-        if FileManager.is_mobile() and ANDROID_ENABLED:
-            try:
-                shared_storage = SharedStorage() # type: ignore
-                base = Path(shared_storage.get_cache_dir()) / "app_data"
-            except Exception as e:
-                logger.warning(f"Android storage error: {e}, using fallback path")
-                base = Path(f"/data/data/{APP_PACKAGE_NAME}/files") # Android storage
-        else:
-            base = Path(__file__).parent.parent / "data"
+        base = Path(__file__).parent.parent / "data"
         full_path = base / subdir
         return full_path.as_posix()
 
@@ -65,43 +43,21 @@ class FileManager():
         base_temp = FileManager.get_data_path("temp")
         FileManager.ensure_directory_exists(base_temp)
         temp_dir = tempfile.mkdtemp(dir=base_temp, prefix=f"temp_{os.getpid()}_",suffix=f"_{int(time.time())}")
-        FileManager._set_temp_permissions(temp_dir)
         return FileManager.validate_path(temp_dir)
 
     @staticmethod
     def ensure_directory_exists(path):
         try:
             os.makedirs(path, exist_ok=True)
-            if "temp" in path and os.name != 'nt':
-                os.chmod(path, 0o777)
         except Exception as e:
             logger.error(f"Directory creation failed: {path}")
             raise RuntimeError(f"Filesystem error: {str(e)}")
         
     @staticmethod
-    def _set_temp_permissions(path: str) -> None:
-        try:
-            if platform.system() in ["Linux", "Darwin"]:
-                os.chmod(path, 0o700)
-                logger.debug(f"Set permissions on temp directory: {path}")
-        except Exception as e:
-            logger.warning(f"Temp permission setting failed: {str(e)}")
-            # Do not crash - log error and continue
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Failed path: {path}", exc_info=True)
-
-    @staticmethod
     def validate_path(user_path: str) -> str:
         try:
             resolved = Path(user_path).resolve(strict=False)
-            # Define platform-specific allowed directories
             allowed_dirs = []
-            if FileManager.is_mobile() and ANDROID_ENABLED:
-                try:
-                    allowed_dirs.append(Path(SharedStorage().get_cache_dir())) # type: ignore
-                    allowed_dirs.append(Path(f"/data/data/{APP_PACKAGE_NAME}/files")) # Android storage
-                except Exception:
-                    pass
             # Desktop paths
             base_dir = Path(__file__).parent.parent / "data"
             allowed_dirs.append(base_dir)
@@ -137,7 +93,8 @@ class FileManager():
     @staticmethod
     def save_transcript(data: Union[str, list], filename="output.txt") -> None:
         try:
-            output_path = os.path.join(FileManager.get_data_path("transcripts"), filename)
+            output_dir = FileManager.get_data_path("transcripts")
+            output_path = os.path.join(output_dir, filename)
             FileManager.ensure_directory_exists(os.path.dirname(output_path))
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(str(data))
@@ -222,6 +179,27 @@ class FileManager():
             session.mount(url, requests.adapters.HTTPAdapter(max_retries=3))
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, FileManager._sync_download_and_extract, url, language_code, output_dir)
+    
+    """Could this replace both _sync_download_and_extract and download_and_extract_model???"""
+    """@staticmethod
+    async def download_and_extract_model(url, language_code, output_dir):
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if not parsed.scheme.startswith('http'):
+            raise ValueError("Invalid model URL")
+
+        model_path = os.path.join(output_dir, language_code)
+        if os.path.exists(model_path):
+            return model_path
+
+        zip_path = os.path.join(output_dir, f"{language_code}.zip")
+        
+        async with requests.Session() as session:
+            async with session.get(url, timeout=30) as response:
+                response.raise_for_status()
+                with open(zip_path, 'wb') as f:
+                    async for chunk in response.content.iter_chunked(1024):
+                        f.write(chunk)"""
     
     @staticmethod 
     def cleanup_temp_dirs():

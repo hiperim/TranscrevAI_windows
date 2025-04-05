@@ -11,7 +11,7 @@ import time
 from enum import Enum
 from ctypes import windll
 from src.logging_setup import setup_app_logging
-from src.file_manager import FileManager, ANDROID_ENABLED
+from src.file_manager import FileManager
 from config.app_config import APP_PACKAGE_NAME
 import sounddevice as sd
 import soundfile as sf
@@ -21,8 +21,6 @@ import psutil
 import win32file
 import win32con
 import pywintypes
-
-ANDROID_BUFFER_SIZE = 4096
 
 logger = setup_app_logging()
 
@@ -65,7 +63,7 @@ class AtomicAudioFile:
                 self._safe_delete(self.temp_path)
 
     def commit(self, final_path):
-        """Mark file for preservation with atomic replacement"""
+        # Mark file for preservation with atomic replacement
         self.final_path = final_path
         self._committed = True
 
@@ -73,14 +71,11 @@ class AtomicAudioFile:
         output_dir = os.path.dirname(self.final_path)
         if not os.path.exists(output_dir):
             FileManager.ensure_directory_exists(output_dir)
-        """Windows-safe atomic replacement"""
+        # Windows-safe atomic replacement
         for attempt in range(5):
             try:
-                if sys.platform == "win32":
-                    # Use low-level API for handle management
-                    self._windows_atomic_replace()
-                else:
-                    os.replace(self.temp_path, self.final_path)
+                # Use low-level API for handle management
+                self._windows_atomic_replace()
                 if os.path.exists(self.final_path):
                     break    
             except (PermissionError, FileNotFoundError, OSError) as e:
@@ -97,7 +92,6 @@ class AtomicAudioFile:
                 self._kill_all_handles(temp_path, final_path)
                 final_path.parent.mkdir(parents=True, exist_ok=True)
                 # Atomic replacement with error
-                # Before: success = windll.kernel32.MoveFileExW(os.fspath(temp_path), os.fspath(final_path), None, 0, win32con.MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH, 0) 
                 success = windll.kernel32.MoveFileExW(str(temp_path), str(final_path), win32con.MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) # 0x1 | 0x8 = 0x9
                 if not success:
                     error_code = windll.kernel32.GetLastError()
@@ -105,8 +99,6 @@ class AtomicAudioFile:
                     raise OSError(f"MoveFile error {error_code}")
                 # Force immediate filesystem commit
                 self._force_file_sync(final_path)
-                """# Handle recycling
-                subprocess.run(["powershell", f"Get-ChildItem -Path {final_path} | ForEach-Object {{ $_.Delete() }}"], shell=True)"""
                 # Add validation check with retry
                 if self._validate_atomic_success(temp_path, final_path):
                     logger.info(f"Atomic replace validated on attempt {attempt}")
@@ -142,28 +134,24 @@ class AtomicAudioFile:
     def _validate_atomic_success(self, temp_path, final_path):
         # Non-destructive validation of atomic file operation success
         try:
-            # Check temp file was removed
+            # Check if temp file was removed
             if os.path.exists(temp_path):
                 logger.debug(f"Validation failed: Temp file still exists at {temp_path}")
                 return False
-                
-            # Check final file exists with content
+            # Check if final file exists, with content
             if not os.path.exists(final_path):
                 logger.debug(f"Validation failed: Final file missing at {final_path}")
                 return False
-                
             # Check file has content and valid header
             if os.path.getsize(final_path) < 1024:
                 logger.debug(f"Validation failed: Final file too small: {os.path.getsize(final_path)} bytes")
                 return False
-                
             # Non-destructive header check
             with open(final_path, "rb") as f:
                 header = f.read(8)
                 if header[:4] not in [b"RIFF", b"ftyp"]:
                     logger.debug(f"Validation failed: Invalid file header: {header[:4]}")
                     return False
-                    
             return True
         except Exception as e:
             logger.debug(f"Validation exception: {str(e)}")
@@ -201,14 +189,13 @@ class AudioRecorder:
         self.is_paused = False
         os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
         try:
-            if sys.platform == "win32":
-                if not hasattr(AudioRecorder, '_ffmpeg_initialized'):
-                    static_ffmpeg.add_paths()
-                    AudioRecorder._ffmpeg_initialized = True
-                if not hasattr(AudioRecorder, '_ffmpeg_verified'):
-                    subprocess.run(["ffmpeg", "-version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    AudioRecorder._ffmpeg_verified = True
-                    logger.info("FFmpeg verified")
+            if not hasattr(AudioRecorder, '_ffmpeg_initialized'):
+                static_ffmpeg.add_paths()
+                AudioRecorder._ffmpeg_initialized = True
+            if not hasattr(AudioRecorder, '_ffmpeg_verified'):
+                subprocess.run(["ffmpeg", "-version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                AudioRecorder._ffmpeg_verified = True
+                logger.info("FFmpeg verified")
         except Exception as e:
             logger.critical(f"FFmpeg setup error: {e}")
             raise RuntimeError("FFmpeg is not installed or not configured correctly.")
@@ -219,17 +206,16 @@ class AudioRecorder:
             if hasattr(self, "_stream") and self._stream:
                 self._stream.close()
             # Kill any associated proc.
-            if sys.platform == "win32" and hasattr(self, "output_file"):
-                try:
-                    for proc in psutil.process_iter(['pid', 'name']):
-                        try:
-                            if any(x in proc.name().lower() for x in ['ffmpeg', 'ffprobe']):
-                                logger.debug(f"Terminating audio process {proc.pid}")
-                                proc.kill()
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
-                except Exception:
-                    pass
+            try:
+                for proc in psutil.process_iter(['pid', 'name']):
+                    try:
+                        if any(x in proc.name().lower() for x in ['ffmpeg', 'ffprobe']):
+                            logger.debug(f"Terminating audio process {proc.pid}")
+                            proc.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -246,7 +232,7 @@ class AudioRecorder:
         self._cleanup_resources()
         
     def _check_system_resources(self):
-        if sys.platform == 'win32' and psutil.cpu_percent() > 90:
+        if psutil.cpu_percent() > 90:
             raise RuntimeError("CPU usage too high for recording")
         free_space = shutil.disk_usage(os.path.dirname(self.output_file)).free / (1024 ** 3)
         if free_space < 0.1:  # 100Mb
@@ -258,13 +244,7 @@ class AudioRecorder:
             self.is_recording = True
             self._frames = []
             self._recording_start_time = time.time()
-            if FileManager.is_mobile() and ANDROID_ENABLED:
-                try:
-                    await self._start_android_recording()
-                except ImportError:
-                    raise RuntimeError("Android components unavailable")
-            else:
-                await self._start_desktop_recording()
+            await self._start_desktop_recording()
         except Exception as e:
             raise AudioProcessingError(str(e), AudioProcessingError.ErrorType.RECORDING_FAILED)
         
@@ -272,61 +252,6 @@ class AudioRecorder:
         self._stream = sd.InputStream(samplerate=self.sample_rate, channels=1, callback=self._audio_callback)
         self._stream.start()
 
-    async def _start_android_recording(self):
-        if not await self._check_android_permissions():
-            raise AudioProcessingError("Recording permission not granted", AudioProcessingError.ErrorType.SYSTEM_ERROR)
-        """Start recording audio on Android devices"""
-        if not FileManager.ANDROID_ENABLED:
-            raise RuntimeError("Android components unavailable")
-        try:
-            # Import Android classes
-            from jnius import autoclass
-            AndroidBuild = autoclass("android.os.Build")
-            if AndroidBuild.VERSION.SDK_INT < 21:
-                raise Exception("Need Android 5.0+")
-            
-            MediaRecorder = autoclass("android.media.MediaRecorder")
-            AudioSource = autoclass("android.media.MediaRecorder$AudioSource")
-            
-            # Create and configure recorder
-            self.android_recorder = MediaRecorder()
-            self.android_recorder.setAudioSource(AudioSource.MIC)
-            self.android_recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            self.android_recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            self.android_recorder.setAudioSamplingRate(44100)
-            self.android_recorder.setAudioEncodingBitRate(192000)
-            self.android_recorder.setOutputFile(self.temp_wav)
-
-            # Start recording
-            self.android_recorder.prepare()
-            self.android_recorder.start()
-            logger.info("Android recording started successfully")
-            self.is_android_recording = True
-
-        except Exception as e:
-            error_msg = f"Failed to start Android recording: {str(e)}"
-            logger.error(error_msg)
-            self.is_android_recording = False
-            raise AudioProcessingError(error_msg, AudioProcessingError.ErrorType.RECORDING_FAILED)
-        
-    async def _check_android_permissions(self):
-        # Check if the app has permission to record audio on Android
-        try:
-            from jnius import autoclass
-            Activity = autoclass("org.kivy.android.PythonActivity")
-            current_activity = Activity.mActivity
-            ContextCompat = autoclass("androidx.core.content.ContextCompat")
-            PackageManager = autoclass("android.content.pm.PackageManager")
-            Manifest = autoclass("android.Manifest$permission")
-            permission_granted = ContextCompat.checkSelfPermission(current_activity, Manifest.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-            if not permission_granted:
-                logger.error("Android recording permission not granted")
-                return False
-            return True
-        except Exception as e:
-            logger.error(f"Error checking Android permissions: {e}")
-            return False
-    
     def _audio_callback(self, indata, frames, time, status):
         if status:
             logger.warning(f"Audio status: {status}")
@@ -358,16 +283,10 @@ class AudioRecorder:
                 if not self.is_recording:
                     return
                 self.is_recording = False
-                if sys.platform == "win32" or (sys.platform.startswith("linux") or sys.platform == "darwin"):
-                    # Stop desktop recording
-                    if self._stream:
-                        self._stream.stop()
-                        self._stream.close()
-                else:
-                    if hasattr(self, "android_looper"):
-                        self.android_looper.stop()
-                        del self.android_looper
-                    await self._stop_android_recording()
+                # Stop desktop recording
+                if self._stream:
+                    self._stream.stop()
+                    self._stream.close()
                 if self._frames:
                     audio_data = np.concatenate(self._frames)
                     sf.write(temp_path, audio_data, self.sample_rate)
@@ -391,60 +310,26 @@ class AudioRecorder:
             finally:
                 if preserved_frames is not None:
                     self._cleanup_resources()
-        if sys.platform == "win32":
-            for _ in range(15):  # 0.5s delays = 7.5s total for file handlers
-                if os.path.exists(self.output_file) and os.path.getsize(self.output_file) > 0:
-                    break
-                await asyncio.sleep(0.5)
-            else:
-                raise FileNotFoundError(f"Final output never appeared: {self.output_file}")
+        for _ in range(15):  # 0.5s delays = 7.5s total for file handlers
+            if os.path.exists(self.output_file) and os.path.getsize(self.output_file) > 0:
+                break
+            await asyncio.sleep(0.5)
+        else:
+            raise FileNotFoundError(f"Final output never appeared: {self.output_file}")
         if preserved_frames:
                 self._validate_output(preserved_frames)
         self._frames = []
         return True
         
-    async def _stop_android_recording(self):
-        """Stop recording audio on Android devices"""
-        if hasattr(self, 'android_recorder') and self.android_recorder:
-            try:
-                if self.is_android_recording:
-                    self.android_recorder.stop()
-                    self.android_recorder.release()
-                    self.is_android_recording = False
-                    logger.info("Android recording stopped successfully")
-            except Exception as e:
-                logger.error(f"Error stopping Android recording: {e}")
-            finally:
-                self.android_recorder = None
-
     async def _convert_to_mp4(self):
         # Platform-specific FFmpeg configuration
         ffmpeg_args = ["-y", "-hwaccel", "auto", "-i", self.temp_wav]
-        if FileManager.is_mobile() and ANDROID_ENABLED:
-            # Android-specific MP4 configuration
-           ffmpeg_args += ["-f", "mp4", "-movflags", "faststart", "-c:a", "aac", "-b:a", "192k", "-preset", "ultrafast"]
-        else:
-            # Desktop/Windows streaming optimization
-            ffmpeg_args += ["-f", "mp4", "-movflags", "frag_keyframe+empty_moov", "-c:a", "aac", "-b:a", "192k", "-max_muxing_queue_size", "9999", "-fflags", "+genpts+discardcorrupt", "-strict", "experimental"]
+        # Desktop/Windows streaming optimization
+        ffmpeg_args += ["-f", "mp4", "-movflags", "frag_keyframe+empty_moov", "-c:a", "aac", "-b:a", "192k", "-max_muxing_queue_size", "9999", "-fflags", "+genpts+discardcorrupt", "-strict", "experimental"]
         ffmpeg_args.append(self.output_file)
         # Platform-specific subprocess configuration
         kwargs = {}
-        if sys.platform == "win32":
-            kwargs.update(creationflags=subprocess.CREATE_NO_WINDOW)
-        elif FileManager.is_mobile() and ANDROID_ENABLED:
-            try:
-                # Set working directory to app cache which has write permissions
-                cache_dir = FileManager.get_data_path("cache")
-                FileManager.ensure_directory_exists(cache_dir)
-                kwargs.update(cwd=cache_dir)
-                # Set environment variables for Android subprocess
-                env = os.environ.copy()
-                env['LD_LIBRARY_PATH'] = f"/data/data/{APP_PACKAGE_NAME}/files/lib"
-                kwargs.update(env=env)
-                # Lower process priority to prevent UI freezing on mobile
-                kwargs.update(preexec_fn=lambda: os.nice(10))     
-            except Exception as e:
-                logger.warning(f"Android subprocess configuration error: {e}")
+        kwargs.update(creationflags=subprocess.CREATE_NO_WINDOW)
         for attempt in range(10):
             try:
                 with open(self.temp_wav, 'rb') as f:
@@ -486,15 +371,11 @@ class AudioRecorder:
             logger.critical("Conversion timeout")
             raise AudioProcessingError("MP4 conversion timeout", AudioProcessingError.ErrorType.TIMEOUT)
         finally:
-            # Cross-platform resource cleanup
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
-            if sys.platform == "win32":
-                subprocess.run(["powershell", f"Get-Process *ffmpeg*,*ffprobe*"
-                                f"| Where-Object {{$_.Path -like '*{Path(self.output_file).name}*'}}" 
-                                f"| Stop-Process -Force -ErrorAction SilentlyContinue"], 
-                               shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # WIndows resource cleanup
+            subprocess.run(["powershell", f"Get-Process *ffmpeg*,*ffprobe*"
+                                          f"| Where-Object {{$_.Path -like '*{Path(self.output_file).name}*'}}" 
+                                          f"| Stop-Process -Force -ErrorAction SilentlyContinue"], 
+                                          shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
     
     def _validate_output(self, frames):
         # Validates output file with duration calculation
@@ -530,23 +411,19 @@ class AudioRecorder:
             if not os.path.exists(path):
                 continue
             try:
-                if sys.platform == "win32":
-                    self._windows_file_removal(path)
-                else:
-                    os.remove(path)
+                self._windows_file_removal(path)
             except Exception as e:
                 logger.warning(f"Cleanup warning: {path} - {str(e)}")
 
     @staticmethod
     def _terminate_process_tree(pid, output_file):
-        if sys.platform == "win32":
-            try:
-                subprocess.run(["taskkill", "/F", "/T", "/FI", f"PID eq {pid}", "/IM", "ffmpeg*", "/IM", "ffprobe*"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                subprocess.run(["powershell", f"Get-ChildItem -Path {Path(output_file).drive}" 
-                                              f"-Recurse -File | Where-Object {{$_.Name -like '*{Path(output_file).name}*'}}"
-                                              f"| ForEach-Object {{$_.Delete()}}"], shell=True)
-            except subprocess.CalledProcessError:
-                pass
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/FI", f"PID eq {pid}", "/IM", "ffmpeg*", "/IM", "ffprobe*"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["powershell", f"Get-ChildItem -Path {Path(output_file).drive}" 
+                                          f"-Recurse -File | Where-Object {{$_.Name -like '*{Path(output_file).name}*'}}"
+                                          f"| ForEach-Object {{$_.Delete()}}"], shell=True)
+        except subprocess.CalledProcessError:
+            pass
 
     @staticmethod
     def _windows_file_removal(path):
@@ -563,15 +440,13 @@ class AudioRecorder:
                     logger.debug(f"Permission error removing {path}, attempt {attempt+1}/5")
                     try:
                         # Try to open with exclusive access to force closure of other handles
-                        handle = win32file.CreateFile(
-                            path,
-                            win32con.GENERIC_READ | win32con.GENERIC_WRITE,
-                            0,  # No sharing
-                            None,
-                            win32con.OPEN_EXISTING,
-                            win32con.FILE_ATTRIBUTE_NORMAL | win32con.FILE_FLAG_DELETE_ON_CLOSE,
-                            None
-                        )
+                        handle = win32file.CreateFile(path,
+                                                      win32con.GENERIC_READ | win32con.GENERIC_WRITE,
+                                                      0,  # No sharing
+                                                      None,
+                                                      win32con.OPEN_EXISTING,
+                                                      win32con.FILE_ATTRIBUTE_NORMAL | win32con.FILE_FLAG_DELETE_ON_CLOSE,
+                                                      None)
                         win32file.CloseHandle(handle)
                         # File should be deleted when handle is closed
                         return
@@ -595,14 +470,13 @@ class AudioRecorder:
 
     @staticmethod
     def _kill_processes_locking_file(path):
-        """Kill processes that might be locking a file"""
+        # Kill processes that might be locking a file
         if not path or not os.path.exists(path):
             return
-        if sys.platform == "win32":
-            try:
-                subprocess.run(["taskkill", "/F", "/FI", f"MODULES eq {os.path.basename(path)}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            except Exception as e:
-                logger.debug(f"Error killing processes: {e}")
+        try:
+            subprocess.run(["taskkill", "/F", "/FI", f"MODULES eq {os.path.basename(path)}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except Exception as e:
+            logger.debug(f"Error killing processes: {e}")
 
     @staticmethod
     def get_audio_duration(file_path: str) -> float:

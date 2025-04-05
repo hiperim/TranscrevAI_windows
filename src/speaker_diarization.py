@@ -47,6 +47,7 @@ class SpeakerDiarization:
             return "unknown"
     
     @staticmethod
+    # Defensive wrapper around Scipy FFT - prevent crahes when processing data
     def safe_fft(x, n=None):
         if len(x) == 0:
             warnings.warn("Empty input to FFT, returning zero array")
@@ -55,13 +56,19 @@ class SpeakerDiarization:
     
     def _verify_ffmpeg(self):
         try:
-            result = subprocess.run([self.ffmpeg_path, "-version"], capture_output=True, text=True, check=True)
-            return "ffmpeg version 4" in result.stdout or "ffmpeg version 5" in result.stdout
+            if self.ffmpeg_path and os.access(self.ffmpeg_path, os.X_OK):
+                result = subprocess.run([self.ffmpeg_path, "-version"], capture_output=True, text=True, check=True)
+                return "ffmpeg version 4" in result.stdout or "ffmpeg version 5" in result.stdout
+            else:
+                import static_ffmpeg
+                static_ffmpeg.add_paths()
+                return self.ffmpeg_path
         except Exception as e:
             logger.error(f"FFmpeg verification failed: {e}")
             return False
         
     def preprocess_audio_with_vad(self, audio_file):
+        # Voice activity detection
         Fs, x = wavfile.read(audio_file)
         if len(x) == 0:
             raise ValueError("Empty audio file")
@@ -137,10 +144,10 @@ class SpeakerDiarization:
             min_samples = int(Fs * 0.05)
             if len(x_filt) < min_samples:
                 raise ValueError(f"Audio too short for windowing: {len(x_filt)/Fs:.2f}s < {min_samples/Fs:.2f}s")
-            # TEST
+
             if len(x_filt) == 0:
                 logger.warning("Empty filtered audio data, adding padding")
-                x_filt = np.zeros(int(Fs * 0.1), dtype=np.float32)  # TEST: Add 100ms of silence as padding
+                x_filt = np.zeros(int(Fs * 0.1), dtype=np.float32)  # Add 100ms of silence as padding
             with patch("scipy.fftpack.fft", new=self.safe_fft):
                 features = mid_feature_extraction(signal=x_filt,
                                                   sampling_rate=Fs,
