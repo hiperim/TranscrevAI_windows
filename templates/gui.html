@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TranscrevAI</title>
+    <style>
+        body {background: #000;
+              color: #fff;
+              font-family: Arial, sans-serif;
+              margin: 20px;}
+
+        .container {max-width: 600px;
+                    margin: 0 auto;}
+
+        .control-group {margin: 20px 0;
+                        padding: 20px;
+                        background: #1a1a1a;
+                        border-radius: 8px;}
+
+        select, button {background: #333;
+                        color: #fff;
+                        border: 1px solid #666;
+                        padding: 10px;
+                        margin: 5px;
+                        border-radius: 4px;}
+
+        button:disabled {background: #444;
+                         color: #888;}
+
+        .progress-container {width: 100%;
+                             height: 20px;
+                             background: #333;
+                             border-radius: 10px;
+                             overflow: hidden;}
+
+        .progress-bar {height: 100%;
+                       background: #fff;
+                       border-radius: 10px;
+                       width: 0%;
+                       transition: width 0.3s ease;}
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>TranscrevAI</h1>
+        <div class="control-group">
+            <select id="language">
+                <option value="en">English</option>
+                <option value="pt">Portuguese</option>
+                <option value="es">Spanish</option>
+            </select>
+            <button onclick="startRecording()" id="startBtn">Start</button>
+            <button onclick="pauseRecording()" id="pauseBtn" disabled>Pause</button>
+            <button onclick="stopRecording()" id="stopBtn" disabled>Stop</button>
+        </div>
+
+        <div class="control-group">
+            <h3>Transcription Progress</h3>
+            <div class="progress-container">
+                <div class="progress-bar" id="transcriptionProgress" style="width: 0%"></div>
+            </div>
+            
+            <h3>Speaker Identification</h3>
+            <div class="progress-container">
+                <div class="progress-bar" id="diarizationProgress" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        const socket = io('http://localhost:5000');
+
+        function startRecording() {socket.emit('start', document.getElementById('language').value); toggleButtons(true);}
+
+        function pauseRecording() {socket.emit('pause'); toggleButtons(false, true);}
+
+        function stopRecording() {socket.emit('stop'); toggleButtons(false);}
+
+        function toggleButtons(recording, paused=false) {document.getElementById('startBtn').disabled = recording;
+                                                         document.getElementById('pauseBtn').disabled = !recording;
+                                                         document.getElementById('stopBtn').disabled = !recording;
+                                                         document.getElementById('pauseBtn').innerText = paused ? 'Resume' : 'Pause';}
+
+        socket.on("connect_error", (err) => {console.error("Connection failed:", err); alert("Server connection failed");});
+
+        socket.on("progress", (data) => {document.getElementById("transcriptionProgress").style.width = `${data.transcription}%`;
+                                         document.getElementById("diarizationProgress").style.width = `${data.diarization}%`;});
+
+        socket.on("error", (message) => {alert(`Error: ${message}`); toggleButtons(false);});
+
+    </script>
+</body>
+</html>

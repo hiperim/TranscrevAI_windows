@@ -222,7 +222,7 @@ class AudioRecorder:
     def get_temp_path(self, extension=".wav"):
         temp_dir = FileManager.get_data_path("temp")
         FileManager.ensure_directory_exists(temp_dir)
-        return os.path.join(temp_dir, f"temp_recording_{int(time.time()*1000)}{extension}")
+        return os.path.normpath(os.path.join(temp_dir, f"temp_recording_{int(time.time()*1000)}{extension}")) # added: "os.path.normpath()"
         
     async def __aenter__(self):
         return self

@@ -28,15 +28,14 @@ class SecurityError(RuntimeError):
 class FileManager():
     @staticmethod
     def get_base_directory(subdir=""):
-        from pathlib import Path
-        base = Path(__file__).resolve().parent.parent
+        base = Path(__file__).resolve().parent.parent.parent
         return str(base / subdir) if subdir else str(base)
         
     @staticmethod
     def get_data_path(subdir="") -> str:
-        base = Path(__file__).parent.parent / "data"
+        base = Path(__file__).resolve().parent.parent.parent / "data"
         full_path = base / subdir
-        return full_path.as_posix()
+        return os.path.normpath(full_path) # was: "return full_path.as_posix()"
 
     @staticmethod
     def get_unified_temp_dir() -> str:
@@ -59,7 +58,7 @@ class FileManager():
             resolved = Path(user_path).resolve(strict=False)
             allowed_dirs = []
             # Desktop paths
-            base_dir = Path(__file__).parent.parent / "data"
+            base_dir = Path(__file__).parent.parent.parent / "data"
             allowed_dirs.append(base_dir)
             # Temporary directory is also allowed
             import tempfile

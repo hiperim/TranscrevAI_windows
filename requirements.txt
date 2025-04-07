@@ -37,3 +37,5 @@ tenacity==9.0.0
 vosk==0.3.45
 pywin32>=2.2.8
 bulldozer-dtm==1.1.0
+flask==3.1.0
+flask_socketio==5.5.1
