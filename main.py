@@ -42,7 +42,17 @@ async def processing_pipeline(language):
 
         model_path = await FileManager.download_and_extract_model(model_url, language, MODEL_DIR)
         await recorder.start_recording()
-
+        while app_state["recording"] and not app_state["paused"]:
+            await asyncio.sleep(0.1)  # Minimal CPU usage
+        if recorder.is_recording:
+            await recorder.stop_recording()
+        for _ in range(30):  # 0.5s delay, total 15 seconds
+            if os.path.exists(recorder.wav_file):
+                break
+            await asyncio.sleep(0.5)
+        else:
+            raise FileNotFoundError(f"Audio file never appeared: {recorder.wav_file}")
+        
         # Transcription w/ async
         transcription = []
         async for progress, data in transcribe_audio_with_progress(recorder.wav_file, model_path, language):
