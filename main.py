@@ -1,4 +1,4 @@
-# TranscrevAI - Production Ready with Model Management
+# TranscrevAI - Simple, Clean, Production Ready
 import asyncio
 import logging
 import os
@@ -10,7 +10,7 @@ import shutil
 from typing import Dict, Optional
 from pathlib import Path
 from datetime import datetime
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
@@ -22,15 +22,17 @@ from src.subtitle_generator import generate_srt
 from config.app_config import MODEL_DIR
 from src.logging_setup import setup_app_logging
 
+# Simple logging setup
 logger = setup_app_logging()
 
+# Clean, simple FastAPI setup
 app = FastAPI(
     title="TranscrevAI",
-    description="Real-time Audio Transcription - Production Ready",
+    description="Real-time Audio Transcription - Simple & Powerful",
     version="1.0.0"
 )
 
-# Model URLs for auto-download
+# Model URLs for auto-download (background functionality)
 MODEL_URLS = {
     "pt": "https://alphacephei.com/vosk/models/vosk-model-pt-0.3.zip",
     "en": "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip",
@@ -39,12 +41,13 @@ MODEL_URLS = {
 }
 
 class ModelManager:
-    """Handles model downloading and validation for Vosk models"""
+    """Background model management - no UI interference"""
     
     @staticmethod
     def get_model_path(language: str) -> str:
-        """Get the path for a specific language model"""
-        return os.path.join(MODEL_DIR, language)
+        # Updated to use correct data folder path
+        base_path = r"C:\transcrevai_android\TranscrevAI_commit34\data"
+        return os.path.join(base_path, "models", language)
     
     @staticmethod
     def validate_model(language: str) -> bool:
@@ -55,13 +58,12 @@ class ModelManager:
             logger.warning(f"Model directory not found: {model_path}")
             return False
         
-        # Check for required Vosk model files based on actual structure
-        # From the Portuguese model: disambig_tid.int, final.mdl, Gr.fst, HCLr.fst, mfcc.conf, etc.
+        # Check for required Vosk model files based on actual Portuguese structure
         required_files = [
             'final.mdl',    # Acoustic model
             'Gr.fst',       # Grammar FST  
             'HCLr.fst',     # HCL FST
-            'mfcc.conf'     # MFCC configuration (note: mfcc.conf not mfcc,conf)
+            'mfcc.conf'     # MFCC configuration
         ]
         
         # Check for required ivector directory
@@ -101,21 +103,33 @@ class ModelManager:
         return True
     
     @staticmethod
-    async def download_model(language: str) -> bool:
-        """Download and extract Vosk model for specified language"""
+    async def ensure_model_silent(language: str) -> bool:
+        """Silently ensure model exists - no UI feedback"""
+        if ModelManager.validate_model(language):
+            return True
+        
+        # Try to download silently in background
+        try:
+            return await ModelManager._download_model_silent(language)
+        except Exception as e:
+            logger.error(f"Silent model download failed: {e}")
+            return False
+    
+    @staticmethod
+    async def _download_model_silent(language: str) -> bool:
+        """Silent background download with fixed paths"""
         if language not in MODEL_URLS:
             logger.error(f"No model URL available for language: {language}")
             return False
         
-        model_url = MODEL_URLS[language]
-        model_path = ModelManager.get_model_path(language)
-        zip_path = f"{model_path}.zip"
-        
         try:
-            logger.info(f"Downloading model for {language}...")
+            model_url = MODEL_URLS[language]
+            model_path = ModelManager.get_model_path(language)
+            zip_path = f"{model_path}.zip"
             
-            # Create model directory
-            os.makedirs(MODEL_DIR, exist_ok=True)
+            # Create model directory with correct path
+            base_models_dir = os.path.dirname(model_path)
+            os.makedirs(base_models_dir, exist_ok=True)
             
             # Download model
             urllib.request.urlretrieve(model_url, zip_path)
@@ -174,18 +188,8 @@ class ModelManager:
                     else:
                         os.remove(path)
             return False
-    
-    @staticmethod
-    async def ensure_model(language: str) -> bool:
-        """Ensure model exists, download if necessary"""
-        if ModelManager.validate_model(language):
-            logger.info(f"Model already exists and is valid for {language}")
-            return True
-        
-        logger.info(f"Model not found for {language}, attempting download...")
-        return await ModelManager.download_model(language)
 
-# Simple state management
+# Simple state management - no over-engineering
 class SimpleState:
     def __init__(self):
         self.sessions = {}
@@ -199,8 +203,7 @@ class SimpleState:
                 "progress": {"transcription": 0, "diarization": 0},
                 "websocket": None,
                 "start_time": None,
-                "task": None,
-                "language": "pt"  # Default language
+                "task": None
             }
             logger.info(f"Session created: {session_id}")
             return True
@@ -252,11 +255,11 @@ class SimpleWebSocketManager:
                 logger.error(f"Send message failed: {e}")
                 await self.disconnect(session_id)
 
-# Global instances
+# Global instances - keep it simple
 app_state = SimpleState()
 websocket_manager = SimpleWebSocketManager()
 
-# Updated HTML with better error display
+# Modern, responsive HTML interface
 HTML_INTERFACE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -319,7 +322,6 @@ HTML_INTERFACE = """
         .status.ready { background: #d4edda; color: #155724; }
         .status.recording { background: #f8d7da; color: #721c24; }
         .status.processing { background: #cce5ff; color: #004085; }
-        .status.downloading { background: #e2e3e5; color: #383d41; }
         .status.error { background: #f5c6cb; color: #721c24; }
 
         .controls {
@@ -485,16 +487,6 @@ HTML_INTERFACE = """
             background: white;
         }
 
-        .error-details {
-            background: #f8d7da;
-            border: 1px solid #f5c6cb;
-            border-radius: 8px;
-            padding: 1rem;
-            margin: 1rem 0;
-            font-size: 0.9rem;
-            text-align: left;
-        }
-
         /* Responsive design */
         @media (max-width: 600px) {
             .app {
@@ -526,16 +518,6 @@ HTML_INTERFACE = """
         .recording .btn-danger {
             animation: pulse 2s infinite;
         }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .downloading::before {
-            content: "⬇ ";
-            animation: spin 1s linear infinite;
-        }
     </style>
 </head>
 <body>
@@ -545,10 +527,10 @@ HTML_INTERFACE = """
         
         <div class="settings">
             <select id="language">
-                <option value="pt">Português</option>
                 <option value="en">English</option>
-                <option value="es">Español</option>
-                <option value="fr">Français</option>
+                <option value="pt">Portuguese</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
             </select>
         </div>
 
@@ -585,7 +567,6 @@ HTML_INTERFACE = """
             </div>
         </div>
 
-        <div id="error-details" class="error-details" style="display: none;"></div>
         <div id="results" class="results"></div>
     </div>
 
@@ -615,7 +596,6 @@ HTML_INTERFACE = """
                 this.waveformContent = document.getElementById('waveform-content');
                 this.progressEl = document.getElementById('progress');
                 this.resultsEl = document.getElementById('results');
-                this.errorDetailsEl = document.getElementById('error-details');
                 this.transcriptionFill = document.getElementById('transcription-fill');
                 this.diarizationFill = document.getElementById('diarization-fill');
                 this.transcriptionPercent = document.getElementById('transcription-percent');
@@ -648,7 +628,6 @@ HTML_INTERFACE = """
                     this.setStatus('Ready to record', 'ready');
                     this.startBtn.disabled = false;
                     this.reconnectAttempts = 0;
-                    this.hideError();
                 };
                 
                 this.ws.onmessage = (event) => {
@@ -702,16 +681,6 @@ HTML_INTERFACE = """
 
             handleMessage(message) {
                 switch (message.type) {
-                    case 'model_downloading':
-                        this.setStatus(`Downloading ${message.language} model... Please wait.`, 'downloading');
-                        this.startBtn.disabled = true;
-                        break;
-                        
-                    case 'model_ready':
-                        this.setStatus('Model ready! You can start recording.', 'ready');
-                        this.startBtn.disabled = false;
-                        break;
-                        
                     case 'recording_started':
                         this.isRecording = true;
                         this.setStatus('Recording...', 'recording');
@@ -719,7 +688,6 @@ HTML_INTERFACE = """
                         this.pauseBtn.disabled = false;
                         this.stopBtn.disabled = false;
                         this.showWaveform(true);
-                        this.hideError();
                         break;
                         
                     case 'recording_paused':
@@ -758,7 +726,6 @@ HTML_INTERFACE = """
                         
                     case 'error':
                         this.setStatus(`Error: ${message.message}`, 'error');
-                        this.showError(message.message, message.details);
                         this.resetControls();
                         this.showWaveform(false);
                         break;
@@ -768,19 +735,6 @@ HTML_INTERFACE = """
             setStatus(text, type) {
                 this.statusEl.textContent = text;
                 this.statusEl.className = `status ${type}`;
-            }
-
-            showError(message, details) {
-                if (details) {
-                    this.errorDetailsEl.innerHTML = `<strong>Technical Details:</strong><br>${details}`;
-                    this.errorDetailsEl.style.display = 'block';
-                } else {
-                    this.hideError();
-                }
-            }
-
-            hideError() {
-                this.errorDetailsEl.style.display = 'none';
             }
 
             showWaveform(show) {
@@ -891,7 +845,7 @@ async def main_interface():
 async def api_status():
     return {"message": "TranscrevAI API is running", "version": "1.0.0"}
 
-# WebSocket handler with model management
+# WebSocket handler - clean and simple
 @app.websocket("/ws/{session_id}")
 async def websocket_handler(websocket: WebSocket, session_id: str):
     await websocket_manager.connect(websocket, session_id)
@@ -913,7 +867,7 @@ async def websocket_handler(websocket: WebSocket, session_id: str):
         logger.error(f"WebSocket error: {e}")
         await websocket_manager.disconnect(session_id)
 
-# Enhanced message handler with model management
+# Simple message handler with background model management
 async def handle_websocket_message(session_id: str, data: dict):
     message_type = data.get("type")
     message_data = data.get("data", {})
@@ -931,29 +885,16 @@ async def handle_websocket_message(session_id: str, data: dict):
     if message_type == "start_recording":
         if not session["recording"]:
             try:
-                language = message_data.get("language", "pt")
-                app_state.update_session(session_id, {"language": language})
+                language = message_data.get("language", "en")
                 
-                # Check and download model if needed
-                await websocket_manager.send_message(session_id, {
-                    "type": "model_downloading",
-                    "language": language,
-                    "message": f"Checking {language} model..."
-                })
-                
-                model_ready = await ModelManager.ensure_model(language)
+                # Silently ensure model exists (no UI feedback)
+                model_ready = await ModelManager.ensure_model_silent(language)
                 if not model_ready:
                     await websocket_manager.send_message(session_id, {
                         "type": "error",
-                        "message": f"Failed to load {language} model",
-                        "details": "Model download or validation failed. Please check your internet connection and try again."
+                        "message": f"Model for {language} is not available. Please try again later."
                     })
                     return
-                
-                await websocket_manager.send_message(session_id, {
-                    "type": "model_ready",
-                    "language": language
-                })
                 
                 # Start recording
                 await recorder.start_recording()
@@ -974,11 +915,9 @@ async def handle_websocket_message(session_id: str, data: dict):
                 app_state.update_session(session_id, {"task": task})
                 
             except Exception as e:
-                logger.error(f"Start recording error: {e}")
                 await websocket_manager.send_message(session_id, {
                     "type": "error",
-                    "message": f"Failed to start recording: {str(e)}",
-                    "details": f"Technical error: {str(e)}"
+                    "message": f"Failed to start recording: {str(e)}"
                 })
     
     elif message_type == "stop_recording":
@@ -999,7 +938,6 @@ async def handle_websocket_message(session_id: str, data: dict):
                 })
                 
             except Exception as e:
-                logger.error(f"Stop recording error: {e}")
                 await websocket_manager.send_message(session_id, {
                     "type": "error",
                     "message": f"Failed to stop recording: {str(e)}"
@@ -1030,7 +968,7 @@ async def monitor_audio(session_id: str):
         session = app_state.get_session(session_id)
         while session and session["recording"]:
             if not session["paused"]:
-                # Simulate audio level
+                # Simulate audio level - replace with real audio level detection
                 import random
                 level = random.uniform(0.1, 1.0) if random.random() > 0.3 else 0.0
                 
@@ -1044,8 +982,8 @@ async def monitor_audio(session_id: str):
     except Exception as e:
         logger.error(f"Audio monitoring error: {e}")
 
-# Enhanced processing pipeline with better error handling
-async def process_audio(session_id: str, language: str = "pt"):
+# Enhanced processing pipeline with correct model path
+async def process_audio(session_id: str, language: str = "en"):
     try:
         session = app_state.get_session(session_id)
         if not session:
@@ -1063,19 +1001,17 @@ async def process_audio(session_id: str, language: str = "pt"):
         audio_file = session["recorder"].output_file
         
         # Validate file
-        if not os.path.exists(audio_file):
-            raise Exception(f"Audio file not found: {audio_file}")
-            
-        file_size = os.path.getsize(audio_file)
-        if file_size == 0:
-            raise Exception("Audio file is empty")
+        if not os.path.exists(audio_file) or os.path.getsize(audio_file) == 0:
+            await websocket_manager.send_message(session_id, {
+                "type": "error",
+                "message": "Audio file is empty or missing"
+            })
+            return
         
-        logger.info(f"Processing: {audio_file} (size: {file_size} bytes)")
+        logger.info(f"Processing: {audio_file}")
         
-        # Double-check model before transcription
+        # Get correct model path
         model_path = ModelManager.get_model_path(language)
-        if not ModelManager.validate_model(language):
-            raise Exception(f"Model validation failed for {language}")
         
         # Transcription with progress
         transcription_data = []
@@ -1097,45 +1033,38 @@ async def process_audio(session_id: str, language: str = "pt"):
                 
                 transcription_data = data
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Transcription failed: {error_msg}")
-            
-            # Provide specific error details
-            details = f"Language: {language}\nModel path: {model_path}\nAudio file: {audio_file}\nFile size: {file_size} bytes\nError: {error_msg}"
-            
+            logger.error(f"Transcription failed: {e}")
             await websocket_manager.send_message(session_id, {
                 "type": "error",
-                "message": "Transcription failed. Please try again or check if the model is properly installed.",
-                "details": details
+                "message": f"Transcription failed: {str(e)}"
             })
             return
         
-        # Diarization (optional, can fail gracefully)
+        # Diarization
         try:
             diarizer = SpeakerDiarization()
             diarization_segments = await diarizer.diarize_audio(audio_file)
             unique_speakers = len(set(seg.get("speaker", "Unknown") for seg in diarization_segments))
+            
+            app_state.update_session(session_id, {
+                "progress": {"transcription": 100, "diarization": 100}
+            })
+            
+            await websocket_manager.send_message(session_id, {
+                "type": "progress",
+                "transcription": 100,
+                "diarization": 100
+            })
         except Exception as e:
-            logger.warning(f"Diarization failed: {e}")
+            logger.error(f"Diarization failed: {e}")
             diarization_segments = []
             unique_speakers = 0
         
-        # Update final progress
-        app_state.update_session(session_id, {
-            "progress": {"transcription": 100, "diarization": 100}
-        })
-        
-        await websocket_manager.send_message(session_id, {
-            "type": "progress",
-            "transcription": 100,
-            "diarization": 100
-        })
-        
-        # Generate SRT (optional, can fail gracefully)
+        # Generate SRT
         try:
             srt_file = await generate_srt(transcription_data, diarization_segments)
         except Exception as e:
-            logger.warning(f"SRT generation failed: {e}")
+            logger.error(f"SRT generation failed: {e}")
             srt_file = None
         
         # Send results
@@ -1149,12 +1078,10 @@ async def process_audio(session_id: str, language: str = "pt"):
         })
         
     except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Processing error: {error_msg}")
+        logger.error(f"Processing error: {e}")
         await websocket_manager.send_message(session_id, {
             "type": "error",
-            "message": f"Processing failed: {error_msg}",
-            "details": f"Session: {session_id}\nLanguage: {language}\nError: {error_msg}"
+            "message": f"Processing failed: {str(e)}"
         })
 
 # Production startup
@@ -1164,5 +1091,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         log_level="info",
-        access_log=False
+        access_log=False  # Disable for production
     )
