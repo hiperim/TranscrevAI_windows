@@ -32,12 +32,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Model URLs for auto-download (background functionality)
+# Model URLs for auto-download (background functionality) - Removed French
 MODEL_URLS = {
     "pt": "https://alphacephei.com/vosk/models/vosk-model-pt-0.3.zip",
     "en": "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip",
-    "es": "https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip",
-    "fr": "https://alphacephei.com/vosk/models/vosk-model-fr-0.22.zip"
+    "es": "https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip"
 }
 
 class ModelManager:
@@ -189,6 +188,98 @@ class ModelManager:
                         os.remove(path)
             return False
 
+# Enhanced SRT Generator with fixed format
+async def generate_srt_fixed(transcription_data, diarization_segments, filename="output.srt"):
+    """Fixed SRT generation with proper format"""
+    try:
+        if not transcription_data or not isinstance(transcription_data, list):
+            logger.warning("No transcription data for SRT generation")
+            return None
+        
+        if not diarization_segments:
+            diarization_segments = []
+        
+        # Use FileManager to get correct output directory
+        output_dir = FileManager.get_data_path("transcripts")
+        base_name = filename.split('.')[0] if filename != "output.srt" else "transcript"
+        timestamp = int(time.time())
+        unique_name = f"{base_name}_{timestamp}.srt"
+        output_path = os.path.join(output_dir, unique_name)
+        
+        # Ensure output directory exists
+        os.makedirs(output_dir, exist_ok=True)
+        
+        combined_segments = []
+        
+        # If we have diarization segments, use them
+        if diarization_segments:
+            for d_segment in diarization_segments:
+                if isinstance(d_segment, dict) and "start" in d_segment and "end" in d_segment:
+                    # Find transcription text that falls within this diarization segment
+                    matched_texts = []
+                    for t_data in transcription_data:
+                        if isinstance(t_data, dict) and "text" in t_data:
+                            # Get timing from transcription or use diarization timing
+                            t_start = t_data.get("start", d_segment["start"])
+                            if d_segment["start"] <= t_start < d_segment["end"]:
+                                matched_texts.append(t_data["text"])
+                    
+                    combined_segments.append({
+                        "start": d_segment["start"],
+                        "end": d_segment["end"],
+                        "speaker": d_segment.get("speaker", "Speaker"),
+                        "text": " ".join(matched_texts) if matched_texts else ""
+                    })
+        else:
+            # No diarization, use transcription data directly
+            for i, t_data in enumerate(transcription_data):
+                if isinstance(t_data, dict) and "text" in t_data and t_data["text"].strip():
+                    start_time = t_data.get("start", i * 2.0)  # Default 2-second segments
+                    end_time = t_data.get("end", start_time + 2.0)
+                    
+                    combined_segments.append({
+                        "start": start_time,
+                        "end": end_time,
+                        "speaker": "Speaker",
+                        "text": t_data["text"]
+                    })
+        
+        # Filter out empty segments
+        combined_segments = [s for s in combined_segments if s.get("text", "").strip()]
+        
+        if not combined_segments:
+            logger.warning("No valid segments for SRT generation")
+            return None
+        
+        # Write SRT file
+        with open(output_path, 'w', encoding='utf-8') as f:
+            for idx, segment in enumerate(combined_segments, 1):
+                # FIXED: Use proper arrow syntax instead of HTML entity
+                f.write(f"{idx}\n")
+                f.write(f"{format_time(segment['start'])} --> {format_time(segment['end'])}\n")
+                f.write(f"{segment['speaker']}: {segment['text']}\n\n")
+        
+        logger.info(f"SRT file generated: {output_path}")
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"SRT generation failed: {str(e)}")
+        return None
+
+def format_time(seconds: float) -> str:
+    """Format time in seconds to SRT time format (HH:MM:SS,mmm)"""
+    try:
+        if not isinstance(seconds, (int, float)) or seconds < 0:
+            seconds = 0.0
+            
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        sec = seconds % 60
+        
+        return f"{hours:02d}:{minutes:02d}:{sec:06.3f}".replace('.', ',')
+    except Exception:
+        return "00:00:00,000"
+
 # Simple state management - no over-engineering
 class SimpleState:
     def __init__(self):
@@ -267,7 +358,7 @@ class SimpleWebSocketManager:
 app_state = SimpleState()
 websocket_manager = SimpleWebSocketManager()
 
-# Modern, responsive HTML interface
+# Modern, responsive HTML interface with file path notifications
 HTML_INTERFACE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -301,6 +392,7 @@ HTML_INTERFACE = """
             max-width: 600px;
             width: 90%;
             text-align: center;
+            position: relative;
         }
 
         .logo {
@@ -331,6 +423,37 @@ HTML_INTERFACE = """
         .status.recording { background: #f8d7da; color: #721c24; }
         .status.processing { background: #cce5ff; color: #004085; }
         .status.error { background: #f5c6cb; color: #721c24; }
+
+        .file-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #28a745;
+            color: white;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            max-width: 400px;
+            z-index: 1000;
+            transform: translateX(450px);
+            transition: transform 0.3s ease;
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+
+        .file-notification.show {
+            transform: translateX(0);
+        }
+
+        .file-notification .close-btn {
+            float: right;
+            background: none;
+            border: none;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
 
         .controls {
             display: flex;
@@ -515,6 +638,19 @@ HTML_INTERFACE = """
                 width: 100%;
                 max-width: 250px;
             }
+
+            .file-notification {
+                position: fixed;
+                top: 10px;
+                left: 10px;
+                right: 10px;
+                max-width: none;
+                transform: translateY(-100px);
+            }
+
+            .file-notification.show {
+                transform: translateY(0);
+            }
         }
 
         /* Animations */
@@ -538,7 +674,6 @@ HTML_INTERFACE = """
                 <option value="en">English</option>
                 <option value="pt">Portuguese</option>
                 <option value="es">Spanish</option>
-                <option value="fr">French</option>
             </select>
         </div>
 
@@ -578,6 +713,12 @@ HTML_INTERFACE = """
         <div id="results" class="results"></div>
     </div>
 
+    <!-- File notification popup -->
+    <div id="fileNotification" class="file-notification">
+        <button class="close-btn" onclick="this.parentElement.classList.remove('show')">&times;</button>
+        <div id="fileContent"></div>
+    </div>
+
     <script>
         class TranscrevAI {
             constructor() {
@@ -608,6 +749,8 @@ HTML_INTERFACE = """
                 this.diarizationFill = document.getElementById('diarization-fill');
                 this.transcriptionPercent = document.getElementById('transcription-percent');
                 this.diarizationPercent = document.getElementById('diarization-percent');
+                this.fileNotification = document.getElementById('fileNotification');
+                this.fileContent = document.getElementById('fileContent');
             }
 
             createWaveformBars() {
@@ -687,6 +830,22 @@ HTML_INTERFACE = """
                 }
             }
 
+            showFileNotification(audioPath, srtPath) {
+                let content = `<strong>🎉 Files saved successfully!</strong><br><br>`;
+                content += `<strong>📹 Audio:</strong><br>${audioPath}<br><br>`;
+                if (srtPath) {
+                    content += `<strong>📝 Subtitles:</strong><br>${srtPath}`;
+                }
+                
+                this.fileContent.innerHTML = content;
+                this.fileNotification.classList.add('show');
+                
+                // Auto-hide after 5 seconds
+                setTimeout(() => {
+                    this.fileNotification.classList.remove('show');
+                }, 5000);
+            }
+
             handleMessage(message) {
                 switch (message.type) {
                     case 'recording_started':
@@ -730,6 +889,9 @@ HTML_INTERFACE = """
                         this.setStatus('Complete!', 'ready');
                         this.showResults(message);
                         this.showProgress(false);
+                        
+                        // Show file paths notification
+                        this.showFileNotification(message.audio_file, message.srt_file);
                         break;
                         
                     case 'error':
@@ -992,7 +1154,7 @@ async def monitor_audio(session_id: str):
     except Exception as e:
         logger.error(f"Audio monitoring error: {e}")
 
-# Enhanced processing pipeline with correct paths and error handling
+# Enhanced processing pipeline with FIXED SRT generation
 async def process_audio(session_id: str, language: str = "en"):
     try:
         session = app_state.get_session(session_id)
@@ -1104,21 +1266,26 @@ async def process_audio(session_id: str, language: str = "en"):
             diarization_segments = []
             unique_speakers = 0
         
-        # Generate SRT (graceful fallback)
+        # Generate SRT with FIXED function
         srt_file = None
         if transcription_data and len(transcription_data) > 0:
             try:
-                srt_file = await generate_srt(transcription_data, diarization_segments)
+                srt_file = await generate_srt_fixed(transcription_data, diarization_segments)
+                if srt_file:
+                    logger.info(f"SRT generated successfully: {srt_file}")
+                else:
+                    logger.warning("SRT generation returned None")
             except Exception as e:
-                logger.warning(f"SRT generation failed: {e}")
+                logger.error(f"SRT generation failed: {e}")
         
-        # Send results
+        # Send results with file paths
         await websocket_manager.send_message(session_id, {
             "type": "processing_complete",
             "transcription_data": transcription_data,
             "diarization_segments": diarization_segments,
             "speakers_detected": unique_speakers,
             "srt_file": srt_file,
+            "audio_file": audio_file,  # Include audio file path
             "duration": session.get("duration", 0)
         })
         
