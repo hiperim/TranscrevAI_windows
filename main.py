@@ -34,8 +34,7 @@ app = FastAPI(
 MODEL_URLS = {
     "pt": "https://alphacephei.com/vosk/models/vosk-model-pt-0.3.zip",
     "en": "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip",
-    "es": "https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip",
-    "fr": "https://alphacephei.com/vosk/models/vosk-model-fr-0.22.zip"
+    "es": "https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip"
 }
 
 class ModelManager:
@@ -507,7 +506,6 @@ HTML_INTERFACE = """
                 <option value="pt">Português</option>
                 <option value="en">English</option>
                 <option value="es">Español</option>
-                <option value="fr">Français</option>
             </select>
         </div>
 
