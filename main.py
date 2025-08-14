@@ -196,8 +196,16 @@ class SimpleState:
         
     def create_session(self, session_id: str):
         try:
+            # Create AudioRecorder with correct data path
+            output_file = os.path.join(
+                r"C:\transcrevai_android\TranscrevAI_commit34\data", 
+                "recordings", 
+                f"recording_{int(time.time())}.wav"
+            )
+            recorder = AudioRecorder(output_file=output_file)
+            
             self.sessions[session_id] = {
-                "recorder": AudioRecorder(),
+                "recorder": recorder,
                 "recording": False,
                 "paused": False,
                 "progress": {"transcription": 0, "diarization": 0},
@@ -845,7 +853,7 @@ async def main_interface():
 async def api_status():
     return {"message": "TranscrevAI API is running", "version": "1.0.0"}
 
-# WebSocket handler - clean and simple
+# WebSocket handler - clean and simple with model management
 @app.websocket("/ws/{session_id}")
 async def websocket_handler(websocket: WebSocket, session_id: str):
     await websocket_manager.connect(websocket, session_id)
@@ -867,7 +875,7 @@ async def websocket_handler(websocket: WebSocket, session_id: str):
         logger.error(f"WebSocket error: {e}")
         await websocket_manager.disconnect(session_id)
 
-# Simple message handler with background model management
+# Enhanced message handler with model management
 async def handle_websocket_message(session_id: str, data: dict):
     message_type = data.get("type")
     message_data = data.get("data", {})
@@ -892,7 +900,7 @@ async def handle_websocket_message(session_id: str, data: dict):
                 if not model_ready:
                     await websocket_manager.send_message(session_id, {
                         "type": "error",
-                        "message": f"Model for {language} is not available. Please try again later."
+                        "message": f"Model for {language} is not available. Please check your internet connection and try again."
                     })
                     return
                 
@@ -901,7 +909,8 @@ async def handle_websocket_message(session_id: str, data: dict):
                 
                 app_state.update_session(session_id, {
                     "recording": True,
-                    "start_time": time.time()
+                    "start_time": time.time(),
+                    "language": language
                 })
                 
                 await websocket_manager.send_message(session_id, {
@@ -915,9 +924,10 @@ async def handle_websocket_message(session_id: str, data: dict):
                 app_state.update_session(session_id, {"task": task})
                 
             except Exception as e:
+                logger.error(f"Start recording error: {e}")
                 await websocket_manager.send_message(session_id, {
                     "type": "error",
-                    "message": f"Failed to start recording: {str(e)}"
+                    "message": f"Failed to start recording. Please check your microphone permissions and try again."
                 })
     
     elif message_type == "stop_recording":
@@ -962,7 +972,7 @@ async def handle_websocket_message(session_id: str, data: dict):
     elif message_type == "ping":
         await websocket_manager.send_message(session_id, {"type": "pong"})
 
-# Simple audio monitoring
+# Simple audio monitoring with better error handling
 async def monitor_audio(session_id: str):
     try:
         session = app_state.get_session(session_id)
@@ -982,7 +992,7 @@ async def monitor_audio(session_id: str):
     except Exception as e:
         logger.error(f"Audio monitoring error: {e}")
 
-# Enhanced processing pipeline with correct model path
+# Enhanced processing pipeline with correct paths and error handling
 async def process_audio(session_id: str, language: str = "en"):
     try:
         session = app_state.get_session(session_id)
@@ -1000,20 +1010,44 @@ async def process_audio(session_id: str, language: str = "en"):
             
         audio_file = session["recorder"].output_file
         
-        # Validate file
-        if not os.path.exists(audio_file) or os.path.getsize(audio_file) == 0:
+        # Enhanced file validation
+        if not os.path.exists(audio_file):
             await websocket_manager.send_message(session_id, {
                 "type": "error",
-                "message": "Audio file is empty or missing"
+                "message": "Audio file not found. Recording may have failed."
+            })
+            return
+            
+        file_size = os.path.getsize(audio_file)
+        if file_size == 0:
+            await websocket_manager.send_message(session_id, {
+                "type": "error",
+                "message": "No audio was recorded. Please check your microphone."
             })
             return
         
-        logger.info(f"Processing: {audio_file}")
+        # Check for minimum meaningful audio size (at least 1KB)
+        if file_size < 1024:
+            await websocket_manager.send_message(session_id, {
+                "type": "error",
+                "message": "Audio recording too short. Please record for at least 1 second."
+            })
+            return
+        
+        logger.info(f"Processing: {audio_file} (size: {file_size} bytes)")
         
         # Get correct model path
         model_path = ModelManager.get_model_path(language)
         
-        # Transcription with progress
+        # Validate model one more time before transcription
+        if not ModelManager.validate_model(language):
+            await websocket_manager.send_message(session_id, {
+                "type": "error",
+                "message": f"Model validation failed for {language}. Please try again."
+            })
+            return
+        
+        # Transcription with enhanced error handling
         transcription_data = []
         try:
             async for progress, data in transcribe_audio_with_progress(
@@ -1033,14 +1067,24 @@ async def process_audio(session_id: str, language: str = "en"):
                 
                 transcription_data = data
         except Exception as e:
-            logger.error(f"Transcription failed: {e}")
+            error_msg = str(e)
+            logger.error(f"Transcription failed: {error_msg}")
+            
+            # Provide user-friendly error messages
+            if "Feature extraction failed" in error_msg:
+                user_msg = "No speech detected in audio. Please speak clearly and try again."
+            elif "Model" in error_msg:
+                user_msg = f"Model error for {language}. Please try a different language or restart."
+            else:
+                user_msg = "Transcription failed. Please try recording again."
+            
             await websocket_manager.send_message(session_id, {
                 "type": "error",
-                "message": f"Transcription failed: {str(e)}"
+                "message": user_msg
             })
             return
         
-        # Diarization
+        # Diarization (graceful fallback)
         try:
             diarizer = SpeakerDiarization()
             diarization_segments = await diarizer.diarize_audio(audio_file)
@@ -1056,16 +1100,17 @@ async def process_audio(session_id: str, language: str = "en"):
                 "diarization": 100
             })
         except Exception as e:
-            logger.error(f"Diarization failed: {e}")
+            logger.warning(f"Diarization failed: {e}")
             diarization_segments = []
             unique_speakers = 0
         
-        # Generate SRT
-        try:
-            srt_file = await generate_srt(transcription_data, diarization_segments)
-        except Exception as e:
-            logger.error(f"SRT generation failed: {e}")
-            srt_file = None
+        # Generate SRT (graceful fallback)
+        srt_file = None
+        if transcription_data and len(transcription_data) > 0:
+            try:
+                srt_file = await generate_srt(transcription_data, diarization_segments)
+            except Exception as e:
+                logger.warning(f"SRT generation failed: {e}")
         
         # Send results
         await websocket_manager.send_message(session_id, {
@@ -1078,10 +1123,11 @@ async def process_audio(session_id: str, language: str = "en"):
         })
         
     except Exception as e:
-        logger.error(f"Processing error: {e}")
+        error_msg = str(e)
+        logger.error(f"Processing error: {error_msg}")
         await websocket_manager.send_message(session_id, {
             "type": "error",
-            "message": f"Processing failed: {str(e)}"
+            "message": "Processing failed. Please try again."
         })
 
 # Production startup
