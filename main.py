@@ -30,6 +30,13 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Create static directory if it doesn't exist
+static_dir = Path("static")
+static_dir.mkdir(exist_ok=True)
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # Enhanced session-based state management
 class AppState:
     def __init__(self):
@@ -160,6 +167,568 @@ class ConnectionManager:
 app_state = AppState()
 manager = ConnectionManager()
 
+# HTML Interface Template
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TranscrevAI - Audio Transcription</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 2rem;
+            max-width: 800px;
+            width: 90%;
+            margin: 2rem;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .header h1 {
+            color: #333;
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 1.1rem;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 0.8rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background: #2196F3;
+            color: white;
+        }
+        
+        .btn-secondary:hover:not(:disabled) {
+            background: #1976D2;
+            transform: translateY(-2px);
+        }
+        
+        .btn-danger {
+            background: #f44336;
+            color: white;
+        }
+        
+        .btn-danger:hover:not(:disabled) {
+            background: #da190b;
+            transform: translateY(-2px);
+        }
+        
+        .status {
+            text-align: center;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+        
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.recording {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .status.processing {
+            background: #cce5ff;
+            color: #004085;
+            border: 1px solid #99d6ff;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .progress-section {
+            margin: 2rem 0;
+        }
+        
+        .progress-item {
+            margin: 1rem 0;
+        }
+        
+        .progress-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #45a049);
+            transition: width 0.3s ease;
+            border-radius: 10px;
+        }
+        
+        .waveform {
+            height: 100px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            margin: 1rem 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px dashed #ddd;
+        }
+        
+        .waveform.active {
+            background: #e8f5e8;
+            border-color: #4CAF50;
+        }
+        
+        .results {
+            margin-top: 2rem;
+            padding-top: 2rem;
+            border-top: 1px solid #eee;
+        }
+        
+        .results h3 {
+            margin-bottom: 1rem;
+            color: #333;
+        }
+        
+        .transcription-result {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            border-left: 4px solid #4CAF50;
+        }
+        
+        .speaker-info {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 0.5rem;
+        }
+        
+        .settings {
+            margin: 1rem 0;
+        }
+        
+        .settings label {
+            display: block;
+            margin: 0.5rem 0;
+            font-weight: 500;
+        }
+        
+        .settings select {
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+            width: 200px;
+        }
+        
+        @media (max-width: 600px) {
+            .container {
+                margin: 1rem;
+                padding: 1rem;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .btn {
+                width: 100%;
+                max-width: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎤 TranscrevAI</h1>
+            <p>Real-time Audio Transcription with Speaker Diarization</p>
+        </div>
+        
+        <div class="settings">
+            <label for="language-select">Language:</label>
+            <select id="language-select">
+                <option value="en">English</option>
+                <option value="pt">Portuguese</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+            </select>
+        </div>
+        
+        <div class="status" id="status">Connecting...</div>
+        
+        <div class="controls">
+            <button class="btn btn-primary" id="start-btn" disabled>Start Recording</button>
+            <button class="btn btn-secondary" id="pause-btn" disabled>Pause</button>
+            <button class="btn btn-danger" id="stop-btn" disabled>Stop Recording</button>
+        </div>
+        
+        <div class="waveform" id="waveform">
+            <span id="waveform-text">Audio waveform will appear here</span>
+        </div>
+        
+        <div class="progress-section" id="progress-section" style="display: none;">
+            <div class="progress-item">
+                <div class="progress-label">
+                    <span>Transcription</span>
+                    <span id="transcription-percent">0%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="transcription-progress" style="width: 0%;"></div>
+                </div>
+            </div>
+            
+            <div class="progress-item">
+                <div class="progress-label">
+                    <span>Speaker Diarization</span>
+                    <span id="diarization-percent">0%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="diarization-progress" style="width: 0%;"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="results" id="results" style="display: none;">
+            <h3>Results</h3>
+            <div id="results-content"></div>
+        </div>
+    </div>
+
+    <script>
+        class TranscrevAI {
+            constructor() {
+                this.ws = null;
+                this.sessionId = this.generateSessionId();
+                this.isRecording = false;
+                this.isPaused = false;
+                this.isConnected = false;
+                
+                this.initializeElements();
+                this.initializeWebSocket();
+                this.setupEventListeners();
+            }
+            
+            generateSessionId() {
+                return 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+            }
+            
+            initializeElements() {
+                this.statusEl = document.getElementById('status');
+                this.startBtn = document.getElementById('start-btn');
+                this.pauseBtn = document.getElementById('pause-btn');
+                this.stopBtn = document.getElementById('stop-btn');
+                this.languageSelect = document.getElementById('language-select');
+                this.waveformEl = document.getElementById('waveform');
+                this.waveformText = document.getElementById('waveform-text');
+                this.progressSection = document.getElementById('progress-section');
+                this.resultsEl = document.getElementById('results');
+                this.resultsContent = document.getElementById('results-content');
+                this.transcriptionProgress = document.getElementById('transcription-progress');
+                this.diarizationProgress = document.getElementById('diarization-progress');
+                this.transcriptionPercent = document.getElementById('transcription-percent');
+                this.diarizationPercent = document.getElementById('diarization-percent');
+            }
+            
+            initializeWebSocket() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/${this.sessionId}`;
+                
+                this.ws = new WebSocket(wsUrl);
+                
+                this.ws.onopen = () => {
+                    this.isConnected = true;
+                    this.updateStatus('Connected and ready', 'connected');
+                    this.startBtn.disabled = false;
+                };
+                
+                this.ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    this.handleMessage(message);
+                };
+                
+                this.ws.onclose = () => {
+                    this.isConnected = false;
+                    this.updateStatus('Connection lost. Refreshing...', 'error');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 3000);
+                };
+                
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    this.updateStatus('Connection error', 'error');
+                };
+            }
+            
+            setupEventListeners() {
+                this.startBtn.addEventListener('click', () => this.startRecording());
+                this.pauseBtn.addEventListener('click', () => this.togglePause());
+                this.stopBtn.addEventListener('click', () => this.stopRecording());
+                
+                // Heartbeat
+                setInterval(() => {
+                    if (this.isConnected && this.ws.readyState === WebSocket.OPEN) {
+                        this.sendMessage('ping');
+                    }
+                }, 30000);
+            }
+            
+            sendMessage(type, data = {}) {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({ type, data }));
+                }
+            }
+            
+            handleMessage(message) {
+                switch (message.type) {
+                    case 'config':
+                        console.log('Configuration received:', message.data);
+                        break;
+                        
+                    case 'recording_started':
+                        this.isRecording = true;
+                        this.updateStatus('Recording in progress...', 'recording');
+                        this.startBtn.disabled = true;
+                        this.pauseBtn.disabled = false;
+                        this.stopBtn.disabled = false;
+                        this.waveformEl.classList.add('active');
+                        this.waveformText.textContent = 'Recording audio...';
+                        break;
+                        
+                    case 'recording_paused':
+                        this.isPaused = true;
+                        this.updateStatus('Recording paused', 'recording');
+                        this.pauseBtn.textContent = 'Resume';
+                        break;
+                        
+                    case 'recording_resumed':
+                        this.isPaused = false;
+                        this.updateStatus('Recording in progress...', 'recording');
+                        this.pauseBtn.textContent = 'Pause';
+                        break;
+                        
+                    case 'recording_stopped':
+                        this.isRecording = false;
+                        this.isPaused = false;
+                        this.updateStatus('Processing audio...', 'processing');
+                        this.startBtn.disabled = false;
+                        this.pauseBtn.disabled = true;
+                        this.pauseBtn.textContent = 'Pause';
+                        this.stopBtn.disabled = true;
+                        this.waveformEl.classList.remove('active');
+                        this.waveformText.textContent = 'Processing...';
+                        this.progressSection.style.display = 'block';
+                        break;
+                        
+                    case 'audio_level':
+                        this.updateWaveform(message.level);
+                        break;
+                        
+                    case 'progress':
+                        this.updateProgress(message.transcription, message.diarization);
+                        break;
+                        
+                    case 'processing_complete':
+                        this.handleProcessingComplete(message);
+                        break;
+                        
+                    case 'error':
+                        this.updateStatus(`Error: ${message.message}`, 'error');
+                        this.resetControls();
+                        break;
+                        
+                    case 'pong':
+                        // Heartbeat response
+                        break;
+                        
+                    default:
+                        console.log('Unknown message:', message);
+                }
+            }
+            
+            updateStatus(text, className) {
+                this.statusEl.textContent = text;
+                this.statusEl.className = `status ${className}`;
+            }
+            
+            updateWaveform(level) {
+                if (this.isRecording && !this.isPaused) {
+                    const intensity = Math.floor(level * 100);
+                    this.waveformText.textContent = `Recording... Level: ${intensity}%`;
+                }
+            }
+            
+            updateProgress(transcription, diarization) {
+                this.transcriptionProgress.style.width = `${transcription}%`;
+                this.diarizationProgress.style.width = `${diarization}%`;
+                this.transcriptionPercent.textContent = `${transcription}%`;
+                this.diarizationPercent.textContent = `${diarization}%`;
+            }
+            
+            handleProcessingComplete(message) {
+                this.updateStatus('Processing complete!', 'connected');
+                this.progressSection.style.display = 'none';
+                this.resultsEl.style.display = 'block';
+                
+                let resultsHtml = '';
+                
+                if (message.speakers_detected > 0) {
+                    resultsHtml += `<div class="speaker-info">Detected ${message.speakers_detected} speaker(s)</div>`;
+                }
+                
+                if (message.transcription_data && message.transcription_data.length > 0) {
+                    message.transcription_data.forEach((item, index) => {
+                        resultsHtml += `
+                            <div class="transcription-result">
+                                <div class="speaker-info">Segment ${index + 1}</div>
+                                <div>${item.text || 'No transcription available'}</div>
+                            </div>
+                        `;
+                    });
+                } else {
+                    resultsHtml += `
+                        <div class="transcription-result">
+                            <div>No transcription data available</div>
+                        </div>
+                    `;
+                }
+                
+                if (message.srt_file) {
+                    resultsHtml += `
+                        <div class="transcription-result">
+                            <div class="speaker-info">SRT File: ${message.srt_file}</div>
+                        </div>
+                    `;
+                }
+                
+                this.resultsContent.innerHTML = resultsHtml;
+                this.resetControls();
+            }
+            
+            resetControls() {
+                this.isRecording = false;
+                this.isPaused = false;
+                this.startBtn.disabled = false;
+                this.pauseBtn.disabled = true;
+                this.pauseBtn.textContent = 'Pause';
+                this.stopBtn.disabled = true;
+                this.waveformEl.classList.remove('active');
+                this.waveformText.textContent = 'Ready for next recording';
+            }
+            
+            startRecording() {
+                if (!this.isConnected) return;
+                
+                const language = this.languageSelect.value;
+                this.sendMessage('start_recording', { language });
+                this.resultsEl.style.display = 'none';
+                this.progressSection.style.display = 'none';
+            }
+            
+            togglePause() {
+                if (!this.isRecording) return;
+                
+                if (this.isPaused) {
+                    this.sendMessage('resume_recording');
+                } else {
+                    this.sendMessage('pause_recording');
+                }
+            }
+            
+            stopRecording() {
+                if (!this.isRecording) return;
+                
+                this.sendMessage('stop_recording');
+            }
+        }
+        
+        // Initialize the application when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new TranscrevAI();
+        });
+    </script>
+</body>
+</html>
+"""
+
 # Model validation helper
 def validate_models():
     """Validate that required models are available"""
@@ -218,10 +787,16 @@ async def health_check():
         "active_sessions": len(app_state.sessions)
     }
 
-# Root endpoint
-@app.get("/")
-async def root():
-    """Root endpoint"""
+# Main HTML interface
+@app.get("/", response_class=HTMLResponse)
+async def get_main_interface():
+    """Serve the main HTML interface"""
+    return HTMLResponse(content=HTML_TEMPLATE)
+
+# API info endpoint
+@app.get("/api")
+async def api_info():
+    """API information endpoint"""
     return {"message": "TranscrevAI API is running", "version": "1.0.0"}
 
 # WebSocket endpoint with enhanced error handling
