@@ -30,6 +30,12 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
             diarization_segments = []
         elif not isinstance(diarization_segments, list):
             raise ValueError("Diarization segments must be a list")
+        
+        # Debug logging
+        logger.info(f"SRT Generation - Transcription data: {len(transcription_data)} items")
+        logger.info(f"SRT Generation - Diarization segments: {len(diarization_segments)} items")
+        if transcription_data:
+            logger.info(f"First transcription item: {transcription_data[0] if transcription_data else 'None'}")
 
         # If filename contains directory path, use provided path
         dirname = os.path.dirname(filename)
@@ -96,8 +102,19 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
                 combined_segments = [s for s in combined_segments if s.get("text", "").strip()]
                 
                 if not combined_segments:
-                    logger.warning("No valid segments for SRT generation")
-                    return None
+                    logger.warning("No valid segments created, attempting fallback with all transcription data")
+                    # Fallback: create segments from all available transcription text
+                    all_text = " ".join([t.get("text", "") for t in transcription_data if isinstance(t, dict) and t.get("text", "").strip()])
+                    if all_text.strip():
+                        combined_segments = [{
+                            "start": 0.0,
+                            "end": 5.0,  # Default 5 second segment
+                            "speaker": "Speaker",
+                            "text": all_text.strip()
+                        }]
+                    else:
+                        logger.error("No valid text found in transcription data")
+                        return None
 
                 # Write SRT content to temp file with error handling
                 try:

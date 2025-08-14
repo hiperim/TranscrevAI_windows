@@ -216,20 +216,31 @@ class SpeakerDiarization:
             vad_proc_wav = os.path.join(FileManager.get_data_path("processed"), "vad_processed.wav")
             wavfile.write(vad_proc_wav, Fs, (x_filt * 32768).astype(np.int16))
             
-            # Extract features with safe FFT
+            # Extract features with safe FFT and better validation
             try:
+                # Ensure we have sufficient audio length for feature extraction
+                min_audio_length = 2.0  # 2 seconds minimum
+                if len(x_filt) / Fs < min_audio_length:
+                    logger.warning(f"Audio too short for proper diarization: {len(x_filt)/Fs:.2f}s")
+                    # Return single speaker for short audio
+                    return [{
+                        "start": 0.0,
+                        "end": len(x_filt) / Fs,
+                        "speaker": "Speaker_1"
+                    }]
+                
                 with patch("scipy.fftpack.fft", new=self.safe_fft):
                     features = mid_feature_extraction(
                         signal=x_filt,
                         sampling_rate=Fs,
-                        mid_window=1.0,
+                        mid_window=min(1.0, len(x_filt) / Fs / 4),  # Adaptive window
                         mid_step=0.5,
                         short_window=0.05,
                         short_step=0.05
                     )
                     
                 if not features or len(features) < 2:
-                    raise ValueError("Feature extraction failed")
+                    raise ValueError("Feature extraction failed - insufficient data")
                     
                 mid_term_features = features[0]
                 if mid_term_features.shape[1] < 2:
