@@ -1,0 +1,52 @@
+# FastAPI and server dependencies
+fastapi>=0.104.0
+uvicorn==0.34.3
+websockets>=12.0
+python-multipart>=0.0.6
+
+# Audio processing dependencies
+static-ffmpeg>=2.5
+sounddevice>=0.4.6
+soundfile>=0.12.1
+librosa>=0.10.1
+scipy>=1.11.0
+numpy>=1.24.0
+pyAudioAnalysis>=0.3.14
+
+# Speech recognition
+vosk>=0.3.45
+
+# File operations
+aiofiles>=23.2.0
+requests>=2.31.0
+
+# Windows-specific dependencies
+pywin32>=306; sys_platform == "win32"
+psutil>=5.9.0
+
+# Testing dependencies
+pytest>=8.3.4
+pytest-asyncio>=0.23.3
+pytest-mock>=3.12.0
+pytest-cov>=3.0
+pytest-timeout>=2.1.0
+
+# Development dependencies
+python-dotenv>=1.0.1
+
+# Data science and visualization
+matplotlib>=3.8.3
+plotly>=6.0.0
+scikit-learn>=1.6.1
+
+# Audio format support
+pydub>=0.25.1
+eyed3>=0.9.7
+
+# Async utils
+tenacity>=9.0.0
+async-timeout>=5.0.1
+
+# Additional utils
+regex>=2023.10.3
+pathlib2>=2.3.7

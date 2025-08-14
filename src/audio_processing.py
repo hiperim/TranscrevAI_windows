@@ -5,26 +5,43 @@ import tempfile
 import sys
 import os
 from pathlib import Path
-import static_ffmpeg
-import wave
 import time
 from enum import Enum
-from ctypes import windll
-from src.logging_setup import setup_app_logging
-from src.file_manager import FileManager
-from config.app_config import APP_PACKAGE_NAME
+import shutil
+import psutil
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
-import shutil
-import psutil
-import win32file
-import win32con
-import pywintypes
+from typing import Optional
+
+# Import Windows-specific modules only if available
+try:
+    import win32file
+    import win32con
+    import pywintypes
+    from ctypes import windll
+    WINDOWS_AVAILABLE = True
+except ImportError:
+    WINDOWS_AVAILABLE = False
+    logging.warning("Windows-specific modules not available. Some features may be limited.")
+
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+    FFMPEG_AVAILABLE = True
+except ImportError:
+    FFMPEG_AVAILABLE = False
+    logging.warning("static_ffmpeg not available. Ensure FFmpeg is installed and in PATH.")
+
+from src.logging_setup import setup_app_logging
+from src.file_manager import FileManager
+from config.app_config import APP_PACKAGE_NAME
 
 logger = setup_app_logging()
 
 class AudioProcessingError(Exception):
+    """Custom exception for audio processing errors"""
+    
     class ErrorType(Enum):
         FILE_ACCESS = "file_access"
         FILE_OPERATION = "file_operation"
@@ -32,465 +49,507 @@ class AudioProcessingError(Exception):
         CONVERSION_FAILED = "conversion_failed"
         SYSTEM_ERROR = "system_error"
         INVALID_FORMAT = "invalid_format"
-    
-    def __init__(self, message, error_type):
-        self.error_type = (error_type if isinstance(error_type, self.ErrorType) else self.ErrorType(error_type))
-        super().__init__(f"{self.error_type.value}: {message}")
+        TIMEOUT = "timeout"
 
+    def __init__(self, message: str, error_type: ErrorType):
+        self.error_type = error_type
+        super().__init__(f"{error_type.value}: {message}")
+
+class CrossPlatformFileHandler:
+    """Cross-platform file handling with fallback methods"""
+
+    @staticmethod
+    async def safe_atomic_move(temp_path: str, final_path: str) -> bool:
+        """Safely move file with cross-platform atomic operations"""
+        try:
+            temp_path = Path(temp_path)
+            final_path = Path(final_path)
+
+            # Ensure destination directory exists
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Try Windows-specific atomic move if available
+            if WINDOWS_AVAILABLE and sys.platform == "win32":
+                return await CrossPlatformFileHandler._windows_atomic_move(temp_path, final_path)
+            else:
+                return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
+
+        except Exception as e:
+            logger.error(f"Atomic move failed: {e}")
+            return False
+
+    @staticmethod
+    async def _windows_atomic_move(temp_path: Path, final_path: Path) -> bool:
+        """Windows-specific atomic file move"""
+        if not WINDOWS_AVAILABLE:
+            return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
+
+        try:
+            # Kill any processes that might be locking the files
+            await CrossPlatformFileHandler._kill_file_locks(temp_path, final_path)
+
+            # Use Windows API for atomic move
+            success = windll.kernel32.MoveFileExW(
+                str(temp_path),
+                str(final_path),
+                win32con.MOVEFILE_REPLACE_EXISTING | win32con.MOVEFILE_WRITE_THROUGH
+            )
+
+            if success:
+                # Force filesystem sync
+                await CrossPlatformFileHandler._force_file_sync(final_path)
+                return True
+            else:
+                logger.warning(f"Windows MoveFileEx failed, falling back to standard move")
+                return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
+
+        except Exception as e:
+            logger.warning(f"Windows atomic move failed: {e}, falling back")
+            return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
+
+    @staticmethod
+    async def _posix_atomic_move(temp_path: Path, final_path: Path) -> bool:
+        """POSIX-compatible atomic file move"""
+        try:
+            # Use asyncio.to_thread for blocking operations
+            await asyncio.to_thread(shutil.move, str(temp_path), str(final_path))
+
+            # Verify the move was successful
+            if final_path.exists() and final_path.stat().st_size > 0:
+                return True
+            else:
+                logger.error("Move succeeded but file validation failed")
+                return False
+
+        except Exception as e:
+            logger.error(f"POSIX atomic move failed: {e}")
+            return False
+
+    @staticmethod
+    async def _kill_file_locks(temp_path: Path, final_path: Path):
+        """Kill processes that might be locking files"""
+        try:
+            # Kill any FFmpeg processes that might be locking our files
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    if any(x in proc.name().lower() for x in ['ffmpeg', 'ffprobe']):
+                        proc.kill()
+                        logger.debug(f"Killed process {proc.pid}: {proc.name()}")
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except Exception as e:
+            logger.debug(f"Error killing file locks: {e}")
+
+    @staticmethod
+    async def _force_file_sync(path: Path):
+        """Force file synchronization to disk"""
+        if WINDOWS_AVAILABLE and sys.platform == "win32":
+            try:
+                handle = win32file.CreateFile(
+                    str(path),
+                    win32con.GENERIC_READ,
+                    0,
+                    None,
+                    win32con.OPEN_EXISTING,
+                    0,
+                    None
+                )
+                windll.kernel32.FlushFileBuffers(handle.handle)
+                win32file.CloseHandle(handle)
+            except Exception as e:
+                logger.debug(f"Windows file sync failed: {e}")
+        else:
+            try:
+                # POSIX sync
+                await asyncio.to_thread(os.sync)
+            except Exception as e:
+                logger.debug(f"POSIX file sync failed: {e}")
+
+    @staticmethod
+    async def safe_delete(file_path: str) -> bool:
+        """Safely delete with retry logic"""
+        path = Path(file_path)
+        if not path.exists():
+            return True
+
+        for attempt in range(5):
+            try:
+                await asyncio.to_thread(path.unlink)
+                return True
+            except Exception as e:
+                logger.warning(f"Delete attempt {attempt + 1} failed: {e}")
+                await asyncio.sleep(0.5 * (attempt + 1))
+
+        logger.error(f"Failed to delete file after 5 attempts: {file_path}")
+        return False
 
 class AtomicAudioFile:
-    def __init__(self, extension=".wav"):
-        self.final_path = None
-        self.temp_path = self._create_temp(extension)
-        self._committed = False  # Track commit state
+    """Improved atomic file context manager with cross-platform support"""
     
-    def _create_temp(self, extension):
-        """Create a temporary file path using the project's temp directory"""
+    def __init__(self, extension: str = ".wav"):
+        self.final_path: Optional[str] = None
+        self.temp_path = self._create_temp(extension)
+        self._committed = False
+
+    def _create_temp(self, extension: str) -> str:
+        """Create a temporary file path"""
         temp_dir = FileManager.get_data_path("temp")
         FileManager.ensure_directory_exists(temp_dir)
-        return os.path.join(temp_dir, f"atomic_temp_{os.getpid()}_{int(time.time()*1000)}{extension}")
+        return os.path.join(
+            temp_dir,
+            f"atomic_temp_{os.getpid()}_{int(time.time()*1000)}{extension}"
+        )
 
-    def __enter__(self):
+    # Use async context manager methods
+    async def __aenter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        try:
-            if self._committed and self.final_path:
-                # Final atomic move
-                self._atomic_replace()
-        finally:
-            if not self._committed:
-                self._safe_delete(self.temp_path)
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async cleanup - no new event loops needed"""
+        if self._committed and self.final_path:
+            # Use existing event loop
+            await self._async_commit()
+        else:
+            # Clean up temp file using existing loop
+            await CrossPlatformFileHandler.safe_delete(self.temp_path)
 
-    def commit(self, final_path):
-        # Mark file for preservation with atomic replacement
+    def commit(self, final_path: str):
+        """Mark file for preservation with atomic replacement"""
         self.final_path = final_path
         self._committed = True
 
-    def _atomic_replace(self):
-        output_dir = os.path.dirname(self.final_path)
-        if not os.path.exists(output_dir):
-            FileManager.ensure_directory_exists(output_dir)
-        # Windows-safe atomic replacement
-        for attempt in range(5):
-            try:
-                # Use low-level API for handle management
-                self._windows_atomic_replace()
-                if os.path.exists(self.final_path):
-                    break    
-            except (PermissionError, FileNotFoundError, OSError) as e:
-                logger.warning(f"Replace attempt {attempt} failed: {str(e)}")
-                time.sleep(0.2 * (attempt + 1))
-
-    def _windows_atomic_replace(self):
-        temp_path = Path(self.temp_path)
-        final_path = Path(self.final_path)
-        MOVEFILE_WRITE_THROUGH = 0x00000008
-        for attempt in range(5):
-            try:
-                # First process termination
-                self._kill_all_handles(temp_path, final_path)
-                final_path.parent.mkdir(parents=True, exist_ok=True)
-                # Atomic replacement with error
-                success = windll.kernel32.MoveFileExW(str(temp_path), str(final_path), win32con.MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) # 0x1 | 0x8 = 0x9
-                if not success:
-                    error_code = windll.kernel32.GetLastError()
-                    logger.warning(f"MoveFile failed with error code {error_code} on attempt {attempt+1}")
-                    raise OSError(f"MoveFile error {error_code}")
-                # Force immediate filesystem commit
-                self._force_file_sync(final_path)
-                # Add validation check with retry
-                if self._validate_atomic_success(temp_path, final_path):
-                    logger.info(f"Atomic replace validated on attempt {attempt}")
-                    return
-            except OSError as e:
-                logger.warning(f"Atomic replace attempt {attempt} failed: {e}")
-                time.sleep(min(2, 0.25 * (attempt + 1)))  # Capped backoff and retry
-        # Final validation attempt with fallback
-        try:
-            shutil.move(temp_path, final_path)
-        except Exception as e:
-            raise AudioProcessingError(f"Final fallback failed: {e}", AudioProcessingError.ErrorType.FILE_OPERATION)
-
-    def _kill_all_handles(self, temp_path, final_path):
-        # Windows-specific handle cleanup
-        try:
-            subprocess.run(["powershell", f"Get-Process *ffmpeg*,*ffprobe* | Where-Object {{ "f"($_.Path -like '*{temp_path.name}*') -or "f"($_.Path -like '*{final_path.name}*') "f"}} | Stop-Process -Force -ErrorAction SilentlyContinue"], shell=True, check=False, creationflags=subprocess.CREATE_NO_WINDOW)
-        except Exception as e:
-            logger.debug(f"Cleanup error: {e}") 
-
-    def _force_file_sync(self, path):
-        # Robust file synchronization
-        try:
-            handle = win32file.CreateFile(str(path), win32con.GENERIC_READ, 0, None, win32con.OPEN_EXISTING, 0, None)
-            try:
-                int_handle = handle.handle
-                windll.kernel32.FlushFileBuffers(int_handle)
-            finally:
-                win32file.CloseHandle(handle)
-        except (pywintypes.error, TypeError) as e:
-            logger.debug(f"File sync error: {str(e)}")
-    
-    def _validate_atomic_success(self, temp_path, final_path):
-        # Non-destructive validation of atomic file operation success
-        try:
-            # Check if temp file was removed
-            if os.path.exists(temp_path):
-                logger.debug(f"Validation failed: Temp file still exists at {temp_path}")
-                return False
-            # Check if final file exists, with content
-            if not os.path.exists(final_path):
-                logger.debug(f"Validation failed: Final file missing at {final_path}")
-                return False
-            # Check file has content and valid header
-            if os.path.getsize(final_path) < 1024:
-                logger.debug(f"Validation failed: Final file too small: {os.path.getsize(final_path)} bytes")
-                return False
-            # Non-destructive header check
-            with open(final_path, "rb") as f:
-                header = f.read(8)
-                if header[:4] not in [b"RIFF", b"ftyp"]:
-                    logger.debug(f"Validation failed: Invalid file header: {header[:4]}")
-                    return False
-            return True
-        except Exception as e:
-            logger.debug(f"Validation exception: {str(e)}")
-            return False
-            
-    @staticmethod
-    def _safe_delete(path):
-        #Robust deletion with retries and handle checks
-        for attempt in range(5):
-            if not os.path.exists(path):
-                return
-            try:
-                os.remove(path)
-                return
-            except Exception as e:
-                logger.warning(f"Delete attempt {attempt} failed: {str(e)}")
-                time.sleep(0.2 * (attempt + 1))
-                if sys.platform == "win32":
-                    AudioRecorder._windows_file_removal(path)
-
+    async def _async_commit(self):
+        """Perform the actual atomic commit operation"""
+        if self.final_path and self.temp_path:
+            success = await CrossPlatformFileHandler.safe_atomic_move(
+                self.temp_path, self.final_path
+            )
+            if not success:
+                raise AudioProcessingError(
+                    f"Failed to commit atomic file operation: {self.final_path}",
+                    AudioProcessingError.ErrorType.FILE_OPERATION
+                )
 
 class AudioRecorder:
-
-    _active_processes = set()
-
-    def __init__(self, output_file=None, sample_rate=16000):
-        self.output_file = output_file or os.path.join(FileManager.get_data_path("recordings"), f"recording_{int(time.time())}.wav")
+    """Enhanced audio recorder with proper async support and resource management"""
+    
+    def __init__(self, output_file: Optional[str] = None, sample_rate: int = 16000):
+        self.output_file = output_file or os.path.join(
+            FileManager.get_data_path("recordings"),
+            f"recording_{int(time.time())}.wav"
+        )
         self.temp_wav = self.get_temp_path()
-        self.wav_file = self.temp_wav  # Single file ref.
+        self.wav_file = self.temp_wav
         self.sample_rate = sample_rate
         self.is_recording = False
-        self._stream = None
+        self._stream: Optional[sd.InputStream] = None
         self._frames = []
-        self._recording_start_time = None
+        self._recording_start_time: Optional[float] = None
         self.is_paused = False
-        os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
-        try:
-            if not hasattr(AudioRecorder, '_ffmpeg_initialized'):
-                static_ffmpeg.add_paths()
-                AudioRecorder._ffmpeg_initialized = True
-            if not hasattr(AudioRecorder, '_ffmpeg_verified'):
-                subprocess.run(["ffmpeg", "-version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                AudioRecorder._ffmpeg_verified = True
-                logger.info("FFmpeg verified")
-        except Exception as e:
-            logger.critical(f"FFmpeg setup error: {e}")
-            raise RuntimeError("FFmpeg is not installed or not configured correctly.")
-    
-    def __del__(self):
-    # Explicit cleanup of resources when recorder is terminated
-        try:
-            if hasattr(self, "_stream") and self._stream:
-                self._stream.close()
-            # Kill any associated proc.
-            try:
-                for proc in psutil.process_iter(['pid', 'name']):
-                    try:
-                        if any(x in proc.name().lower() for x in ['ffmpeg', 'ffprobe']):
-                            logger.debug(f"Terminating audio process {proc.pid}")
-                            proc.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-            except Exception:
-                pass
-        except Exception:
-            pass
 
-    def get_temp_path(self, extension=".wav"):
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
+
+        # Verify FFmpeg availability
+        self._verify_ffmpeg()
+
+    def _verify_ffmpeg(self):
+        """Verify FFmpeg availability"""
+        try:
+            if FFMPEG_AVAILABLE:
+                # static_ffmpeg is already initialized
+                subprocess.run(
+                    ["ffmpeg", "-version"],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10
+                )
+                logger.info("FFmpeg verified via static_ffmpeg")
+            else:
+                # Try system FFmpeg
+                subprocess.run(
+                    ["ffmpeg", "-version"],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10
+                )
+                logger.info("System FFmpeg verified")
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.critical(f"FFmpeg verification failed: {e}")
+            raise RuntimeError("FFmpeg is not available or not working correctly")
+
+    def get_temp_path(self, extension: str = ".wav") -> str:
+        """Generate a temporary file path"""
         temp_dir = FileManager.get_data_path("temp")
         FileManager.ensure_directory_exists(temp_dir)
-        return os.path.normpath(os.path.join(temp_dir, f"temp_recording_{int(time.time()*1000)}{extension}")) # added: "os.path.normpath()"
-        
+        return os.path.normpath(os.path.join(
+            temp_dir,
+            f"temp_recording_{int(time.time()*1000)}{extension}"
+        ))
+
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.stop_recording()
-        self._cleanup_resources()
-        
+        await self.cleanup_resources()
+
     def _check_system_resources(self):
-        if psutil.cpu_percent() > 90:
-            raise RuntimeError("CPU usage too high for recording")
+        """Check system resources before recording"""
+        # Check CPU usage
+        cpu_usage = psutil.cpu_percent(interval=1)
+        if cpu_usage > 90:
+            raise RuntimeError(f"CPU usage too high for recording: {cpu_usage}%")
+
+        # Check disk space
         free_space = shutil.disk_usage(os.path.dirname(self.output_file)).free / (1024 ** 3)
-        if free_space < 0.1:  # 100Mb
-            raise IOError(f"Insufficient disk space: {free_space:.2f}GB")
-            
+        if free_space < 0.1:  # Less than 100MB
+            raise IOError(f"Insufficient disk space: {free_space:.2f}GB available")
+
     async def start_recording(self):
+        """Start audio recording"""
         try:
             self._check_system_resources()
             self.is_recording = True
             self._frames = []
             self._recording_start_time = time.time()
-            await self._start_desktop_recording()
+            await self._start_audio_stream()
+            logger.info("Audio recording started")
         except Exception as e:
-            raise AudioProcessingError(str(e), AudioProcessingError.ErrorType.RECORDING_FAILED)
-        
-    async def _start_desktop_recording(self):
-        self._stream = sd.InputStream(samplerate=self.sample_rate, channels=1, callback=self._audio_callback)
-        self._stream.start()
+            self.is_recording = False
+            raise AudioProcessingError(
+                f"Failed to start recording: {str(e)}",
+                AudioProcessingError.ErrorType.RECORDING_FAILED
+            )
 
-    def _audio_callback(self, indata, frames, time, status):
-        if status:
-            logger.warning(f"Audio status: {status}")
-        if self.is_recording and not self.is_paused:
-            self._frames.append(indata.copy())
+    async def _start_audio_stream(self):
+        """Initialize and start the audio input stream"""
+        def audio_callback(indata, frames, time, status):
+            if status:
+                logger.warning(f"Audio stream status: {status}")
+            if self.is_recording and not self.is_paused:
+                self._frames.append(indata.copy())
+
+        try:
+            self._stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                callback=audio_callback,
+                dtype=np.float32
+            )
+            self._stream.start()
+        except Exception as e:
+            raise AudioProcessingError(
+                f"Failed to initialize audio stream: {str(e)}",
+                AudioProcessingError.ErrorType.SYSTEM_ERROR
+            )
 
     def pause_recording(self):
+        """Pause the recording"""
         if not self.is_recording:
-            logger.warning("Cannot pause inactive recording")
+            logger.warning("Cannot pause: recording is not active")
             return
         self.is_paused = True
         logger.info("Recording paused")
 
     def resume_recording(self):
+        """Resume the recording"""
         if not self.is_recording:
-            logger.warning("Cannot resume inactive recording")
+            logger.warning("Cannot resume: recording is not active")
             return
         self.is_paused = False
         logger.info("Recording resumed")
 
-    async def stop_recording(self):
-        preserved_frames = None
-        with AtomicAudioFile() as temp_ctx:
+    async def stop_recording(self) -> bool:
+        """Stop recording and save audio file"""
+        if not self.is_recording:
+            logger.warning("Recording is not active")
+            return False
+
+        try:
+            self.is_recording = False
+
+            # Stop audio stream
+            if self._stream:
+                self._stream.stop()
+                self._stream.close()
+                self._stream = None
+
+            # Process recorded audio
+            await self._save_recorded_audio()
+
+            # Convert to final format if needed
+            if self.output_file.endswith('.mp4'):
+                await self._convert_to_mp4()
+
+            # Validate output
+            await self._validate_output()
+
+            logger.info(f"Recording stopped and saved: {self.output_file}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error stopping recording: {str(e)}")
+            raise AudioProcessingError(
+                f"Failed to stop recording: {str(e)}",
+                AudioProcessingError.ErrorType.RECORDING_FAILED
+            )
+        finally:
+            await self.cleanup_resources()
+
+    async def _save_recorded_audio(self):
+        """Save recorded audio frames to file"""
+        async with AtomicAudioFile() as temp_ctx:
             try:
-                output_dir = os.path.dirname(self.output_file)
-                if not os.path.exists(output_dir):
-                    FileManager.ensure_directory_exists(output_dir)
-                temp_path = temp_ctx.temp_path
-                if not self.is_recording:
-                    return
-                self.is_recording = False
-                # Stop desktop recording
-                if self._stream:
-                    self._stream.stop()
-                    self._stream.close()
                 if self._frames:
+                    # Concatenate all audio frames
                     audio_data = np.concatenate(self._frames)
-                    sf.write(temp_path, audio_data, self.sample_rate)
-                    sf.write(self.temp_wav, audio_data, self.sample_rate)                    
+                    # Save to temporary file
+                    sf.write(temp_ctx.temp_path, audio_data, self.sample_rate)
+                    # Also save to working temp file
+                    sf.write(self.temp_wav, audio_data, self.sample_rate)
                 else:
-                    # handle empty recording by creating an empty .wav file
-                    empty_audio = np.zeros((1,), dtype=np.float32)
-                    sf.write(temp_path, empty_audio, self.sample_rate)
+                    # Create empty audio file
+                    empty_audio = np.zeros((int(self.sample_rate * 0.1),), dtype=np.float32)
+                    sf.write(temp_ctx.temp_path, empty_audio, self.sample_rate)
                     sf.write(self.temp_wav, empty_audio, self.sample_rate)
-                    logger.info("Empty recording found. Silent .wav created")
-                if not os.path.exists(temp_path):
-                    raise AudioProcessingError(f"Temporary recording file missing: {temp_path}", AudioProcessingError.ErrorType.RECORDING_FAILED)
-                preserved_frames = self._frames.copy()
+                    logger.info("Empty recording created")
+
+                # Validate temporary file
+                if not os.path.exists(temp_ctx.temp_path) or os.path.getsize(temp_ctx.temp_path) == 0:
+                    raise AudioProcessingError(
+                        "Temporary audio file is missing or empty",
+                        AudioProcessingError.ErrorType.FILE_OPERATION
+                    )
+
+                # Commit to final location
                 temp_ctx.commit(self.output_file)
                 self.wav_file = self.output_file
-                if self.output_file.endswith('.mp4'):
-                    await self._convert_to_mp4()
+
             except Exception as e:
-                logger.error(f"Recording stop failed: {str(e)}")
-                raise AudioProcessingError(str(e), AudioProcessingError.ErrorType.RECORDING_FAILED)
-            finally:
-                if preserved_frames is not None:
-                    self._cleanup_resources()
-        for _ in range(15):  # 0.5s delays = 7.5s total for file handlers
-            if os.path.exists(self.output_file) and os.path.getsize(self.output_file) > 0:
-                break
-            await asyncio.sleep(0.5)
-        else:
-            raise FileNotFoundError(f"Final output never appeared: {self.output_file}")
-        if preserved_frames:
-                self._validate_output(preserved_frames)
-        self._frames = []
-        return True
-        
+                raise AudioProcessingError(
+                    f"Failed to save audio: {str(e)}",
+                    AudioProcessingError.ErrorType.FILE_OPERATION
+                )
+
     async def _convert_to_mp4(self):
-        # Platform-specific FFmpeg configuration
-        ffmpeg_args = ["-y", "-hwaccel", "auto", "-i", self.temp_wav]
-        # Desktop/Windows streaming optimization
-        ffmpeg_args += ["-f", "mp4", "-movflags", "frag_keyframe+empty_moov", "-c:a", "aac", "-b:a", "192k", "-max_muxing_queue_size", "9999", "-fflags", "+genpts+discardcorrupt", "-strict", "experimental"]
-        ffmpeg_args.append(self.output_file)
-        # Platform-specific subprocess configuration
-        kwargs = {}
-        kwargs.update(creationflags=subprocess.CREATE_NO_WINDOW)
-        for attempt in range(10):
+        """Convert WAV to MP4 using FFmpeg with timeout and cleanup"""
+        ffmpeg_args = [
+            "ffmpeg", "-y",
+            "-i", self.temp_wav,
+            "-f", "mp4",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "frag_keyframe+empty_moov",
+            self.output_file
+        ]
+
+        try:
+            # Launch FFmpeg subprocess
+            process = await asyncio.create_subprocess_exec(
+                *ffmpeg_args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            # Enforce timeout on conversion
             try:
-                with open(self.temp_wav, 'rb') as f:
-                    f.read(1024)
-                    break
-            except (PermissionError, OSError):
-                self._kill_processes_locking_file(self.temp_wav)
-                await asyncio.sleep(0.5 * (attempt + 1))
-            else:
-                raise AudioProcessingError("Input file locked after 10 attempts", AudioProcessingError.ErrorType.FILE_ACCESS)
-        try:
-            # Create process
-            process = await asyncio.create_subprocess_exec("ffmpeg", *ffmpeg_args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs)
-        except FileNotFoundError:
-            logger.critical("FFmpeg executable not found. Ensure FFmpeg is installed and in the system PATH.")
-            raise AudioProcessingError("FFmpeg executable not found", AudioProcessingError.ErrorType.SYSTEM_ERROR)
-        try:
-            # Unified stream handling
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=45)
-            # Enhanced error parsing
+                await asyncio.wait_for(process.communicate(), timeout=120)
+            except asyncio.TimeoutError:
+                process.kill()
+                raise AudioProcessingError(
+                    "MP4 conversion timed out",
+                    AudioProcessingError.ErrorType.TIMEOUT
+                )
+
+            # Check return code after process exit
             if process.returncode != 0:
-                error_output = stderr.decode(errors="replace")
-                logger.error(f"FFmpeg error (exit {process.returncode}): {error_output[:1000]}")
-                raise AudioProcessingError("Critical conversion failure", AudioProcessingError.ErrorType.CONVERSION_FAILED)
-            elif stderr:
-                logger.debug(f"FFmpeg info: {stderr.decode()[:500]}")
-                error_output = stderr.decode(errors="replace")
-                # Only clear error messages as failures
-                error_lower = error_output.lower()
-                if any(msg in error_lower for msg in ["error:", "invalid", "failed"]) and "error: http" not in error_lower: # Ignore http related mssgs
-                    logger.error(f"FFmpeg error: {error_output[:1000]}") # Truncate error output to 1000 characters to avoid excessive log size
-                    raise AudioProcessingError("Critical conversion failure", AudioProcessingError.ErrorType.CONVERSION_FAILED)
-                else:
-                    # Log stderr as info-level for debugging
-                    logger.debug(f"FFmpeg output: {error_output[:500]}")
-        except asyncio.TimeoutError:
-            if process.returncode is None:
-                self._terminate_process_tree(process.pid, self.output_file)
-            logger.critical("Conversion timeout")
-            raise AudioProcessingError("MP4 conversion timeout", AudioProcessingError.ErrorType.TIMEOUT)
-        finally:
-            # WIndows resource cleanup
-            subprocess.run(["powershell", f"Get-Process *ffmpeg*,*ffprobe*"
-                                          f"| Where-Object {{$_.Path -like '*{Path(self.output_file).name}*'}}" 
-                                          f"| Stop-Process -Force -ErrorAction SilentlyContinue"], 
-                                          shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-    
-    def _validate_output(self, frames):
-        # Validates output file with duration calculation
+                raise AudioProcessingError(
+                    f"FFmpeg failed with code {process.returncode}",
+                    AudioProcessingError.ErrorType.CONVERSION_FAILED
+                )
+
+            logger.info("Audio conversion to MP4 completed successfully")
+
+        except AudioProcessingError:
+            # Re-raise custom errors
+            raise
+        except Exception as e:
+            # Wrap unexpected exceptions
+            raise AudioProcessingError(
+                f"Conversion error: {str(e)}",
+                AudioProcessingError.ErrorType.CONVERSION_FAILED
+            )
+
+    async def _validate_output(self):
+        """Validate the output audio file"""
         if not os.path.exists(self.output_file):
-            raise FileNotFoundError(f"Output file missing: {self.output_file}")
+            raise AudioProcessingError(
+                f"Output file not found: {self.output_file}",
+                AudioProcessingError.ErrorType.FILE_OPERATION
+            )
+
         if os.path.getsize(self.output_file) == 0:
-            raise ValueError("Empty output file created")
-        total_samples = sum(frame.shape[0] for frame in frames) if frames else 0
-        source_duration = total_samples / self.sample_rate
-        # Get converted duration from output file
+            raise AudioProcessingError(
+                "Output file is empty",
+                AudioProcessingError.ErrorType.INVALID_FORMAT
+            )
+
+        # Validate audio content
         try:
-            with sf.SoundFile(self.output_file) as f:
-                converted_duration = f.frames / f.samplerate
-            # Account for MP4 encoding headers
-            tolerance = 0.5 if self.output_file.endswith('.mp4') else 0.15
-            if abs(source_duration - converted_duration) > tolerance:
-                logger.warning(f"Duration mismatch: Source {source_duration:.2f}s vs Converted {converted_duration:.2f}s")
-                # Fall back to FFprobe for more accurate duration
-                try:
-                    ffprobe_duration = self.get_audio_duration(self.output_file)
-                    if abs(source_duration - ffprobe_duration) <= tolerance:
-                        return True
-                except Exception:
-                    pass
-                raise ValueError(f"Duration mismatch: Source {source_duration:.1f}s vs Converted {converted_duration:.1f}s")
-            return True
+            if self.output_file.endswith('.wav'):
+                with sf.SoundFile(self.output_file) as f:
+                    if f.frames == 0:
+                        raise AudioProcessingError(
+                            "Audio file contains no audio data",
+                            AudioProcessingError.ErrorType.INVALID_FORMAT
+                        )
         except Exception as e:
-            raise AudioProcessingError(f"Validation error: {str(e)}", AudioProcessingError.ErrorType.INVALID_FORMAT)
-        
-    def _cleanup_resources(self):
+            logger.warning(f"Audio validation warning: {e}")
+
+    # Added public cleanup_resources method
+    async def cleanup_resources(self):
+        await self._cleanup_resources()
+
+    async def _cleanup_resources(self):
         temp_files = [self.temp_wav]
-        for path in temp_files:
-            if not os.path.exists(path):
-                continue
+
+        for temp_file in temp_files:
+            if temp_file and os.path.exists(temp_file):
+                await CrossPlatformFileHandler.safe_delete(temp_file)
+
+        # Clear audio data
+        self._frames = []
+
+        # Reset stream
+        if self._stream:
             try:
-                self._windows_file_removal(path)
-            except Exception as e:
-                logger.warning(f"Cleanup warning: {path} - {str(e)}")
-
-    @staticmethod
-    def _terminate_process_tree(pid, output_file):
-        try:
-            subprocess.run(["taskkill", "/F", "/T", "/FI", f"PID eq {pid}", "/IM", "ffmpeg*", "/IM", "ffprobe*"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["powershell", f"Get-ChildItem -Path {Path(output_file).drive}" 
-                                          f"-Recurse -File | Where-Object {{$_.Name -like '*{Path(output_file).name}*'}}"
-                                          f"| ForEach-Object {{$_.Delete()}}"], shell=True)
-        except subprocess.CalledProcessError:
-            pass
-
-    @staticmethod
-    def _windows_file_removal(path):
-        if not path or not os.path.exists(path):
-            return
-        try:
-            for attempt in range(5):
-                try:
-                    # Try standard removal first
-                    os.remove(path)
-                    logger.debug(f"Successfully removed file: {path}")
-                    return
-                except PermissionError:
-                    logger.debug(f"Permission error removing {path}, attempt {attempt+1}/5")
-                    try:
-                        # Try to open with exclusive access to force closure of other handles
-                        handle = win32file.CreateFile(path,
-                                                      win32con.GENERIC_READ | win32con.GENERIC_WRITE,
-                                                      0,  # No sharing
-                                                      None,
-                                                      win32con.OPEN_EXISTING,
-                                                      win32con.FILE_ATTRIBUTE_NORMAL | win32con.FILE_FLAG_DELETE_ON_CLOSE,
-                                                      None)
-                        win32file.CloseHandle(handle)
-                        # File should be deleted when handle is closed
-                        return
-                    except pywintypes.error as e:
-                        # Wait with exponential backoff
-                        time.sleep(0.5 * (2 ** attempt))
-                except FileNotFoundError:
-                    logger.debug(f"File already removed: {path}")
-                    return
-            logger.warning(f"Failed to remove file after multiple attempts: {path}")
-        except ImportError:
-            # Fallback if win32file is not available
-            for attempt in range(10):
-                try:
-                    os.remove(path)
-                    return
-                except PermissionError:
-                    time.sleep(0.5 * (attempt + 1))
-                except FileNotFoundError:
-                    return
-
-    @staticmethod
-    def _kill_processes_locking_file(path):
-        # Kill processes that might be locking a file
-        if not path or not os.path.exists(path):
-            return
-        try:
-            subprocess.run(["taskkill", "/F", "/FI", f"MODULES eq {os.path.basename(path)}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        except Exception as e:
-            logger.debug(f"Error killing processes: {e}")
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
 
     @staticmethod
     def get_audio_duration(file_path: str) -> float:
+        # Get audio file duration
         try:
             if file_path.endswith('.wav'):
-                with wave.open(file_path, 'rb') as wf:
-                    return float(wf.getnframes()) / wf.getframerate()
+                with sf.SoundFile(file_path) as f:
+                    return float(f.frames) / f.samplerate
             else:
-                cmd = ["ffprobe", "-v", 
-                       "error", "-show_entries", 
-                       "format=duration", "-of", 
-                       "default=noprint_wrappers=1:nokey=1", file_path]
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                # Use FFprobe for other formats
+                cmd = [
+                    "ffprobe", "-v", "error", "-show_entries",
+                    "format=duration", "-of",
+                    "default=noprint_wrappers=1:nokey=1", file_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
                 return float(result.stdout.strip())
         except Exception as e:
-            logger.error(f"Failed to get duration: {e}")
-            raise AudioProcessingError(f"Cannot determine duration: {str(e)}", AudioProcessingError.ErrorType.INVALID_FORMAT)
+            logger.error(f"Failed to get audio duration: {e}")
+            raise AudioProcessingError(
+                f"Cannot determine audio duration: {str(e)}",
+                AudioProcessingError.ErrorType.INVALID_FORMAT
+            )

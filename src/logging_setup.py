@@ -1,43 +1,69 @@
-import os
 import logging
+import sys
+from pathlib import Path
 
-def validate_audio_format(func):
-    def wrapper(file_path):
-        if not (file_path.endswith(".wav") or file_path.endswith(".mp4")):
-            raise TypeError(f"Unsupported audio format: {file_path}")
-        return func(file_path)
-    return wrapper
-
-def setup_app_logging():
-    """
-    Sets up basic logging for the app
-    Creates a log file that saves important app information
-    """
-    # Create the logs folder if it doesn't exist
-    logs_folder = "logs"
-    if not os.path.exists(logs_folder):
-        os.makedirs(logs_folder)
+def setup_app_logging(level=logging.INFO, logger_name=None):
+    """Setup application-specific logging for TranscrevAI"""
     
-    # Path for our log file
-    log_file = os.path.join(logs_folder, "app.log")
+    # Use application-specific logger instead of root logger
+    if logger_name is None:
+        logger_name = "transcrevai"
     
-    # Remove any existing logging setup
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
+    logger = logging.getLogger(logger_name)
     
-    # Setup new logging configuration
-    logging.basicConfig(
-        filename=log_file,
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    # Prevent duplicate handlers
+    if logger.handlers:
+        return logger
+    
+    # Set logging level
+    logger.setLevel(level)
+    
+    # Prevent propagation to root logger to avoid conflicts
+    logger.propagate = False
+    
+    # Create console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(level)
+    
+    # Create detailed formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
+    console_handler.setFormatter(formatter)
     
-    # Add console output for logs too
-    console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
-    console.setFormatter(formatter)
-    logging.getLogger('').addHandler(console)
+    # Add handler to logger
+    logger.addHandler(console_handler)
+    
+    # Create file handler for persistent logging
+    try:
+        # Determine log directory
+        app_root = Path(__file__).parent.parent.parent
+        log_dir = app_root / "data" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        log_file = log_dir / "transcrevai.log"
+        
+        # Create file handler with rotation
+        file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)  # More verbose for file
+        
+        # Detailed formatter for file
+        file_formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(funcName)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
+        
+    except Exception as e:
+        # If file logging fails, at least we have console
+        logger.warning(f"File logging setup failed: {e}")
+    
+    return logger
 
-    return logging.getLogger(__name__)
+def get_logger(name=None):
+    """Get application logger for specific module"""
+    if name:
+        return logging.getLogger(f"transcrevai.{name}")
+    return logging.getLogger("transcrevai")

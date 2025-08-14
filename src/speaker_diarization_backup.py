@@ -1,3 +1,5 @@
+# Enhanced Speaker Diarization Module for TranscrevAI - Bug Fixed Version
+
 import asyncio
 import logging
 import os
