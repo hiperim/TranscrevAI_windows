@@ -498,7 +498,7 @@ HTML_INTERFACE = """
 </head>
 <body>
     <div class="app">
-        <div class="logo">🎤 TranscrevAI</div>
+        <div class="logo">TranscrevAI</div>
         <div class="tagline">Simple, real-time audio transcription</div>
         
         <div class="settings">
