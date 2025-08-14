@@ -23,8 +23,13 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
         str: Path to the generated SRT file
     """
     try:
-        if not transcription_data or not isinstance(diarization_segments, list):
-            raise ValueError("Missing required input data")
+        if not transcription_data or not isinstance(transcription_data, list):
+            raise ValueError("Missing required transcription data")
+        
+        if diarization_segments is None:
+            diarization_segments = []
+        elif not isinstance(diarization_segments, list):
+            raise ValueError("Diarization segments must be a list")
 
         # If filename contains directory path, use provided path
         dirname = os.path.dirname(filename)
@@ -57,21 +62,42 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
 
             try:
                 # Process transcription data and create combined segments
-                for d_segment in diarization_segments:
-                    matched_text = [t["text"] for t in transcription_data
-                                    if isinstance(t, dict)
-                                    and isinstance(d_segment, dict)
-                                    and "start" in t
-                                    and "start" in d_segment
-                                    and "end" in d_segment
-                                    and d_segment["start"] <= t["start"] < d_segment["end"]]
+                if diarization_segments:
+                    # Use diarization segments
+                    for d_segment in diarization_segments:
+                        if isinstance(d_segment, dict) and "start" in d_segment and "end" in d_segment:
+                            matched_text = [t["text"] for t in transcription_data
+                                            if isinstance(t, dict)
+                                            and "text" in t
+                                            and "start" in t
+                                            and d_segment["start"] <= t["start"] < d_segment["end"]]
 
-                    combined_segments.append({
-                        "start": d_segment["start"],
-                        "end": d_segment["end"], 
-                        "speaker": d_segment.get("speaker", "Speaker"),
-                        "text": " ".join(matched_text)
-                    })
+                            combined_segments.append({
+                                "start": d_segment["start"],
+                                "end": d_segment["end"], 
+                                "speaker": d_segment.get("speaker", "Speaker"),
+                                "text": " ".join(matched_text)
+                            })
+                else:
+                    # No diarization, use transcription data directly
+                    for i, t_data in enumerate(transcription_data):
+                        if isinstance(t_data, dict) and "text" in t_data and t_data["text"].strip():
+                            start_time = t_data.get("start", i * 2.0)
+                            end_time = t_data.get("end", start_time + 2.0)
+                            
+                            combined_segments.append({
+                                "start": start_time,
+                                "end": end_time,
+                                "speaker": "Speaker",
+                                "text": t_data["text"]
+                            })
+
+                # Filter out empty segments
+                combined_segments = [s for s in combined_segments if s.get("text", "").strip()]
+                
+                if not combined_segments:
+                    logger.warning("No valid segments for SRT generation")
+                    return None
 
                 # Write SRT content to temp file with error handling
                 try:

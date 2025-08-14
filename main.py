@@ -19,7 +19,7 @@ from src.transcription import transcribe_audio_with_progress
 from src.speaker_diarization import SpeakerDiarization
 from src.file_manager import FileManager
 from src.subtitle_generator import generate_srt
-from config.app_config import MODEL_DIR
+from config.app_config import MODEL_DIR, DATA_DIR, LANGUAGE_MODELS
 from src.logging_setup import setup_app_logging
 
 # Simple logging setup
@@ -32,21 +32,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Model URLs for auto-download (background functionality) - Removed French
-MODEL_URLS = {
-    "pt": "https://alphacephei.com/vosk/models/vosk-model-pt-0.3.zip",
-    "en": "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip",
-    "es": "https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip"
-}
 
 class ModelManager:
     """Background model management - no UI interference"""
     
     @staticmethod
     def get_model_path(language: str) -> str:
-        # Updated to use correct data folder path
-        base_path = r"C:\transcrevai_android\TranscrevAI_commit34\data"
-        return os.path.join(base_path, "models", language)
+        # Use config MODEL_DIR instead of hardcoded path
+        return os.path.join(str(MODEL_DIR), language)
     
     @staticmethod
     def validate_model(language: str) -> bool:
@@ -117,12 +110,12 @@ class ModelManager:
     @staticmethod
     async def _download_model_silent(language: str) -> bool:
         """Silent background download with fixed paths"""
-        if language not in MODEL_URLS:
+        if language not in LANGUAGE_MODELS:
             logger.error(f"No model URL available for language: {language}")
             return False
         
         try:
-            model_url = MODEL_URLS[language]
+            model_url = LANGUAGE_MODELS[language]
             model_path = ModelManager.get_model_path(language)
             zip_path = f"{model_path}.zip"
             
@@ -188,97 +181,7 @@ class ModelManager:
                         os.remove(path)
             return False
 
-# Enhanced SRT Generator with fixed format
-async def generate_srt_fixed(transcription_data, diarization_segments, filename="output.srt"):
-    """Fixed SRT generation with proper format"""
-    try:
-        if not transcription_data or not isinstance(transcription_data, list):
-            logger.warning("No transcription data for SRT generation")
-            return None
-        
-        if not diarization_segments:
-            diarization_segments = []
-        
-        # Use FileManager to get correct output directory
-        output_dir = FileManager.get_data_path("transcripts")
-        base_name = filename.split('.')[0] if filename != "output.srt" else "transcript"
-        timestamp = int(time.time())
-        unique_name = f"{base_name}_{timestamp}.srt"
-        output_path = os.path.join(output_dir, unique_name)
-        
-        # Ensure output directory exists
-        os.makedirs(output_dir, exist_ok=True)
-        
-        combined_segments = []
-        
-        # If we have diarization segments, use them
-        if diarization_segments:
-            for d_segment in diarization_segments:
-                if isinstance(d_segment, dict) and "start" in d_segment and "end" in d_segment:
-                    # Find transcription text that falls within this diarization segment
-                    matched_texts = []
-                    for t_data in transcription_data:
-                        if isinstance(t_data, dict) and "text" in t_data:
-                            # Get timing from transcription or use diarization timing
-                            t_start = t_data.get("start", d_segment["start"])
-                            if d_segment["start"] <= t_start < d_segment["end"]:
-                                matched_texts.append(t_data["text"])
-                    
-                    combined_segments.append({
-                        "start": d_segment["start"],
-                        "end": d_segment["end"],
-                        "speaker": d_segment.get("speaker", "Speaker"),
-                        "text": " ".join(matched_texts) if matched_texts else ""
-                    })
-        else:
-            # No diarization, use transcription data directly
-            for i, t_data in enumerate(transcription_data):
-                if isinstance(t_data, dict) and "text" in t_data and t_data["text"].strip():
-                    start_time = t_data.get("start", i * 2.0)  # Default 2-second segments
-                    end_time = t_data.get("end", start_time + 2.0)
-                    
-                    combined_segments.append({
-                        "start": start_time,
-                        "end": end_time,
-                        "speaker": "Speaker",
-                        "text": t_data["text"]
-                    })
-        
-        # Filter out empty segments
-        combined_segments = [s for s in combined_segments if s.get("text", "").strip()]
-        
-        if not combined_segments:
-            logger.warning("No valid segments for SRT generation")
-            return None
-        
-        # Write SRT file
-        with open(output_path, 'w', encoding='utf-8') as f:
-            for idx, segment in enumerate(combined_segments, 1):
-                # FIXED: Use proper arrow syntax instead of HTML entity
-                f.write(f"{idx}\n")
-                f.write(f"{format_time(segment['start'])} --> {format_time(segment['end'])}\n")
-                f.write(f"{segment['speaker']}: {segment['text']}\n\n")
-        
-        logger.info(f"SRT file generated: {output_path}")
-        return output_path
-        
-    except Exception as e:
-        logger.error(f"SRT generation failed: {str(e)}")
-        return None
 
-def format_time(seconds: float) -> str:
-    """Format time in seconds to SRT time format (HH:MM:SS,mmm)"""
-    try:
-        if not isinstance(seconds, (int, float)) or seconds < 0:
-            seconds = 0.0
-            
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        sec = seconds % 60
-        
-        return f"{hours:02d}:{minutes:02d}:{sec:06.3f}".replace('.', ',')
-    except Exception:
-        return "00:00:00,000"
 
 # Simple state management - no over-engineering
 class SimpleState:
@@ -288,9 +191,10 @@ class SimpleState:
     def create_session(self, session_id: str):
         try:
             # Create AudioRecorder with correct data path
+            from src.file_manager import FileManager
+            recordings_dir = FileManager.get_data_path("recordings")
             output_file = os.path.join(
-                r"C:\transcrevai_android\TranscrevAI_commit34\data", 
-                "recordings", 
+                recordings_dir, 
                 f"recording_{int(time.time())}.wav"
             )
             recorder = AudioRecorder(output_file=output_file)
@@ -1266,11 +1170,11 @@ async def process_audio(session_id: str, language: str = "en"):
             diarization_segments = []
             unique_speakers = 0
         
-        # Generate SRT with FIXED function
+        # Generate SRT
         srt_file = None
         if transcription_data and len(transcription_data) > 0:
             try:
-                srt_file = await generate_srt_fixed(transcription_data, diarization_segments)
+                srt_file = await generate_srt(transcription_data, diarization_segments)
                 if srt_file:
                     logger.info(f"SRT generated successfully: {srt_file}")
                 else:
@@ -1306,3 +1210,4 @@ if __name__ == "__main__":
         log_level="info",
         access_log=False  # Disable for production
     )
+
