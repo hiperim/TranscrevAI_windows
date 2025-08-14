@@ -34,11 +34,12 @@ app = FastAPI(
 MODEL_URLS = {
     "pt": "https://alphacephei.com/vosk/models/vosk-model-pt-0.3.zip",
     "en": "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip",
-    "es": "https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip"
+    "es": "https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip",
+    "fr": "https://alphacephei.com/vosk/models/vosk-model-fr-0.22.zip"
 }
 
 class ModelManager:
-    """Handles model downloading and validation"""
+    """Handles model downloading and validation for Vosk models"""
     
     @staticmethod
     def get_model_path(language: str) -> str:
@@ -47,29 +48,53 @@ class ModelManager:
     
     @staticmethod
     def validate_model(language: str) -> bool:
-        """Validate if model exists and has required files"""
+        """Validate if Vosk model exists and has required files"""
         model_path = ModelManager.get_model_path(language)
         
         if not os.path.exists(model_path):
             logger.warning(f"Model directory not found: {model_path}")
             return False
         
-        # Check for required Vosk model files
-        required_files = ['final.mdl', 'Gr.fst', 'HCLr.fst']
-        required_dirs = ['am', 'conf', 'graph']
+        # Check for required Vosk model files based on actual structure
+        # From the Portuguese model: disambig_tid.int, final.mdl, Gr.fst, HCLr.fst, mfcc.conf, etc.
+        required_files = [
+            'final.mdl',    # Acoustic model
+            'Gr.fst',       # Grammar FST  
+            'HCLr.fst',     # HCL FST
+            'mfcc.conf'     # MFCC configuration (note: mfcc.conf not mfcc,conf)
+        ]
         
-        # Check files
+        # Check for required ivector directory
+        ivector_dir = os.path.join(model_path, 'ivector')
+        if not os.path.exists(ivector_dir):
+            logger.warning(f"Missing ivector directory: {ivector_dir}")
+            return False
+        
+        # Check for required ivector files
+        required_ivector_files = [
+            'final.dubm',
+            'final.ie', 
+            'final.mat',
+            'global_cmvn.stats'
+        ]
+        
+        # Check main model files
         for file_name in required_files:
             file_path = os.path.join(model_path, file_name)
             if not os.path.exists(file_path):
                 logger.warning(f"Missing model file: {file_path}")
                 return False
+            
+            # Check file is not empty
+            if os.path.getsize(file_path) == 0:
+                logger.warning(f"Empty model file: {file_path}")
+                return False
         
-        # Check directories
-        for dir_name in required_dirs:
-            dir_path = os.path.join(model_path, dir_name)
-            if not os.path.exists(dir_path):
-                logger.warning(f"Missing model directory: {dir_path}")
+        # Check ivector files  
+        for file_name in required_ivector_files:
+            file_path = os.path.join(ivector_dir, file_name)
+            if not os.path.exists(file_path):
+                logger.warning(f"Missing ivector file: {file_path}")
                 return False
         
         logger.info(f"Model validation passed for: {language}")
@@ -77,7 +102,7 @@ class ModelManager:
     
     @staticmethod
     async def download_model(language: str) -> bool:
-        """Download and extract model for specified language"""
+        """Download and extract Vosk model for specified language"""
         if language not in MODEL_URLS:
             logger.error(f"No model URL available for language: {language}")
             return False
@@ -92,41 +117,57 @@ class ModelManager:
             # Create model directory
             os.makedirs(MODEL_DIR, exist_ok=True)
             
-            # Download with progress (simplified)
+            # Download model
             urllib.request.urlretrieve(model_url, zip_path)
             logger.info(f"Downloaded model to: {zip_path}")
             
-            # Extract ZIP
+            # Validate ZIP file
+            if not zipfile.is_zipfile(zip_path):
+                raise Exception("Downloaded file is not a valid ZIP")
+            
+            # Extract ZIP to temporary directory first
+            temp_dir = f"{model_path}_temp"
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                # Extract to temporary directory first
-                temp_dir = f"{model_path}_temp"
                 zip_ref.extractall(temp_dir)
-                
-                # Find the actual model directory (usually nested)
-                extracted_dirs = [d for d in os.listdir(temp_dir) 
-                                if os.path.isdir(os.path.join(temp_dir, d))]
-                
-                if extracted_dirs:
-                    # Move the first directory content to final location
-                    src_dir = os.path.join(temp_dir, extracted_dirs[0])
-                    if os.path.exists(model_path):
-                        shutil.rmtree(model_path)
-                    shutil.move(src_dir, model_path)
-                    
-                    # Clean up
-                    shutil.rmtree(temp_dir)
-                    os.remove(zip_path)
-                    
-                    logger.info(f"Model extracted to: {model_path}")
-                    return ModelManager.validate_model(language)
-                else:
-                    logger.error("No directories found in extracted model")
-                    return False
-                    
+                logger.info(f"Extracted to temporary directory: {temp_dir}")
+            
+            # Find the actual model files (they might be nested)
+            model_source_dir = None
+            
+            # Look for the directory containing final.mdl
+            for root, dirs, files in os.walk(temp_dir):
+                if 'final.mdl' in files:
+                    model_source_dir = root
+                    logger.info(f"Found model files in: {model_source_dir}")
+                    break
+            
+            if not model_source_dir:
+                raise Exception("Could not find model files in downloaded archive")
+            
+            # Remove existing model directory if it exists
+            if os.path.exists(model_path):
+                shutil.rmtree(model_path)
+            
+            # Move model files to final location
+            shutil.move(model_source_dir, model_path)
+            
+            # Clean up
+            shutil.rmtree(temp_dir)
+            os.remove(zip_path)
+            
+            logger.info(f"Model extracted to: {model_path}")
+            
+            # Validate the extracted model
+            return ModelManager.validate_model(language)
+            
         except Exception as e:
             logger.error(f"Failed to download model for {language}: {e}")
+            
             # Clean up on failure
-            for path in [zip_path, f"{model_path}_temp"]:
+            for path in [zip_path, f"{model_path}_temp", model_path]:
                 if os.path.exists(path):
                     if os.path.isdir(path):
                         shutil.rmtree(path)
@@ -138,6 +179,7 @@ class ModelManager:
     async def ensure_model(language: str) -> bool:
         """Ensure model exists, download if necessary"""
         if ModelManager.validate_model(language):
+            logger.info(f"Model already exists and is valid for {language}")
             return True
         
         logger.info(f"Model not found for {language}, attempting download...")
@@ -498,7 +540,7 @@ HTML_INTERFACE = """
 </head>
 <body>
     <div class="app">
-        <div class="logo">TranscrevAI</div>
+        <div class="logo">🎤 TranscrevAI</div>
         <div class="tagline">Simple, real-time audio transcription</div>
         
         <div class="settings">
@@ -506,6 +548,7 @@ HTML_INTERFACE = """
                 <option value="pt">Português</option>
                 <option value="en">English</option>
                 <option value="es">Español</option>
+                <option value="fr">Français</option>
             </select>
         </div>
 
