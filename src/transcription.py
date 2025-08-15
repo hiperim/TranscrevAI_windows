@@ -81,6 +81,94 @@ class AsyncTranscriptionService:
             
             return self._models[language_code]
 
+class TranscriptionService:
+    """Synchronous transcription service for real-time streaming"""
+    
+    def __init__(self):
+        self.model = None
+        self.recognizer = None
+        self.language = None
+    
+    async def initialize(self, language_code: str) -> bool:
+        """Initialize the transcription service with a language model"""
+        try:
+            if not VOSK_AVAILABLE:
+                logger.warning("Vosk not available for streaming transcription")
+                return False
+            
+            # Get model path
+            model_path = os.path.join(MODEL_DIR, language_code)
+            
+            if not os.path.exists(model_path):
+                logger.error(f"Model not found for language: {language_code}")
+                return False
+            
+            # Load model in thread pool
+            loop = asyncio.get_event_loop()
+            self.model = await loop.run_in_executor(None, Model, model_path)
+            self.recognizer = KaldiRecognizer(self.model, 16000)
+            self.language = language_code
+            
+            logger.info(f"Transcription service initialized for {language_code}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize transcription service: {e}")
+            return False
+    
+    def transcribe_chunk_sync(self, audio_data, sample_rate: int = 16000):
+        """
+        Synchronous transcription for real-time chunks.
+        
+        Args:
+            audio_data: Audio data as numpy array
+            sample_rate: Sample rate of audio
+            
+        Returns:
+            Dict with transcription results or None
+        """
+        try:
+            if not self.recognizer:
+                logger.warning("Recognizer not initialized for chunk transcription")
+                return None
+            
+            import numpy as np
+            
+            # Ensure audio is in correct format
+            if hasattr(audio_data, 'dtype') and audio_data.dtype != np.int16:
+                if audio_data.dtype == np.float32 or audio_data.dtype == np.float64:
+                    # Convert float to int16
+                    audio_data = (audio_data * 32767).astype(np.int16)
+                else:
+                    audio_data = audio_data.astype(np.int16)
+            
+            # Convert to bytes
+            audio_bytes = audio_data.tobytes()
+            
+            # Recognize
+            if self.recognizer.AcceptWaveform(audio_bytes):
+                result = json.loads(self.recognizer.Result())
+            else:
+                result = json.loads(self.recognizer.PartialResult())
+            
+            # Extract text and confidence
+            text = result.get('text', '').strip()
+            confidence = result.get('confidence', 0.0)
+            
+            if text:
+                return {
+                    "text": text,
+                    "confidence": confidence,
+                    "words": result.get('words', []),
+                    "duration": len(audio_data) / sample_rate
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Chunk transcription error: {e}")
+            return None
+
 # Global service instance
 transcription_service = AsyncTranscriptionService()
 
