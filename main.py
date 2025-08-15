@@ -46,8 +46,8 @@ class ModelManager:
 
     @staticmethod
     def get_model_path(language: str) -> str:
-        # Use new data path for Windows
-        return os.path.join('c:/TranscrevAI_windows/data', language)
+        # Use config-based model path
+        return os.path.join(MODEL_DIR, language)
     
     @staticmethod
     def validate_model(language: str) -> bool:
@@ -1303,7 +1303,7 @@ async def process_audio(session_id: str, language: str = "en"):
         transcription_data = []
         try:
             async for progress, data in transcribe_audio_with_progress(
-                audio_file, model_path, language, 16000, websocket_manager, session_id
+                audio_file, model_path, language, 16000
             ):
                 session = app_state.get_session(session_id)
                 if not session:
