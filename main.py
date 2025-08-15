@@ -2,19 +2,11 @@ import asyncio
 import logging
 import os
 import time
-import numpy as np
-from collections import defaultdict, deque
-from typing import Dict, List, Optional, Any, Union
 
 import urllib.request
 import zipfile
 import shutil
-try:
-    import aiofiles
-    import aiofiles.os
-    ASYNC_FILES_AVAILABLE = True
-except ImportError:
-    ASYNC_FILES_AVAILABLE = False
+
 
 from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -25,96 +17,40 @@ from src.audio_processing import AudioRecorder
 from src.transcription import transcribe_audio_with_progress
 from src.speaker_diarization import SpeakerDiarization
 from src.subtitle_generator import generate_srt
-from src.streaming_processor import StreamingProcessor
-from config.app_config import MODEL_DIR, LANGUAGE_MODELS, FASTAPI_CONFIG
+from config.app_config import MODEL_DIR, LANGUAGE_MODELS
 from src.logging_setup import setup_app_logging
 
 logger = setup_app_logging()
 if logger is None:
     import logging
-    import json
-    
-    class StructuredFormatter(logging.Formatter):
-        """
-        Custom formatter for structured JSON logging.
-        """
-        def format(self, record):
-            log_entry = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "level": record.levelname,
-                "logger": record.name,
-                "message": record.getMessage(),
-                "module": record.module,
-                "function": record.funcName,
-                "line": record.lineno
-            }
-            
-            # Add extra fields if present
-            if hasattr(record, 'session_id'):
-                log_entry["session_id"] = getattr(record, 'session_id', '')
-            if hasattr(record, 'client_ip'):
-                log_entry["client_ip"] = getattr(record, 'client_ip', '')
-            if hasattr(record, 'user_agent'):
-                log_entry["user_agent"] = getattr(record, 'user_agent', '')
-            if hasattr(record, 'request_id'):
-                log_entry["request_id"] = getattr(record, 'request_id', '')
-                
-            # Add exception info if present
-            if record.exc_info:
-                log_entry["exception"] = self.formatException(record.exc_info)
-                
-            return json.dumps(log_entry)
-    
     logger = logging.getLogger("TranscrevAI")
     logger.setLevel(logging.INFO)
     if not logger.hasHandlers():
         handler = logging.StreamHandler()
-        handler.setFormatter(StructuredFormatter())
+        formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+        handler.setFormatter(formatter)
         logger.addHandler(handler)
 
 # FastAPI setup
 app = FastAPI(
-    title=FASTAPI_CONFIG["title"],
-    description=FASTAPI_CONFIG["description"],
-    version=FASTAPI_CONFIG["version"]
+    title="TranscrevAI",
+    description="Real-time Audio Transcription with AI",
+    version="1.0.0"
 )
 
+import os
+
 class ModelManager:
-    """
-    Manages AI model lifecycle including download, validation, and caching.
-    
-    Handles automatic downloading of language models for speech recognition,
-    validates model file structure, and provides retry logic for failed downloads.
-    Designed for background operation without blocking the UI.
-    """
+    # Background model management - no UI interference
 
     @staticmethod
     def get_model_path(language: str) -> str:
-        """
-        Get the file system path for a language model.
-        
-        Args:
-            language (str): Language code (e.g., 'en', 'pt', 'es')
-            
-        Returns:
-            str: Full path to the model directory
-        """
+        # Use config-based model path
         return os.path.join(MODEL_DIR, language)
     
     @staticmethod
     def validate_model(language: str) -> bool:
-        """
-        Validate that a language model is properly installed and complete.
-        
-        Checks for required model files including acoustic models, language models,
-        and ivector extractors to ensure the model can be used for transcription.
-        
-        Args:
-            language (str): Language code to validate
-            
-        Returns:
-            bool: True if model is valid and complete, False otherwise
-        """
+        # Validate if model exists and has required files
         model_path = ModelManager.get_model_path(language)
         
         if not os.path.exists(model_path):
@@ -172,7 +108,7 @@ class ModelManager:
         return True
     
     @staticmethod
-    async def ensure_model_with_feedback(language: str, _websocket_manager: Optional[Any] = None, _session_id: Optional[str] = None) -> bool:
+    async def ensure_model_with_feedback(language: str, _websocket_manager=None, _session_id=None) -> bool:
         # Ensure model exists with user feedback and retry logic
         if ModelManager.validate_model(language):
             return True
@@ -190,7 +126,7 @@ class ModelManager:
         return await ModelManager.ensure_model_with_feedback(language, None, None)
     
     @staticmethod
-    async def _download_model_with_retry(language: str, _websocket_manager: Optional[Any] = None, _session_id: Optional[str] = None, max_retries: int = 3) -> bool:
+    async def _download_model_with_retry(language: str, _websocket_manager=None, _session_id=None, max_retries=3) -> bool:
         # Enhanced download with retry logic and user feedback
         if language not in LANGUAGE_MODELS:
             logger.error(f"No model URL available for language: {language}")
@@ -302,26 +238,10 @@ class ModelManager:
 
 # Simple state management
 class SimpleState:
-    """
-    Manages session state for concurrent audio recording sessions.
+    def __init__(self):
+        self.sessions = {}
     
-    Handles creation, tracking, and cleanup of recording sessions, including
-    audio recorders, progress tracking, and WebSocket connections. Provides
-    session isolation for multiple concurrent users.
-    """
-    def __init__(self) -> None:
-        self.sessions: Dict[str, Dict[str, Any]] = {}
-    
-    def create_session(self, session_id: str) -> bool:
-        """
-        Create a new recording session.
-        
-        Args:
-            session_id (str): Unique identifier for the session
-            
-        Returns:
-            bool: True if session created successfully, False otherwise
-        """
+    def create_session(self, session_id: str):
         try:
             # Create session without AudioRecorder initially
             # AudioRecorder will be created when recording starts with the correct format
@@ -332,17 +252,15 @@ class SimpleState:
                 "progress": {"transcription": 0, "diarization": 0},
                 "websocket": None,
                 "start_time": None,
-                "task": None,
-                "streaming_processor": None,
-                "streaming_mode": False
+                "task": None
             }
-            logger.info(f"Session created: {session_id}", extra={"session_id": session_id, "action": "session_created"})
+            logger.info(f"Session created: {session_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to create session: {e}")
             return False
     
-    def create_recorder_for_session(self, session_id: str, format_type: str = "wav") -> bool:
+    def create_recorder_for_session(self, session_id: str, format_type: str = "wav"):
         try:
             from src.file_manager import FileManager
             recordings_dir = FileManager.get_data_path("recordings")
@@ -362,107 +280,43 @@ class SimpleState:
             logger.error(f"Failed to create recorder for session: {e}")
             return False
     
-    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+    def get_session(self, session_id: str):
         return self.sessions.get(session_id)
     
-    def update_session(self, session_id: str, updates: Dict[str, Any]) -> None:
+    def update_session(self, session_id: str, updates: dict):
         if session_id in self.sessions:
             self.sessions[session_id].update(updates)
     
-    async def cleanup_session(self, session_id: str) -> None:
+    async def cleanup_session(self, session_id: str):
         if session_id in self.sessions:
-            try:
-                session = self.sessions[session_id]
-                
-                # Clean up recorder resources
-                recorder = session.get("recorder")
-                if recorder and hasattr(recorder, 'cleanup_resources'):
-                    try:
-                        await recorder.cleanup_resources()
-                    except Exception as e:
-                        logger.warning(f"Recorder cleanup failed for session {session_id}: {e}")
-                elif recorder:
-                    logger.warning(f"Recorder has no cleanup_resources method for session {session_id}")
-                
-                # Cancel background tasks
-                if session.get("task"):
-                    try:
-                        session["task"].cancel()
-                    except Exception as e:
-                        logger.warning(f"Task cancellation failed for session {session_id}: {e}")
-                
-                # Cancel model download task if it exists
-                if session.get("model_task"):
-                    try:
-                        session["model_task"].cancel()
-                    except Exception as e:
-                        logger.warning(f"Model task cancellation failed for session {session_id}: {e}")
-                
-                # Clean up streaming processor
-                if session.get("streaming_processor"):
-                    try:
-                        await session["streaming_processor"].stop_processing()
-                        session["streaming_processor"].cleanup()
-                    except Exception as e:
-                        logger.warning(f"Streaming processor cleanup failed for session {session_id}: {e}")
-                
-                del self.sessions[session_id]
-                logger.info(f"Session cleaned up: {session_id}")
-                
-            except Exception as e:
-                logger.error(f"Session cleanup failed for {session_id}: {e}")
-                # Force remove from sessions even if cleanup failed
-                if session_id in self.sessions:
-                    del self.sessions[session_id]
+            session = self.sessions[session_id]
+            if session.get("recorder"):
+                try:
+                    await session["recorder"].cleanup_resources()
+                except:
+                    pass
+            if session.get("task"):
+                session["task"].cancel()
+            del self.sessions[session_id]
+            logger.info(f"Session cleaned up: {session_id}")
 
 # WebSocket manager
 class SimpleWebSocketManager:
-    """
-    Manages WebSocket connections for real-time communication.
+    def __init__(self):
+        self.connections = {}
     
-    Handles WebSocket connection lifecycle, message broadcasting, and
-    graceful disconnection with automatic session cleanup. Provides
-    reliable real-time communication between server and clients.
-    """
-    def __init__(self, max_connections: int = 100) -> None:
-        self.connections: Dict[str, WebSocket] = {}
-        self.max_connections = max_connections
-        self.connection_pool_size = 0
-    
-    async def connect(self, websocket: WebSocket, session_id: str) -> None:
-        """
-        Accept and register a new WebSocket connection.
-        
-        Args:
-            websocket (WebSocket): FastAPI WebSocket instance
-            session_id (str): Unique session identifier
-        """
-        # Check connection pool limit
-        if self.connection_pool_size >= self.max_connections:
-            await websocket.close(code=1013, reason="Server overloaded - too many connections")
-            logger.warning(f"Connection rejected - pool full: {session_id}", 
-                         extra={"session_id": session_id, "action": "connection_pool_full"})
-            return
-            
+    async def connect(self, websocket: WebSocket, session_id: str):
         await websocket.accept()
         self.connections[session_id] = websocket
-        self.connection_pool_size += 1
-        logger.info(f"WebSocket connected: {session_id} (pool: {self.connection_pool_size}/{self.max_connections})", 
-                   extra={"session_id": session_id, "action": "websocket_connected", "pool_size": self.connection_pool_size})
+        logger.info(f"WebSocket connected: {session_id}")
     
-    async def disconnect(self, session_id: str) -> None:
+    async def disconnect(self, session_id: str):
         if session_id in self.connections:
-            try:
-                del self.connections[session_id]
-                self.connection_pool_size = max(0, self.connection_pool_size - 1)
-                await app_state.cleanup_session(session_id)
-                logger.info(f"WebSocket disconnected: {session_id} (pool: {self.connection_pool_size}/{self.max_connections})",
-                           extra={"session_id": session_id, "action": "websocket_disconnected", "pool_size": self.connection_pool_size})
-            except Exception as e:
-                logger.error(f"Error during WebSocket disconnect cleanup: {e}", 
-                           extra={"session_id": session_id, "error": str(e)})
+            del self.connections[session_id]
+            await app_state.cleanup_session(session_id)
+            logger.info(f"WebSocket disconnected: {session_id}")
     
-    async def send_message(self, session_id: str, message: Dict[str, Any]) -> None:
+    async def send_message(self, session_id: str, message: dict):
         if session_id in self.connections:
             try:
                 await self.connections[session_id].send_json(message)
@@ -470,130 +324,9 @@ class SimpleWebSocketManager:
                 logger.error(f"Send message failed: {e}")
                 await self.disconnect(session_id)
 
-# Rate limiting
-class RateLimiter:
-    """
-    Implements rate limiting for WebSocket connections and message frequency.
-    
-    Tracks connection counts per IP and message rates per session to prevent
-    abuse and ensure fair resource usage across all clients.
-    """
-    
-    def __init__(self, max_connections_per_ip: int = 10, max_messages_per_minute: int = 60):
-        self.max_connections_per_ip = max_connections_per_ip
-        self.max_messages_per_minute = max_messages_per_minute
-        self.connections_per_ip: Dict[str, int] = defaultdict(int)
-        self.message_timestamps: Dict[str, deque] = defaultdict(lambda: deque())
-        
-    def can_connect(self, client_ip: str) -> bool:
-        """Check if a new connection from this IP is allowed."""
-        return self.connections_per_ip[client_ip] < self.max_connections_per_ip
-    
-    def add_connection(self, client_ip: str) -> None:
-        """Register a new connection from this IP."""
-        self.connections_per_ip[client_ip] += 1
-    
-    def remove_connection(self, client_ip: str) -> None:
-        """Remove a connection from this IP."""
-        if self.connections_per_ip[client_ip] > 0:
-            self.connections_per_ip[client_ip] -= 1
-    
-    def can_send_message(self, session_id: str) -> bool:
-        """Check if this session can send another message."""
-        now = time.time()
-        timestamps = self.message_timestamps[session_id]
-        
-        # Remove timestamps older than 1 minute
-        while timestamps and now - timestamps[0] > 60:
-            timestamps.popleft()
-        
-        return len(timestamps) < self.max_messages_per_minute
-    
-    def record_message(self, session_id: str) -> None:
-        """Record a message from this session."""
-        self.message_timestamps[session_id].append(time.time())
-    
-    def cleanup_session(self, session_id: str) -> None:
-        """Clean up rate limiting data for a session."""
-        if session_id in self.message_timestamps:
-            del self.message_timestamps[session_id]
-
-# File path sanitization
-def get_safe_filename(file_path: str) -> str:
-    """
-    Extract only the filename from a full path for security.
-    
-    Args:
-        file_path (str): Full file path
-        
-    Returns:
-        str: Safe filename without directory path
-    """
-    if not file_path:
-        return "unknown_file"
-    
-    filename = os.path.basename(file_path)
-    # Sanitize filename to prevent directory traversal
-    filename = filename.replace("..", "").replace("/", "_").replace("\\", "_")
-    return filename or "unknown_file"
-
-# Input validation
-def validate_websocket_message(data: Dict[str, Any]) -> Dict[str, str]:
-    """
-    Validate WebSocket message structure and content.
-    
-    Args:
-        data (Dict[str, Any]): Raw message data
-        
-    Returns:
-        Dict[str, str]: Validation result with 'valid' and 'error' keys
-    """
-    if not isinstance(data, dict):
-        return {"valid": "false", "error": "Message must be a JSON object"}
-    
-    message_type = data.get("type")
-    if not message_type or not isinstance(message_type, str):
-        return {"valid": "false", "error": "Message must have a 'type' field"}
-    
-    # Validate allowed message types
-    allowed_types = ["start_recording", "stop_recording", "pause_recording", "resume_recording", "ping", "enable_streaming"]
-    if message_type not in allowed_types:
-        return {"valid": "false", "error": f"Invalid message type: {message_type}"}
-    
-    # Validate message data
-    message_data = data.get("data", {})
-    if not isinstance(message_data, dict):
-        return {"valid": "false", "error": "Message data must be an object"}
-    
-    # Validate specific message types
-    if message_type == "start_recording":
-        language = message_data.get("language", "en")
-        format_type = message_data.get("format", "wav")
-        
-        if not isinstance(language, str) or language not in ["en", "pt", "es"]:
-            return {"valid": "false", "error": "Invalid language parameter"}
-        
-        if not isinstance(format_type, str) or format_type not in ["wav", "mp4"]:
-            return {"valid": "false", "error": "Invalid format parameter"}
-        
-        # Validate advanced_audio parameter if present
-        if "advanced_audio" in message_data:
-            advanced_audio = message_data.get("advanced_audio")
-            if not isinstance(advanced_audio, bool):
-                return {"valid": "false", "error": "Invalid advanced_audio parameter - must be boolean"}
-    
-    elif message_type == "enable_streaming":
-        language = message_data.get("language", "en")
-        
-        if not isinstance(language, str) or language not in ["en", "pt", "es"]:
-            return {"valid": "false", "error": "Invalid language parameter for streaming"}
-    
-    return {"valid": "true", "error": ""}
-
 # Global instances
 app_state = SimpleState()
 websocket_manager = SimpleWebSocketManager()
-rate_limiter = RateLimiter()
 
 # Responsive HTML interface w/ file path notifications - FIXED VERSION
 HTML_INTERFACE = """
@@ -684,7 +417,7 @@ HTML_INTERFACE = """
         }
 
         .record-btn {
-            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+            background: linear-gradient(45deg, #66bb6a, #43a047);
             color: white;
         }
 
@@ -694,7 +427,7 @@ HTML_INTERFACE = """
         }
 
         .stop-btn {
-            background: linear-gradient(45deg, #66bb6a, #43a047);
+            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
             color: white;
         }
 
@@ -702,24 +435,6 @@ HTML_INTERFACE = """
             opacity: 0.6;
             cursor: not-allowed;
             transform: none;
-        }
-
-        .checkbox-container {
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-            font-size: 0.9rem;
-            margin: 5px;
-            user-select: none;
-        }
-
-        .checkbox-container input[type="checkbox"] {
-            margin-right: 8px;
-            transform: scale(1.2);
-        }
-
-        .checkmark {
-            margin-left: 5px;
         }
 
         .status {
@@ -820,36 +535,6 @@ HTML_INTERFACE = """
             background: #f44336;
         }
 
-        .streaming-results, .merged-results {
-            max-height: 200px;
-            overflow-y: auto;
-            background: #f0f8ff;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 15px;
-            margin: 10px 0;
-        }
-
-        .streaming-segment {
-            margin: 5px 0;
-            padding: 5px;
-            background: white;
-            border-radius: 4px;
-            border-left: 3px solid #667eea;
-        }
-
-        .timestamp {
-            color: #666;
-            font-size: 0.8rem;
-            font-weight: bold;
-        }
-
-        .confidence {
-            color: #888;
-            font-size: 0.8rem;
-            float: right;
-        }
-
         /* Responsive design */
         @media (max-width: 768px) {
             .container {
@@ -888,20 +573,6 @@ HTML_INTERFACE = """
                     <option value="wav">.WAV</option>
                     <option value="mp4">.MP4</option>
                 </select>
-            </div>
-            
-            <div class="control-row">
-                <label class="checkbox-container">
-                    <input type="checkbox" id="streamingMode">
-                    <span class="checkmark"></span>
-                    Real-time Streaming Mode (Phase 2)
-                </label>
-                
-                <label class="checkbox-container">
-                    <input type="checkbox" id="advancedAudio" checked>
-                    <span class="checkmark"></span>
-                    Advanced Audio Processing
-                </label>
             </div>
             
             <div class="control-row">
@@ -968,10 +639,6 @@ HTML_INTERFACE = """
                     this.formatEl = { value: 'wav' };
                 }
                 
-                // Phase 2 elements
-                this.streamingModeEl = document.getElementById('streamingMode');
-                this.advancedAudioEl = document.getElementById('advancedAudio');
-                
                 this.waveformEl = document.getElementById('waveform');
                 this.waveformContent = document.getElementById('waveform-content');
                 this.progressEl = document.getElementById('progress');
@@ -1020,34 +687,13 @@ HTML_INTERFACE = """
                 };
                 
                 this.ws.onmessage = (event) => {
-                    try {
-                        const message = JSON.parse(event.data);
-                        this.handleMessage(message);
-                    } catch (error) {
-                        console.error('Failed to parse WebSocket message:', error);
-                        this.showError('Invalid message received from server');
-                    }
+                    const message = JSON.parse(event.data);
+                    this.handleMessage(message);
                 };
             }
             
             handleMessage(message) {
                 switch (message.type) {
-                    case 'streaming_enabled':
-                        this.updateStatus('Streaming mode enabled - Advanced processing active');
-                        break;
-                        
-                    case 'streaming_transcription':
-                        this.handleStreamingTranscription(message);
-                        break;
-                        
-                    case 'streaming_diarization':
-                        this.handleStreamingDiarization(message);
-                        break;
-                        
-                    case 'merged_results':
-                        this.handleMergedResults(message);
-                        break;
-                        
                     case 'recording_started':
                         this.isRecording = true;
                         this.updateButtons();
@@ -1199,75 +845,16 @@ HTML_INTERFACE = """
                 this.updateProgress(0, 0);
             }
             
-            // Phase 2 streaming handlers
-            handleStreamingTranscription(message) {
-                this.updateProgress(message.transcription || 0, 0);
-                
-                // Display real-time transcription
-                const streamingDiv = document.getElementById('streaming-results') || this.createStreamingResultsDiv();
-                streamingDiv.innerHTML += `<div class="streaming-segment">
-                    <span class="timestamp">[${message.timestamp.toFixed(1)}s]</span>
-                    <span class="text">${message.text}</span>
-                    <span class="confidence">(${(message.confidence * 100).toFixed(1)}%)</span>
-                </div>`;
-                streamingDiv.scrollTop = streamingDiv.scrollHeight;
-            }
-            
-            handleStreamingDiarization(message) {
-                // Update speaker information in real-time
-                if (message.speakers && message.speakers.length > 0) {
-                    const speakerInfo = message.speakers.map(s => `Speaker ${s.speaker}`).join(', ');
-                    this.updateStatus(`Recording... (Speakers: ${speakerInfo})`);
-                }
-            }
-            
-            handleMergedResults(message) {
-                // Update overall progress and merged results
-                this.updateProgress(90, 90);
-                
-                if (message.transcription && message.transcription.length > 0) {
-                    const mergedDiv = document.getElementById('merged-results') || this.createMergedResultsDiv();
-                    mergedDiv.innerHTML = `<h4>Merged Results (${message.chunk_count} chunks)</h4>
-                        <p><strong>Confidence:</strong> ${(message.confidence * 100).toFixed(1)}%</p>
-                        <p>${message.merged_text}</p>`;
-                }
-            }
-            
-            createStreamingResultsDiv() {
-                const streamingDiv = document.createElement('div');
-                streamingDiv.id = 'streaming-results';
-                streamingDiv.className = 'streaming-results';
-                streamingDiv.innerHTML = '<h4>Real-time Transcription</h4>';
-                this.resultsEl.appendChild(streamingDiv);
-                return streamingDiv;
-            }
-            
-            createMergedResultsDiv() {
-                const mergedDiv = document.createElement('div');
-                mergedDiv.id = 'merged-results';
-                mergedDiv.className = 'merged-results';
-                this.resultsEl.appendChild(mergedDiv);
-                return mergedDiv;
-            }
-
             // CRITICAL FIX: Safe format access with fallback
             startRecording() {
                 this.resultsEl.classList.remove('visible');
-                
-                // Check if streaming mode should be enabled
-                if (this.streamingModeEl && this.streamingModeEl.checked) {
-                    this.send('enable_streaming', { 
-                        language: this.languageEl.value
-                    });
-                }
                 
                 // Safe format access with fallback
                 const formatValue = this.formatEl && this.formatEl.value ? this.formatEl.value : 'wav';
                 
                 this.send('start_recording', { 
                     language: this.languageEl.value,
-                    format: formatValue,
-                    advanced_audio: this.advancedAudioEl ? this.advancedAudioEl.checked : true
+                    format: formatValue
                 });
             }
             
@@ -1328,70 +915,32 @@ async def main_interface():
 # API endpoint
 @app.get("/api")
 async def api_status():
-    return {"message": "TranscrevAI API is running", "version": FASTAPI_CONFIG["version"]}
+    return {"message": "TranscrevAI API is running", "version": "1.0.0"}
 
-# WebSocket handler w/ rate limiting and model management
+# WebSocket handler w/ model management
 @app.websocket("/ws/{session_id}")
 async def websocket_handler(websocket: WebSocket, session_id: str):
-    # Get client IP for rate limiting
-    client_ip = getattr(websocket.client, 'host', 'unknown') if websocket.client else 'unknown'
+    await websocket_manager.connect(websocket, session_id)
     
-    # Check connection rate limit
-    if not rate_limiter.can_connect(client_ip):
-        await websocket.close(code=1008, reason="Too many connections from this IP")
-        logger.warning(f"Rate limit exceeded for IP: {client_ip}", 
-                       extra={"client_ip": client_ip, "action": "rate_limit_exceeded"})
+    if not app_state.create_session(session_id):
+        await websocket_manager.send_message(session_id, {
+            "type": "error", 
+            "message": "Failed to create session"
+        })
         return
     
-    rate_limiter.add_connection(client_ip)
-    
     try:
-        await websocket_manager.connect(websocket, session_id)
-        
-        if not app_state.create_session(session_id):
-            await websocket_manager.send_message(session_id, {
-                "type": "error", 
-                "message": "Failed to create session"
-            })
-            return
-        
         while True:
             data = await websocket.receive_json()
-            
-            # Check message rate limit
-            if not rate_limiter.can_send_message(session_id):
-                await websocket_manager.send_message(session_id, {
-                    "type": "error",
-                    "message": "Rate limit exceeded. Please slow down."
-                })
-                continue
-            
-            rate_limiter.record_message(session_id)
             await handle_websocket_message(session_id, data)
-            
     except WebSocketDisconnect:
         await websocket_manager.disconnect(session_id)
-        rate_limiter.remove_connection(client_ip)
-        rate_limiter.cleanup_session(session_id)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         await websocket_manager.disconnect(session_id)
-        rate_limiter.remove_connection(client_ip)
-        rate_limiter.cleanup_session(session_id)
 
 # Enhanced message handler w/ model management
-async def handle_websocket_message(session_id: str, data: Dict[str, Any]) -> None:
-    # Validate message structure and content
-    validation_result = validate_websocket_message(data)
-    if validation_result["valid"] == "false":
-        await websocket_manager.send_message(session_id, {
-            "type": "error",
-            "message": f"Invalid message: {validation_result['error']}"
-        })
-        logger.warning(f"Invalid WebSocket message from {session_id}: {validation_result['error']}", 
-                       extra={"session_id": session_id, "action": "invalid_message", "error": validation_result['error']})
-        return
-    
+async def handle_websocket_message(session_id: str, data: dict):
     message_type = data.get("type")
     message_data = data.get("data", {})
     session = app_state.get_session(session_id)
@@ -1408,7 +957,6 @@ async def handle_websocket_message(session_id: str, data: Dict[str, Any]) -> Non
             try:
                 language = message_data.get("language", "en")
                 format_type = message_data.get("format", "wav")
-                advanced_audio = message_data.get("advanced_audio", True)
 
                 # Create recorder with correct format
                 if not app_state.create_recorder_for_session(session_id, format_type):
@@ -1418,22 +966,15 @@ async def handle_websocket_message(session_id: str, data: Dict[str, Any]) -> Non
                     })
                     return
                 
-                # Get the newly created recorder with better validation
+                # Get the newly created recorder
                 session = app_state.get_session(session_id)
-                if not session:
+                if not session or session.get("recorder") is None:
                     await websocket_manager.send_message(session_id, {
                         "type": "error",
-                        "message": "Session not found after recorder creation"
+                        "message": "Session or recorder not found"
                     })
                     return
-                
-                recorder = session.get("recorder")
-                if recorder is None:
-                    await websocket_manager.send_message(session_id, {
-                        "type": "error",
-                        "message": "Failed to initialize audio recorder"
-                    })
-                    return
+                recorder = session["recorder"]
 
                 # Start recording immediately (no waiting for model)
                 await recorder.start_recording()
@@ -1442,8 +983,7 @@ async def handle_websocket_message(session_id: str, data: Dict[str, Any]) -> Non
                     "recording": True,
                     "start_time": time.time(),
                     "language": language,
-                    "format": format_type,
-                    "advanced_audio": advanced_audio
+                    "format": format_type
                 })
 
                 await websocket_manager.send_message(session_id, {
@@ -1451,29 +991,18 @@ async def handle_websocket_message(session_id: str, data: Dict[str, Any]) -> Non
                     "message": "Recording started"
                 })
 
-                # Check if streaming mode is enabled
-                if session.get("streaming_mode") and session.get("streaming_processor"):
-                    # Start streaming processing
-                    streaming_task = asyncio.create_task(
-                        session["streaming_processor"].start_processing(websocket_manager, session_id)
-                    )
-                    app_state.update_session(session_id, {"task": streaming_task})
-                    
-                    # Start real-time audio monitoring for streaming
-                    asyncio.create_task(monitor_audio_streaming(session_id))
-                else:
-                    # Start model download silently in background (non-blocking)
-                    model_task = asyncio.create_task(
-                        ModelManager.ensure_model_silent(language)
-                    )
-                    
-                    # Start audio monitoring and processing (traditional mode)
-                    asyncio.create_task(monitor_audio(session_id))
-                    task = asyncio.create_task(process_audio(session_id, language, format_type))
-                    app_state.update_session(session_id, {
-                        "task": task,
-                        "model_task": model_task
-                    })
+                # Start model download silently in background (non-blocking)
+                model_task = asyncio.create_task(
+                    ModelManager.ensure_model_silent(language)
+                )
+                
+                # Start audio monitoring and processing
+                asyncio.create_task(monitor_audio(session_id))
+                task = asyncio.create_task(process_audio(session_id, language, format_type))
+                app_state.update_session(session_id, {
+                    "task": task,
+                    "model_task": model_task
+                })
 
             except Exception as e:
                 logger.error(f"Start recording error: {e}")
@@ -1524,40 +1053,11 @@ async def handle_websocket_message(session_id: str, data: Dict[str, Any]) -> Non
                 "type": "recording_resumed"
             })
     
-    elif message_type == "enable_streaming":
-        try:
-            language = message_data.get("language", "en")
-            
-            # Create and initialize streaming processor
-            streaming_processor = StreamingProcessor()
-            if await streaming_processor.initialize_services(language):
-                app_state.update_session(session_id, {
-                    "streaming_processor": streaming_processor,
-                    "streaming_mode": True
-                })
-                
-                await websocket_manager.send_message(session_id, {
-                    "type": "streaming_enabled",
-                    "message": "Real-time streaming mode activated"
-                })
-            else:
-                await websocket_manager.send_message(session_id, {
-                    "type": "error",
-                    "message": "Failed to enable streaming mode"
-                })
-        
-        except Exception as e:
-            logger.error(f"Enable streaming error: {e}")
-            await websocket_manager.send_message(session_id, {
-                "type": "error",
-                "message": "Failed to enable streaming mode"
-            })
-    
     elif message_type == "ping":
         await websocket_manager.send_message(session_id, {"type": "pong"})
 
 # Audio monitoring
-async def monitor_audio(session_id: str) -> None:
+async def monitor_audio(session_id: str):
     try:
         session = app_state.get_session(session_id)
         while session and session["recording"]:
@@ -1576,77 +1076,8 @@ async def monitor_audio(session_id: str) -> None:
     except Exception as e:
         logger.error(f"Audio monitoring error: {e}")
 
-# Real-time audio monitoring for streaming mode
-async def monitor_audio_streaming(session_id: str) -> None:
-    """Monitor audio and feed chunks to streaming processor"""
-    try:
-        session = app_state.get_session(session_id)
-        if not session:
-            logger.error(f"Session {session_id} not found for streaming audio monitoring")
-            return
-            
-        streaming_processor = session.get("streaming_processor")
-        recorder = session.get("recorder")
-        
-        if not streaming_processor or not recorder:
-            logger.error(f"Missing streaming processor or recorder for session {session_id}")
-            return
-        
-        chunk_duration = 2.0  # 2 second chunks
-        sample_rate = 16000
-        chunk_samples = int(chunk_duration * sample_rate)
-        
-        start_time = time.time()
-        
-        while session and session["recording"]:
-            if not session["paused"]:
-                try:
-                    # Get real audio data from recorder
-                    current_time = time.time()
-                    elapsed = current_time - start_time
-                    
-                    # Get real audio chunk from recorder
-                    audio_chunk = recorder.get_recent_audio_chunk(chunk_duration)
-                    
-                    if audio_chunk is not None and len(audio_chunk) > 0:
-                        # Send to streaming processor with advanced audio setting
-                        enable_processing = session.get("advanced_audio", True)
-                        await streaming_processor.add_audio_chunk(audio_chunk, elapsed, enable_processing)
-                        
-                        # Send audio level update based on real audio
-                        level = np.abs(audio_chunk).mean()
-                        # Normalize level for display (assuming float32 range -1 to 1)
-                        level = min(1.0, level * 5.0)  # Scale for better visualization
-                        await websocket_manager.send_message(session_id, {
-                            "type": "audio_level",
-                            "level": level
-                        })
-                    else:
-                        # No audio data available yet, send zero level
-                        await websocket_manager.send_message(session_id, {
-                            "type": "audio_level",
-                            "level": 0.0
-                        })
-                    
-                except Exception as chunk_error:
-                    logger.error(f"Streaming chunk processing error: {chunk_error}")
-                    # Send zero level on error
-                    try:
-                        await websocket_manager.send_message(session_id, {
-                            "type": "audio_level",
-                            "level": 0.0
-                        })
-                    except:
-                        pass
-            
-            await asyncio.sleep(chunk_duration)
-            session = app_state.get_session(session_id)
-            
-    except Exception as e:
-        logger.error(f"Streaming audio monitoring error: {e}")
-
 # Enhanced processing pipeline with proper SRT generation
-async def process_audio(session_id: str, language: str = "en", _format_type: str = "wav") -> None:
+async def process_audio(session_id: str, language: str = "en", _format_type: str = "wav"):
     try:
         session = app_state.get_session(session_id)
         if not session:
@@ -1659,51 +1090,19 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
         
         # Get audio file
         if not session or not session.get("recorder"):
-            logger.error(f"No session or recorder found for session {session_id}")
             return
         
-        recorder = session.get("recorder")
-        if not recorder or not hasattr(recorder, 'output_file'):
-            logger.error(f"Invalid recorder or missing output_file for session {session_id}")
+        audio_file = session.get("recorder").output_file
+        
+        # Enhanced file validation
+        if not os.path.exists(audio_file):
             await websocket_manager.send_message(session_id, {
                 "type": "error",
-                "message": "Recording failed - no output file found"
+                "message": "Audio file not found. Recording may have failed."
             })
             return
         
-        audio_file = recorder.output_file
-        
-        # Enhanced file validation with async operations
-        try:
-            if ASYNC_FILES_AVAILABLE:
-                file_exists = await aiofiles.os.path.exists(audio_file)
-                if not file_exists:
-                    await websocket_manager.send_message(session_id, {
-                        "type": "error",
-                        "message": "Audio file not found. Recording may have failed."
-                    })
-                    return
-                
-                file_stat = await aiofiles.os.stat(audio_file)
-                file_size = file_stat.st_size
-            else:
-                # Fallback to synchronous operations
-                if not os.path.exists(audio_file):
-                    await websocket_manager.send_message(session_id, {
-                        "type": "error",
-                        "message": "Audio file not found. Recording may have failed."
-                    })
-                    return
-                
-                file_size = os.path.getsize(audio_file)
-        except Exception as e:
-            logger.error(f"File validation error: {e}", extra={"session_id": session_id, "action": "file_validation_error"})
-            await websocket_manager.send_message(session_id, {
-                "type": "error",
-                "message": "File access error during validation."
-            })
-            return
-            
+        file_size = os.path.getsize(audio_file)
         if file_size == 0:
             await websocket_manager.send_message(session_id, {
                 "type": "error",
@@ -1721,28 +1120,65 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
         
         logger.info(f"Processing: {audio_file} (size: {file_size} bytes)")
         
+        # Convert MP4 to WAV for transcription if needed
+        wav_file_for_processing = audio_file
+        if audio_file.endswith('.mp4'):
+            try:
+                from src.file_manager import FileManager
+                import tempfile
+                
+                # Create temporary WAV file for processing
+                temp_dir = FileManager.get_data_path("temp")
+                FileManager.ensure_directory_exists(temp_dir)
+                wav_file_for_processing = os.path.join(temp_dir, f"temp_for_transcription_{int(time.time())}.wav")
+                
+                # Convert MP4 to WAV using FFmpeg
+                ffmpeg_args = [
+                    "ffmpeg", "-y",
+                    "-i", audio_file,
+                    "-acodec", "pcm_s16le",
+                    "-ar", "16000",
+                    "-ac", "1",
+                    wav_file_for_processing
+                ]
+                
+                logger.info(f"Converting MP4 to WAV for transcription: {wav_file_for_processing}")
+                
+                process = await asyncio.create_subprocess_exec(
+                    *ffmpeg_args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
+                
+                if process.returncode != 0:
+                    raise Exception(f"FFmpeg conversion failed: {stderr.decode()}")
+                
+                # Verify conversion was successful
+                if not os.path.exists(wav_file_for_processing) or os.path.getsize(wav_file_for_processing) == 0:
+                    raise Exception("WAV conversion produced empty file")
+                
+                logger.info(f"MP4 to WAV conversion successful: {wav_file_for_processing}")
+                
+            except Exception as e:
+                logger.error(f"MP4 to WAV conversion failed: {e}")
+                await websocket_manager.send_message(session_id, {
+                    "type": "error",
+                    "message": f"Failed to convert MP4 for transcription: {str(e)}"
+                })
+                return
+        
         # Wait for background model download to complete silently
         session = app_state.get_session(session_id)
-        if session:
-            model_task = session.get("model_task")
-            if model_task and hasattr(model_task, '__await__'):
-                try:
-                    # Wait for model download to finish (background task)
-                    model_result = await model_task
-                    if not model_result:
-                        logger.warning("Background model download returned False, attempting fallback")
-                        await ModelManager.ensure_model_silent(language)
-                except Exception as e:
-                    logger.error(f"Background model download failed: {e}")
-                    # Try to ensure model is available as fallback
-                    await ModelManager.ensure_model_silent(language)
-            else:
-                # No background model task or task not awaitable, ensure model is available
-                logger.info("No background model task found, ensuring model availability")
+        if session and session.get("model_task"):
+            try:
+                # Wait for model download to finish (background task)
+                await session.get("model_task")
+            except Exception as e:
+                logger.error(f"Background model download failed: {e}")
+                # Try to ensure model is available as fallback
                 await ModelManager.ensure_model_silent(language)
-        else:
-            logger.warning(f"Session {session_id} not found during model check")
-            await ModelManager.ensure_model_silent(language)
         
         # Get correct model path
         model_path = ModelManager.get_model_path(language)
@@ -1762,7 +1198,7 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
         transcription_data = []
         try:
             async for progress, data in transcribe_audio_with_progress(
-                audio_file, model_path, language, 16000
+                wav_file_for_processing, model_path, language, 16000
             ):
                 session = app_state.get_session(session_id)
                 if not session:
@@ -1791,12 +1227,12 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
         
         try:
             diarizer = SpeakerDiarization()
-            # Use the async method for better performance in async context
-            segments = await diarizer.diarize_audio(audio_file)
+            # Use the correct method for diarization; assuming 'diarize' is the correct method
+            segments = diarizer.diarize(wav_file_for_processing)
             diarization_segments = segments if segments else []
             unique_speakers = len(set(seg.get('speaker', 'Unknown') for seg in diarization_segments)) if diarization_segments else 0
 
-            # Send 100% progress when diarization is complete
+            # Optionally, send 100% progress if needed
             await websocket_manager.send_message(session_id, {
                 "type": "progress",
                 "transcription": 100,
@@ -1805,7 +1241,6 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
 
         except Exception as e:
             logger.error(f"Diarization error: {e}")
-            diarization_segments = []
             unique_speakers = 0
         
         # Generate SRT subtitle file
@@ -1819,20 +1254,46 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
         except Exception as e:
             logger.error(f"SRT generation failed: {e}")
         
-        # Send results with sanitized file paths
+        # Clean up temporary WAV file if it was created
+        if wav_file_for_processing != audio_file and os.path.exists(wav_file_for_processing):
+            try:
+                os.remove(wav_file_for_processing)
+                logger.info(f"Cleaned up temporary WAV file: {wav_file_for_processing}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temporary WAV file: {cleanup_error}")
+        
+        # Send results with file paths
         await websocket_manager.send_message(session_id, {
             "type": "processing_complete",
             "transcription_data": transcription_data,
             "diarization_segments": diarization_segments,
             "speakers_detected": unique_speakers,
-            "srt_file": get_safe_filename(srt_file) if srt_file else None,
-            "audio_file": get_safe_filename(audio_file),  # Sanitized filename only
+            "srt_file": srt_file,
+            "audio_file": audio_file,  # Include audio file path (original MP4)
             "duration": session.get("duration", 0) if session else 0
         })
         
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Processing error: {error_msg}")
+        
+        # Clean up temporary WAV file if it was created
+        try:
+            if (
+                "wav_file_for_processing" in locals()
+                and "audio_file" in locals()
+                and wav_file_for_processing is not None
+                and audio_file is not None
+                and isinstance(wav_file_for_processing, str)
+                and isinstance(audio_file, str)
+                and wav_file_for_processing != audio_file
+                and os.path.exists(wav_file_for_processing)
+            ):
+                os.remove(wav_file_for_processing)
+                logger.info(f"Cleaned up temporary WAV file after error: {wav_file_for_processing}")
+        except Exception as cleanup_error:
+            logger.warning(f"Failed to cleanup temporary WAV file after error: {cleanup_error}")
+        
         await websocket_manager.send_message(session_id, {
             "type": "error",
             "message": "Processing failed. Please try again."

@@ -4,7 +4,9 @@
       "Bash(python:*)",
       "Bash(git checkout:*)",
       "Bash(dir:*)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(del:*)",
+      "Bash(rm:*)"
     ],
     "defaultMode": "acceptEdits"
   }
