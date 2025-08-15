@@ -40,3 +40,5 @@ Thumbs.db
 *.swo
 
 backups/
+CLAUDE.md
+.gitignore

@@ -1,8 +1,11 @@
 {
   "permissions": {
-    "defaultMode": "acceptEdits",
     "allow": [
-      "Bash(python:*)"
-    ]
+      "Bash(python:*)",
+      "Bash(git checkout:*)",
+      "Bash(dir:*)",
+      "Bash(git restore:*)"
+    ],
+    "defaultMode": "acceptEdits"
   }
 }

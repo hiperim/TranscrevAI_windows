@@ -35,7 +35,7 @@ if logger is None:
 # FastAPI setup 
 app = FastAPI( 
     title="TranscrevAI", 
-    description="Real-time Audio Transcription - Simple & Powerful", 
+    description="Real-time Audio Transcription with AI", 
     version="1.0.0" 
 )
 
@@ -333,7 +333,7 @@ HTML_INTERFACE = """
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -357,9 +357,7 @@ HTML_INTERFACE = """
             font-size: 2.5rem;
             font-weight: 700;
             margin-bottom: 0.5rem;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            color: #333;
         }
 
         .tagline {
@@ -419,7 +417,7 @@ HTML_INTERFACE = """
             display: flex;
             gap: 1rem;
             justify-content: center;
-            margin: 2rem 0;
+            margin: 4rem 0;
             flex-wrap: wrap;
         }
 
@@ -473,7 +471,7 @@ HTML_INTERFACE = """
             height: 80px;
             background: #f8f9fa;
             border-radius: 12px;
-            margin: 1.5rem 0;
+            margin: 3rem 0;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -484,8 +482,8 @@ HTML_INTERFACE = """
         }
 
         .waveform.active {
-            background: linear-gradient(135deg, #667eea20, #764ba220);
-            border-color: #667eea;
+            background: #f8f9fa;
+            border-color: #666;
             border-style: solid;
         }
 
@@ -536,7 +534,7 @@ HTML_INTERFACE = """
 
         .bar {
             width: 3px;
-            background: #667eea;
+            background: #666;
             border-radius: 2px;
             transition: height 0.1s ease;
         }
@@ -574,7 +572,7 @@ HTML_INTERFACE = """
 
         .progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, #667eea, #764ba2);
+            background: #333;
             transition: width 0.3s ease;
             border-radius: 4px;
         }
@@ -597,7 +595,7 @@ HTML_INTERFACE = """
             padding: 1rem;
             border-radius: 8px;
             margin: 0.5rem 0;
-            border-left: 4px solid #667eea;
+            border-left: 4px solid #333;
         }
 
         .speaker-tag {
@@ -666,8 +664,8 @@ HTML_INTERFACE = """
 </head>
 <body>
     <div class="app">
-        <div class="logo">🎤 TranscrevAI</div>
-        <div class="tagline">Simple, real-time audio transcription</div>
+        <div class="logo">TranscrevAI</div>
+        <div class="tagline">Real-time Audio Transcription with Speaker Diarization</div>
         
         <div class="settings">
             <select id="language">
@@ -676,8 +674,6 @@ HTML_INTERFACE = """
                 <option value="es">Spanish</option>
             </select>
         </div>
-
-        <div id="status" class="status connecting">Connecting...</div>
 
         <div class="controls">
             <button id="startBtn" class="btn btn-primary" disabled>Start</button>
