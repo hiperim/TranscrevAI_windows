@@ -229,6 +229,7 @@ class FileManager:
                     return model_path
             
             zip_path = os.path.join(output_dir, f"{language_code}.zip")
+            temp_extract_dir = None  # Initialize to avoid scope issues
             
             for attempt in range(3):
                 try:
@@ -304,7 +305,7 @@ class FileManager:
                     logger.error(f"Download attempt {attempt + 1} failed: {e}")
                     
                     # Clean up on error
-                    for cleanup_path in [temp_extract_dir if 'temp_extract_dir' in locals() else None, zip_path]:
+                    for cleanup_path in [temp_extract_dir, zip_path]:
                         if cleanup_path and os.path.exists(cleanup_path):
                             try:
                                 if os.path.isdir(cleanup_path):

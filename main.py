@@ -1171,7 +1171,6 @@ async def process_audio(session_id: str, language: str = "en"):
         srt_file = None
         if transcription_data and len(transcription_data) > 0:
             try:
-                from src.subtitle_generator import generate_srt
                 srt_file = await generate_srt(transcription_data, diarization_segments)
                 if srt_file:
                     logger.info(f"SRT generated successfully: {srt_file}")

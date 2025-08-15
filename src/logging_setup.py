@@ -37,9 +37,8 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
     
     # Create file handler for persistent logging
     try:
-        # Determine log directory
-        app_root = Path(__file__).parent.parent.parent
-        log_dir = app_root / "data" / "logs"
+        # Use fixed path for consistency with other files
+        log_dir = Path(r"C:\transcrevai_android\TranscrevAI_commit34\data\logs")
         log_dir.mkdir(parents=True, exist_ok=True)
         
         log_file = log_dir / "transcrevai.log"
