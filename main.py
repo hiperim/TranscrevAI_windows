@@ -58,12 +58,12 @@ class ModelManager:
             logger.warning(f"Model directory not found: {model_path}")
             return False
         
-        # Check for required model files
+        # Check for required model files (actual structure)
         required_files = [
-            'final.mdl',
-            'Gr.fst', 
-            'HCLr.fst',
-            'mfcc.conf'
+            'am/final.mdl',
+            'graph/Gr.fst', 
+            'graph/HCLr.fst',
+            'config/mfcc.conf'
         ]
         
         # Check for required ivector directory
@@ -183,12 +183,14 @@ class ModelManager:
                     zip_ref.extractall(temp_dir)
                     logger.info(f"Extracted to temporary directory: {temp_dir}")
                 
-                # Find the actual model files - might be nested
+                # Find the actual model files - look for am/final.mdl structure
                 model_source_dir = None
                 
-                # Look for the directory containing final.mdl
+                # Look for the directory containing am/final.mdl
                 for root, dirs, files in os.walk(temp_dir):
-                    if 'final.mdl' in files:
+                    # Check if this directory has an 'am' subdirectory with final.mdl
+                    am_path = os.path.join(root, 'am', 'final.mdl')
+                    if os.path.exists(am_path):
                         model_source_dir = root
                         logger.info(f"Found model files in: {model_source_dir}")
                         break
