@@ -63,7 +63,7 @@ class ModelManager:
             'am/final.mdl',
             'graph/Gr.fst', 
             'graph/HCLr.fst',
-            'config/mfcc.conf'
+            'conf/mfcc.conf'
         ]
         
         # Check for required ivector directory
