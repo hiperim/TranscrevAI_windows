@@ -6,7 +6,7 @@ import os
 import requests
 import zipfile
 import shutil
-from typing import AsyncGenerator, Tuple, List, Dict
+from typing import AsyncGenerator, Tuple, List, Dict, Any
 from pathlib import Path
 from src.file_manager import FileManager
 from config.app_config import MODEL_DIR, LANGUAGE_MODELS
@@ -283,7 +283,7 @@ class AsyncTranscriptionService:
         self._models = {}
         self._model_lock = asyncio.Lock()
     
-    async def load_language_model(self, language_code: str) -> Model:
+    async def load_language_model(self, language_code: str) -> Any:
         """Load or get cached language model with automatic download"""
         if not VOSK_AVAILABLE:
             logger.warning("Vosk not available, returning dummy model")
