@@ -758,27 +758,34 @@ HTML_INTERFACE = """
 
             handleMessage(message) {
                 switch (message.type) {
+                    case 'model_download':
+                        this.setStatus(message.message, 'processing');
+                        this.showWaveform(false);
+                        this.waveformContent.textContent = message.message;
+                        break;
+
                     case 'recording_started':
                         this.isRecording = true;
                         this.setStatus('Recording...', 'recording');
                         this.startBtn.disabled = true;
                         this.pauseBtn.disabled = false;
                         this.stopBtn.disabled = false;
+                        this.waveformContent.textContent = 'Recording...';
                         this.showWaveform(true);
                         break;
-                        
+
                     case 'recording_paused':
                         this.isPaused = true;
                         this.setStatus('Paused', 'recording');
                         this.pauseBtn.textContent = 'Resume';
                         break;
-                        
+
                     case 'recording_resumed':
                         this.isPaused = false;
                         this.setStatus('Recording...', 'recording');
                         this.pauseBtn.textContent = 'Pause';
                         break;
-                        
+
                     case 'recording_stopped':
                         this.isRecording = false;
                         this.setStatus('Processing...', 'processing');
@@ -786,28 +793,29 @@ HTML_INTERFACE = """
                         this.showWaveform(false);
                         this.showProgress(true);
                         break;
-                        
+
                     case 'audio_level':
                         this.updateWaveform(message.level);
                         break;
-                        
+
                     case 'progress':
                         this.updateProgress(message.transcription, message.diarization);
                         break;
-                        
+
                     case 'processing_complete':
                         this.setStatus('Complete!', 'ready');
                         this.showResults(message);
                         this.showProgress(false);
-                        
+
                         // Show file paths notification
                         this.showFileNotification(message.audio_file, message.srt_file);
                         break;
-                        
+
                     case 'error':
                         this.setStatus(`Error: ${message.message}`, 'error');
                         this.resetControls();
                         this.showWaveform(false);
+                        this.waveformContent.textContent = 'Ready to record';
                         break;
                 }
             }
@@ -966,8 +974,14 @@ async def handle_websocket_message(session_id: str, data: dict):
         if not session["recording"]:
             try:
                 language = message_data.get("language", "en")
-                
-                # Silently ensure model exists - no UI feedback
+
+                # Notify client that model is being downloaded
+                await websocket_manager.send_message(session_id, {
+                    "type": "model_download",
+                    "message": f"Downloading '{language}' model, please wait"
+                })
+
+                # Ensure model exists (may take time)
                 model_ready = await ModelManager.ensure_model_silent(language)
                 if not model_ready:
                     await websocket_manager.send_message(session_id, {
@@ -975,26 +989,26 @@ async def handle_websocket_message(session_id: str, data: dict):
                         "message": f"Model for {language} is not available. Please check your internet connection and try again."
                     })
                     return
-                
+
                 # Start recording
                 await recorder.start_recording()
-                
+
                 app_state.update_session(session_id, {
                     "recording": True,
                     "start_time": time.time(),
                     "language": language
                 })
-                
+
                 await websocket_manager.send_message(session_id, {
                     "type": "recording_started",
                     "message": "Recording started"
                 })
-                
+
                 # Start audio monitoring and processing
                 asyncio.create_task(monitor_audio(session_id))
                 task = asyncio.create_task(process_audio(session_id, language))
                 app_state.update_session(session_id, {"task": task})
-                
+
             except Exception as e:
                 logger.error(f"Start recording error: {e}")
                 await websocket_manager.send_message(session_id, {
@@ -1126,67 +1140,58 @@ async def process_audio(session_id: str, language: str = "en"):
                 audio_file, model_path, language
             ):
                 session = app_state.get_session(session_id)
-                if session:
-                    app_state.update_session(session_id, {
-                        "progress": {"transcription": progress, "diarization": session["progress"]["diarization"]}
-                    })
-                    
-                    await websocket_manager.send_message(session_id, {
-                        "type": "progress",
-                        "transcription": progress,
-                        "diarization": session["progress"]["diarization"]
-                    })
+                if not session:
+                    break
                 
-                transcription_data = data
+                await websocket_manager.send_message(session_id, {
+                    "type": "progress",
+                    "transcription": progress,
+                    "diarization": 0
+                })
+                
+                if data:
+                    transcription_data.extend(data)
+            
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Transcription failed: {error_msg}")
-            
-            # Provide user-friendly error messages
-            if "Feature extraction failed" in error_msg:
-                user_msg = "No speech detected in audio. Please speak clearly and try again."
-            elif "Model" in error_msg:
-                user_msg = f"Model error for {language}. Please try a different language or restart."
-            else:
-                user_msg = "Transcription failed. Please try recording again."
-            
+            logger.error(f"Transcription error: {e}")
             await websocket_manager.send_message(session_id, {
-                "type": "error",
-                "message": user_msg
+                "type": "error", 
+                "message": f"Transcription failed: {str(e)}"
             })
             return
         
-        # Diarization
+        # Speaker Diarization with fixed progress updates 
+        diarization_segments = []
+        unique_speakers = 0
+        
         try:
             diarizer = SpeakerDiarization()
-            diarization_segments = await diarizer.diarize_audio(audio_file)
-            unique_speakers = len(set(seg.get("speaker", "Unknown") for seg in diarization_segments))
-            
-            app_state.update_session(session_id, {
-                "progress": {"transcription": 100, "diarization": 100}
-            })
-            
+            # Use the correct method for diarization; assuming 'diarize' is the correct method
+            segments = diarizer.diarize(audio_file)
+            diarization_segments = segments if segments else []
+            unique_speakers = len(set(seg.get('speaker', 'Unknown') for seg in diarization_segments)) if diarization_segments else 0
+
+            # Optionally, send 100% progress if needed
             await websocket_manager.send_message(session_id, {
                 "type": "progress",
                 "transcription": 100,
                 "diarization": 100
             })
+
         except Exception as e:
-            logger.warning(f"Diarization failed: {e}")
-            diarization_segments = []
+            logger.error(f"Diarization error: {e}")
             unique_speakers = 0
         
-        # Generate SRT
+        # Generate SRT subtitle file
         srt_file = None
-        if transcription_data and len(transcription_data) > 0:
-            try:
-                srt_file = await generate_srt(transcription_data, diarization_segments)
-                if srt_file:
-                    logger.info(f"SRT generated successfully: {srt_file}")
-                else:
-                    logger.warning("SRT generation returned None")
-            except Exception as e:
-                logger.error(f"SRT generation failed: {e}")
+        try:
+            srt_file = await generate_srt(transcription_data, diarization_segments)
+            if srt_file:
+                logger.info(f"SRT generated successfully: {srt_file}")
+            else:
+                logger.warning("SRT generation returned None")
+        except Exception as e:
+            logger.error(f"SRT generation failed: {e}")
         
         # Send results with file paths
         await websocket_manager.send_message(session_id, {

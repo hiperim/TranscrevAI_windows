@@ -166,7 +166,7 @@ class SpeakerDiarization:
                 vad_segments = [(0.0, duration)]
             
             # Run diarization in thread pool
-            return await asyncio.to_thread(self._diarize, audio_file, number_speakers, vad_segments)
+            return await asyncio.to_thread(self.diarize, audio_file, number_speakers, vad_segments)
             
         except Exception as e:
             logger.error(f"Diarization failed: {e}")
@@ -185,7 +185,7 @@ class SpeakerDiarization:
                     "speaker": "Speaker_1"
                 }]
     
-    def _diarize(self, audio_file, number_speakers=0, vad_segments=None):
+    def diarize(self, audio_file, number_speakers=0, vad_segments=None):
         """Enhanced internal diarization with FFT error fixes"""
         try:
             logger.info(f"Processing diarization on {audio_file}")
@@ -335,7 +335,6 @@ class SpeakerDiarization:
                 duration = len(x) / Fs if 'x' in locals() and 'Fs' in locals() else 1.0
             except:
                 duration = 1.0
-            
             return [{
                 "start": 0.0,
                 "end": duration,
