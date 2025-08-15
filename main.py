@@ -22,6 +22,15 @@ from config.app_config import MODEL_DIR, DATA_DIR, LANGUAGE_MODELS
 from src.logging_setup import setup_app_logging
 
 logger = setup_app_logging()
+if logger is None:
+    import logging
+    logger = logging.getLogger("TranscrevAI")
+    logger.setLevel(logging.INFO)
+    if not logger.hasHandlers():
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
 
 # FastAPI setup 
 app = FastAPI( 
@@ -30,13 +39,15 @@ app = FastAPI(
     version="1.0.0" 
 )
 
+import os
+
 class ModelManager:
     # Background model management - no UI interference
-    
+
     @staticmethod
     def get_model_path(language: str) -> str:
-        # Use config MODEL_DIR instead of hardcoded path
-        return os.path.join(str(MODEL_DIR), language)
+        # Use new data path for Windows
+        return os.path.join('c:/TranscrevAI_windows/data', language)
     
     @staticmethod
     def validate_model(language: str) -> bool:
@@ -1185,7 +1196,7 @@ async def process_audio(session_id: str, language: str = "en"):
             "speakers_detected": unique_speakers,
             "srt_file": srt_file,
             "audio_file": audio_file,  # Include audio file path
-            "duration": session.get("duration", 0)
+            "duration": session.get("duration", 0) if session else 0
         })
         
     except Exception as e:

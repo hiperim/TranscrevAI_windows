@@ -61,17 +61,17 @@ class CrossPlatformFileHandler:
     async def safe_atomic_move(temp_path: str, final_path: str) -> bool:
         """Safely move file with cross-platform atomic operations"""
         try:
-            temp_path = Path(temp_path)
-            final_path = Path(final_path)
+            temp_path_obj = Path(temp_path)
+            final_path_obj = Path(final_path)
             
             # Ensure destination directory exists
-            final_path.parent.mkdir(parents=True, exist_ok=True)
+            final_path_obj.parent.mkdir(parents=True, exist_ok=True)
             
             # Try Windows-specific atomic move if available
             if WINDOWS_AVAILABLE and sys.platform == "win32":
-                return await CrossPlatformFileHandler._windows_atomic_move(temp_path, final_path)
+                return await CrossPlatformFileHandler._windows_atomic_move(temp_path_obj, final_path_obj)
             else:
-                return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
+                return await CrossPlatformFileHandler._posix_atomic_move(temp_path_obj, final_path_obj)
                 
         except Exception as e:
             logger.error(f"Atomic move failed: {e}")
@@ -157,12 +157,14 @@ class CrossPlatformFileHandler:
                     None
                 )
                 windll.kernel32.FlushFileBuffers(handle.handle)
-                win32file.CloseHandle(handle)
+                win32file.CloseHandle(handle.handle)
             except Exception as e:
                 logger.debug(f"Windows file sync failed: {e}")
         else:
             try:
-                await asyncio.to_thread(os.sync)
+                # POSIX: open the file and fsync its file descriptor
+                with open(path, "rb") as f:
+                    await asyncio.to_thread(os.fsync, f.fileno())
             except Exception as e:
                 logger.debug(f"POSIX file sync failed: {e}")
     
