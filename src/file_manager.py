@@ -66,15 +66,16 @@ class FileManager:
     
     @staticmethod
     def get_unified_temp_dir() -> str:
-        """Create secure temporary directory"""
+        """Create secure temporary directory with race-condition prevention"""
         try:
             base_temp = FileManager.get_data_path("temp")
             FileManager.ensure_directory_exists(base_temp)
             
+            # Use tempfile.mkdtemp which is atomic and handles race conditions
             temp_dir = tempfile.mkdtemp(
                 dir=base_temp,
                 prefix=f"temp_{os.getpid()}_",
-                suffix=f"_{int(time.time())}"
+                suffix=f"_{int(time.time() * 1000000)}"  # microseconds for better uniqueness
             )
             
             return FileManager.validate_path(temp_dir)
@@ -249,11 +250,12 @@ class FileManager:
                             if chunk:
                                 f.write(chunk)
                     
-                    # Create secure temporary directory for extraction
-                    temp_extract_dir = os.path.join(output_dir, f"temp_{language_code}_{int(time.time())}")
-                    if os.path.exists(temp_extract_dir):
-                        shutil.rmtree(temp_extract_dir)
-                    os.makedirs(temp_extract_dir, exist_ok=True)
+                    # Create secure temporary directory for extraction using atomic operation
+                    temp_extract_dir = tempfile.mkdtemp(
+                        dir=output_dir,
+                        prefix=f"temp_{language_code}_",
+                        suffix=f"_{int(time.time() * 1000000)}"
+                    )
                     
                     # Validate ZIP file before extraction
                     if not zipfile.is_zipfile(zip_path):
@@ -357,7 +359,7 @@ class FileManager:
     
     @staticmethod
     def cleanup_temp_dirs():
-        """Secure cleanup of temporary directories with path validation"""
+        """Secure atomic cleanup of temporary directories with path validation"""
         try:
             base_temp = FileManager.get_data_path("temp")
             
@@ -370,21 +372,39 @@ class FileManager:
             if not Path(base_temp).resolve().is_relative_to(expected_base.parent.resolve()):
                 raise SecurityError("Invalid temp directory for cleanup")
             
+            # Get list of items to clean atomically
+            try:
+                temp_items = os.listdir(base_temp)
+            except OSError as e:
+                logger.error(f"Failed to list temp directory: {e}")
+                return
+            
+            # Filter items to clean
+            items_to_clean = []
+            for temp_item in temp_items:
+                if temp_item.startswith("temp_") or temp_item.startswith("atomic_"):
+                    items_to_clean.append(os.path.join(base_temp, temp_item))
+                else:
+                    logger.warning(f"Skipping non-temp item: {temp_item}")
+            
+            # Perform cleanup with atomic operations
             cleaned_count = 0
             error_count = 0
             
-            for temp_item in os.listdir(base_temp):
-                item_path = os.path.join(base_temp, temp_item)
-                
-                # Additional security check: only clean items that look like our temp dirs/files
-                if not (temp_item.startswith("temp_") or temp_item.startswith("atomic_")):
-                    logger.warning(f"Skipping non-temp item: {temp_item}")
-                    continue
-                
+            for item_path in items_to_clean:
                 try:
+                    # Use atomic operations for each item
                     if os.path.isdir(item_path):
-                        shutil.rmtree(item_path)
-                        cleaned_count += 1
+                        # For directories, use a temporary rename + delete pattern
+                        temp_name = f"{item_path}_deleting_{int(time.time() * 1000000)}"
+                        try:
+                            os.rename(item_path, temp_name)
+                            shutil.rmtree(temp_name)
+                            cleaned_count += 1
+                        except OSError:
+                            # If rename fails, try direct deletion
+                            shutil.rmtree(item_path)
+                            cleaned_count += 1
                     elif os.path.isfile(item_path):
                         os.remove(item_path)
                         cleaned_count += 1

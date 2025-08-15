@@ -206,10 +206,19 @@ class AtomicAudioFile:
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async cleanup - no new event loops needed"""
-        if self._committed and self.final_path:
-            await self._async_commit()
-        else:
-            await CrossPlatformFileHandler.safe_delete(self.temp_path)
+        try:
+            if self._committed and self.final_path:
+                await self._async_commit()
+            else:
+                await CrossPlatformFileHandler.safe_delete(self.temp_path)
+        except Exception as e:
+            logger.error(f"Error in AtomicAudioFile cleanup: {e}")
+            # Ensure temp file is cleaned up even if commit fails
+            if os.path.exists(self.temp_path):
+                try:
+                    await CrossPlatformFileHandler.safe_delete(self.temp_path)
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup temp file: {cleanup_error}")
     
     def commit(self, final_path: str):
         """Mark file for preservation with atomic replacement"""
@@ -412,11 +421,19 @@ class AudioRecorder:
         try:
             self.is_recording = False
             
-            # Stop audio stream
+            # Stop audio stream with proper error handling
             if self._stream:
-                self._stream.stop()
-                self._stream.close()
-                self._stream = None
+                try:
+                    self._stream.stop()
+                except Exception as stop_error:
+                    logger.warning(f"Error stopping audio stream: {stop_error}")
+                
+                try:
+                    self._stream.close()
+                except Exception as close_error:
+                    logger.warning(f"Error closing audio stream: {close_error}")
+                finally:
+                    self._stream = None
             
             # Process recorded audio
             await self._save_recorded_audio()
@@ -567,23 +584,37 @@ class AudioRecorder:
         await self._cleanup_resources()
     
     async def _cleanup_resources(self):
-        """Cleanup temporary files and resources"""
-        temp_files = [self.temp_wav]
-        
-        for temp_file in temp_files:
-            if temp_file and os.path.exists(temp_file):
-                await CrossPlatformFileHandler.safe_delete(temp_file)
-        
-        # Clear audio data
-        self._frames = []
-        
-        # Reset stream
-        if self._stream:
-            try:
-                self._stream.close()
-            except Exception:
-                pass
-            self._stream = None
+        """Cleanup temporary files and resources with proper async handling"""
+        try:
+            # Clean up temporary files
+            temp_files = [self.temp_wav] if hasattr(self, 'temp_wav') and self.temp_wav else []
+            
+            for temp_file in temp_files:
+                if temp_file and os.path.exists(temp_file):
+                    await CrossPlatformFileHandler.safe_delete(temp_file)
+            
+            # Clear audio data safely
+            if hasattr(self, '_frames'):
+                self._frames = []
+            
+            # Reset stream with proper error handling
+            if hasattr(self, '_stream') and self._stream:
+                try:
+                    if hasattr(self._stream, 'stop'):
+                        self._stream.stop()
+                except Exception as stop_error:
+                    logger.debug(f"Error stopping stream during cleanup: {stop_error}")
+                
+                try:
+                    if hasattr(self._stream, 'close'):
+                        self._stream.close()
+                except Exception as close_error:
+                    logger.debug(f"Error closing stream during cleanup: {close_error}")
+                finally:
+                    self._stream = None
+                    
+        except Exception as e:
+            logger.error(f"Error during resource cleanup: {e}")
     
     @staticmethod
     def get_audio_duration(file_path: str) -> float:

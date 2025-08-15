@@ -9,12 +9,40 @@ import shutil
 from typing import AsyncGenerator, Tuple, List, Dict
 from pathlib import Path
 from src.file_manager import FileManager
-from vosk import Model, KaldiRecognizer
 from config.app_config import MODEL_DIR, LANGUAGE_MODELS
 from src.logging_setup import setup_app_logging
 
-# Use proper logging setup
+# Use proper logging setup first
 logger = setup_app_logging(logger_name="transcrevai.transcription")
+
+# Import Vosk with graceful fallback
+try:
+    from vosk import Model, KaldiRecognizer
+    VOSK_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Vosk not available: {e}")
+    VOSK_AVAILABLE = False
+    
+    # Create dummy classes for graceful degradation
+    class DummyModel:
+        def __init__(self, *args, **kwargs):
+            pass
+    
+    class DummyKaldiRecognizer:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+        def AcceptWaveform(self, data):
+            return True
+        
+        def Result(self):
+            return '{"text": "Vosk not available"}'
+        
+        def FinalResult(self):
+            return '{"text": "Vosk not available"}'
+    
+    Model = DummyModel
+    KaldiRecognizer = DummyKaldiRecognizer
 
 class TranscriptionError(Exception):
     pass
@@ -257,6 +285,10 @@ class AsyncTranscriptionService:
     
     async def load_language_model(self, language_code: str) -> Model:
         """Load or get cached language model with automatic download"""
+        if not VOSK_AVAILABLE:
+            logger.warning("Vosk not available, returning dummy model")
+            return Model()  # Return dummy model
+        
         async with self._model_lock:
             if language_code not in self._models:
                 try:
@@ -288,6 +320,12 @@ async def transcribe_audio_with_progress(
     """Enhanced transcription with automatic model management"""
     try:
         logger.info(f"Starting transcription for {wav_file} with language {language_code}")
+        
+        # Check if Vosk is available
+        if not VOSK_AVAILABLE:
+            logger.warning("Vosk not available, returning dummy transcription")
+            yield 100, [{"start": 0.0, "end": 1.0, "text": "Vosk speech recognition not available"}]
+            return
         
         # Load model with automatic download if needed
         model = await transcription_service.load_language_model(language_code)

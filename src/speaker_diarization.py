@@ -12,14 +12,40 @@ import time
 from scipy.fftpack import fft
 from enum import Enum
 from unittest.mock import patch
-from pyAudioAnalysis import audioSegmentation as aS
-from pyAudioAnalysis.MidTermFeatures import mid_feature_extraction
 from scipy.io import wavfile
 from src.file_manager import FileManager
 from src.logging_setup import setup_app_logging
 
-# Use proper logging setup
+# Use proper logging setup first
 logger = setup_app_logging(logger_name="transcrevai.speaker_diarization")
+
+# Import pyAudioAnalysis with graceful fallback
+try:
+    from pyAudioAnalysis import audioSegmentation as aS
+    from pyAudioAnalysis.MidTermFeatures import mid_feature_extraction
+    PYAUDIO_ANALYSIS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"pyAudioAnalysis not available: {e}")
+    PYAUDIO_ANALYSIS_AVAILABLE = False
+    # Create dummy classes for graceful degradation
+    class DummyAudioSegmentation:
+        @staticmethod
+        def silence_removal(*args, **kwargs):
+            return [(0.0, 1.0)]  # Return single segment
+        
+        @staticmethod
+        def speaker_diarization(*args, **kwargs):
+            import numpy as np
+            return (np.array([0]), np.array([0]), None)
+    
+    class DummyMidTermFeatures:
+        @staticmethod
+        def mid_feature_extraction(*args, **kwargs):
+            import numpy as np
+            return (np.random.rand(50, 10), None)  # Dummy features
+    
+    aS = DummyAudioSegmentation()
+    mid_feature_extraction = DummyMidTermFeatures.mid_feature_extraction
 
 class DiarizationError(Enum):
     FILE_NOT_FOUND = 1

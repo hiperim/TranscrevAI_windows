@@ -1,4 +1,3 @@
-# TranscrevAI - Simple, Clean, Production Ready 
 import asyncio 
 import logging 
 import os 
@@ -22,10 +21,9 @@ from src.subtitle_generator import generate_srt
 from config.app_config import MODEL_DIR, DATA_DIR, LANGUAGE_MODELS 
 from src.logging_setup import setup_app_logging
 
-# Simple logging setup
 logger = setup_app_logging()
 
-# Clean, simple FastAPI setup 
+# FastAPI setup 
 app = FastAPI( 
     title="TranscrevAI", 
     description="Real-time Audio Transcription - Simple & Powerful", 
@@ -33,7 +31,7 @@ app = FastAPI(
 )
 
 class ModelManager:
-    """Background model management - no UI interference"""
+    # Background model management - no UI interference
     
     @staticmethod
     def get_model_path(language: str) -> str:
@@ -42,19 +40,19 @@ class ModelManager:
     
     @staticmethod
     def validate_model(language: str) -> bool:
-        """Validate if Vosk model exists and has required files"""
+        # Validate if model exists and has required files
         model_path = ModelManager.get_model_path(language)
         
         if not os.path.exists(model_path):
             logger.warning(f"Model directory not found: {model_path}")
             return False
         
-        # Check for required Vosk model files based on actual Portuguese structure
+        # Check for required model files
         required_files = [
-            'final.mdl',    # Acoustic model
-            'Gr.fst',       # Grammar FST  
-            'HCLr.fst',     # HCL FST
-            'mfcc.conf'     # MFCC configuration
+            'final.mdl',
+            'Gr.fst', 
+            'HCLr.fst',
+            'mfcc.conf'
         ]
         
         # Check for required ivector directory
@@ -95,7 +93,7 @@ class ModelManager:
     
     @staticmethod
     async def ensure_model_silent(language: str) -> bool:
-        """Silently ensure model exists - no UI feedback"""
+        # Silently ensure model exists - no UI feedback
         if ModelManager.validate_model(language):
             return True
         
@@ -108,7 +106,7 @@ class ModelManager:
     
     @staticmethod
     async def _download_model_silent(language: str) -> bool:
-        """Silent background download with fixed paths"""
+        # Silent background download with fixed paths
         if language not in LANGUAGE_MODELS:
             logger.error(f"No model URL available for language: {language}")
             return False
@@ -139,7 +137,7 @@ class ModelManager:
                 zip_ref.extractall(temp_dir)
                 logger.info(f"Extracted to temporary directory: {temp_dir}")
             
-            # Find the actual model files (they might be nested)
+            # Find the actual model files - might be nested
             model_source_dir = None
             
             # Look for the directory containing final.mdl
@@ -180,14 +178,14 @@ class ModelManager:
                         os.remove(path)
             return False
 
-# Simple state management - no over-engineering
+# Simple state management
 class SimpleState:
     def __init__(self):
         self.sessions = {}
         
     def create_session(self, session_id: str):
         try:
-            # Create AudioRecorder with correct data path
+            # Create AudioRecorder with data path
             from src.file_manager import FileManager
             recordings_dir = FileManager.get_data_path("recordings")
             output_file = os.path.join(
@@ -231,7 +229,7 @@ class SimpleState:
             del self.sessions[session_id]
             logger.info(f"Session cleaned up: {session_id}")
 
-# Simple WebSocket manager
+# WebSocket manager
 class SimpleWebSocketManager:
     def __init__(self):
         self.connections = {}
@@ -255,11 +253,11 @@ class SimpleWebSocketManager:
                 logger.error(f"Send message failed: {e}")
                 await self.disconnect(session_id)
 
-# Global instances - keep it simple
+# Global instances
 app_state = SimpleState()
 websocket_manager = SimpleWebSocketManager()
 
-# Modern, responsive HTML interface with file path notifications
+# Reponsive HTML interface w/ file path notifications
 HTML_INTERFACE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -732,10 +730,10 @@ HTML_INTERFACE = """
             }
 
             showFileNotification(audioPath, srtPath) {
-                let content = `<strong>🎉 Files saved successfully!</strong><br><br>`;
-                content += `<strong>📹 Audio:</strong><br>${audioPath}<br><br>`;
+                let content = `<strong>Files saved successfully!</strong><br><br>`;
+                content += `<strong>Audio:</strong><br>${audioPath}<br><br>`;
                 if (srtPath) {
-                    content += `<strong>📝 Subtitles:</strong><br>${srtPath}`;
+                    content += `<strong>Subtitles:</strong><br>${srtPath}`;
                 }
                 
                 this.fileContent.innerHTML = content;
@@ -916,7 +914,7 @@ async def main_interface():
 async def api_status():
     return {"message": "TranscrevAI API is running", "version": "1.0.0"}
 
-# WebSocket handler - clean and simple with model management
+# WebSocket handler w/ model management
 @app.websocket("/ws/{session_id}")
 async def websocket_handler(websocket: WebSocket, session_id: str):
     await websocket_manager.connect(websocket, session_id)
@@ -938,7 +936,7 @@ async def websocket_handler(websocket: WebSocket, session_id: str):
         logger.error(f"WebSocket error: {e}")
         await websocket_manager.disconnect(session_id)
 
-# Enhanced message handler with model management
+# Enhanced message handler w/ model management
 async def handle_websocket_message(session_id: str, data: dict):
     message_type = data.get("type")
     message_data = data.get("data", {})
@@ -958,7 +956,7 @@ async def handle_websocket_message(session_id: str, data: dict):
             try:
                 language = message_data.get("language", "en")
                 
-                # Silently ensure model exists (no UI feedback)
+                # Silently ensure model exists - no UI feedback
                 model_ready = await ModelManager.ensure_model_silent(language)
                 if not model_ready:
                     await websocket_manager.send_message(session_id, {
@@ -1035,7 +1033,7 @@ async def handle_websocket_message(session_id: str, data: dict):
     elif message_type == "ping":
         await websocket_manager.send_message(session_id, {"type": "pong"})
 
-# Simple audio monitoring with better error handling
+# Audio monitoring
 async def monitor_audio(session_id: str):
     try:
         session = app_state.get_session(session_id)
@@ -1147,7 +1145,7 @@ async def process_audio(session_id: str, language: str = "en"):
             })
             return
         
-        # Diarization (graceful fallback)
+        # Diarization
         try:
             diarizer = SpeakerDiarization()
             diarization_segments = await diarizer.diarize_audio(audio_file)
