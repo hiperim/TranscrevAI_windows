@@ -103,91 +103,167 @@ class ModelManager:
         return True
     
     @staticmethod
-    async def ensure_model_silent(language: str) -> bool:
-        # Silently ensure model exists - no UI feedback
+    async def ensure_model_with_feedback(language: str, websocket_manager=None, session_id=None) -> bool:
+        # Ensure model exists with user feedback and retry logic
         if ModelManager.validate_model(language):
             return True
         
-        # Try to download silently in background
+        # Try to download with retry logic and user feedback
         try:
-            return await ModelManager._download_model_silent(language)
+            return await ModelManager._download_model_with_retry(language, websocket_manager, session_id)
         except Exception as e:
-            logger.error(f"Silent model download failed: {e}")
+            logger.error(f"Model download failed: {e}")
+            if websocket_manager and session_id:
+                await websocket_manager.send_message(session_id, {
+                    "type": "error",
+                    "message": f"Model setup failed: {str(e)}"
+                })
             return False
     
     @staticmethod
-    async def _download_model_silent(language: str) -> bool:
-        # Silent background download with fixed paths
+    async def ensure_model_silent(language: str) -> bool:
+        # Backward compatibility method
+        return await ModelManager.ensure_model_with_feedback(language, None, None)
+    
+    @staticmethod
+    async def _download_model_with_retry(language: str, websocket_manager=None, session_id=None, max_retries=3) -> bool:
+        # Enhanced download with retry logic and user feedback
         if language not in LANGUAGE_MODELS:
             logger.error(f"No model URL available for language: {language}")
             return False
         
-        try:
-            model_url = LANGUAGE_MODELS[language]
-            model_path = ModelManager.get_model_path(language)
-            zip_path = f"{model_path}.zip"
-            
-            # Create model directory with correct path
-            base_models_dir = os.path.dirname(model_path)
-            os.makedirs(base_models_dir, exist_ok=True)
-            
-            # Download model
-            urllib.request.urlretrieve(model_url, zip_path)
-            logger.info(f"Downloaded model to: {zip_path}")
-            
-            # Validate ZIP file
-            if not zipfile.is_zipfile(zip_path):
-                raise Exception("Downloaded file is not a valid ZIP")
-            
-            # Extract ZIP to temporary directory first
-            temp_dir = f"{model_path}_temp"
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-            
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
-                logger.info(f"Extracted to temporary directory: {temp_dir}")
-            
-            # Find the actual model files - might be nested
-            model_source_dir = None
-            
-            # Look for the directory containing final.mdl
-            for root, dirs, files in os.walk(temp_dir):
-                if 'final.mdl' in files:
-                    model_source_dir = root
-                    logger.info(f"Found model files in: {model_source_dir}")
-                    break
-            
-            if not model_source_dir:
-                raise Exception("Could not find model files in downloaded archive")
-            
-            # Remove existing model directory if it exists
-            if os.path.exists(model_path):
-                shutil.rmtree(model_path)
-            
-            # Move model files to final location
-            shutil.move(model_source_dir, model_path)
-            
-            # Clean up
-            shutil.rmtree(temp_dir)
-            os.remove(zip_path)
-            
-            logger.info(f"Model extracted to: {model_path}")
-            
-            # Validate the extracted model
-            return ModelManager.validate_model(language)
-            
-        except Exception as e:
-            logger.error(f"Failed to download model for {language}: {e}")
-            
-            # Clean up on failure
-            for path in [zip_path, f"{model_path}_temp", model_path]:
-                if os.path.exists(path):
-                    if os.path.isdir(path):
-                        shutil.rmtree(path)
+        model_url = LANGUAGE_MODELS[language]
+        model_path = ModelManager.get_model_path(language)
+        
+        for attempt in range(max_retries):
+            try:
+                # Send user feedback about retry attempt
+                if websocket_manager and session_id:
+                    if attempt == 0:
+                        await websocket_manager.send_message(session_id, {
+                            "type": "model_download",
+                            "message": f"Downloading '{language}' model, please wait..."
+                        })
                     else:
-                        os.remove(path)
-            return False
+                        await websocket_manager.send_message(session_id, {
+                            "type": "model_download",
+                            "message": f"Connection lost. Retrying download... (attempt {attempt + 1}/{max_retries})"
+                        })
+                
+                zip_path = f"{model_path}.zip"
+                
+                # Create model directory with correct path
+                base_models_dir = os.path.dirname(model_path)
+                os.makedirs(base_models_dir, exist_ok=True)
+                
+                # Download model with timeout and retry logic
+                try:
+                    urllib.request.urlretrieve(model_url, zip_path)
+                    logger.info(f"Downloaded model to: {zip_path}")
+                except Exception as download_error:
+                    raise Exception(f"Download failed: {download_error}")
+                
+                # Validate ZIP file
+                if not zipfile.is_zipfile(zip_path):
+                    raise Exception("Downloaded file is not a valid ZIP")
+                
+                # Update user on extraction progress
+                if websocket_manager and session_id:
+                    await websocket_manager.send_message(session_id, {
+                        "type": "model_download",
+                        "message": f"Download complete. Extracting '{language}' model..."
+                    })
+                
+                # Extract ZIP to temporary directory first
+                temp_dir = f"{model_path}_temp"
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(temp_dir)
+                    logger.info(f"Extracted to temporary directory: {temp_dir}")
+                
+                # Find the actual model files - might be nested
+                model_source_dir = None
+                
+                # Look for the directory containing final.mdl
+                for root, dirs, files in os.walk(temp_dir):
+                    if 'final.mdl' in files:
+                        model_source_dir = root
+                        logger.info(f"Found model files in: {model_source_dir}")
+                        break
+                
+                if not model_source_dir:
+                    raise Exception("Could not find model files in downloaded archive")
+                
+                # Remove existing model directory if it exists
+                if os.path.exists(model_path):
+                    shutil.rmtree(model_path)
+                
+                # Move model files to final location
+                shutil.move(model_source_dir, model_path)
+                
+                # Clean up
+                shutil.rmtree(temp_dir)
+                os.remove(zip_path)
+                
+                logger.info(f"Model extracted to: {model_path}")
+                
+                # Validate the extracted model
+                if ModelManager.validate_model(language):
+                    if websocket_manager and session_id:
+                        await websocket_manager.send_message(session_id, {
+                            "type": "model_download",
+                            "message": f"'{language}' model ready. Starting recording..."
+                        })
+                    return True
+                else:
+                    raise Exception("Model validation failed after extraction")
+                
+            except Exception as e:
+                logger.error(f"Download attempt {attempt + 1} failed for {language}: {e}")
+                
+                # Clean up on failure
+                cleanup_paths = []
+                if 'zip_path' in locals():
+                    cleanup_paths.append(zip_path)
+                if 'temp_dir' in locals():
+                    cleanup_paths.append(f"{model_path}_temp")
+                    
+                for path in cleanup_paths:
+                    if os.path.exists(path):
+                        try:
+                            if os.path.isdir(path):
+                                shutil.rmtree(path)
+                            else:
+                                os.remove(path)
+                        except Exception as cleanup_error:
+                            logger.warning(f"Cleanup failed for {path}: {cleanup_error}")
+                
+                # If this is not the last attempt, wait before retrying
+                if attempt < max_retries - 1:
+                    wait_time = 2 * (attempt + 1)  # Progressive backoff
+                    if websocket_manager and session_id:
+                        await websocket_manager.send_message(session_id, {
+                            "type": "model_download",
+                            "message": f"Retrying in {wait_time} seconds..."
+                        })
+                    await asyncio.sleep(wait_time)
+                else:
+                    # Final attempt failed
+                    if websocket_manager and session_id:
+                        await websocket_manager.send_message(session_id, {
+                            "type": "error",
+                            "message": f"Failed to download '{language}' model after {max_retries} attempts. Please check your internet connection and try again."
+                        })
+                    return False
+        
+        return False
+
+    @staticmethod
+    async def _download_model_silent(language: str) -> bool:
+        # Wrapper for backward compatibility
+        return await ModelManager._download_model_with_retry(language, None, None, 3)
 
 # Simple state management
 class SimpleState:
@@ -332,6 +408,8 @@ HTML_INTERFACE = """
         .status.ready { background: #d4edda; color: #155724; }
         .status.recording { background: #f8d7da; color: #721c24; }
         .status.processing { background: #cce5ff; color: #004085; }
+        .status.downloading { background: #e1ecf4; color: #0c5460; }
+        .status.retrying { background: #ffeaa7; color: #d68910; }
         .status.error { background: #f5c6cb; color: #721c24; }
 
         .file-notification {
@@ -429,12 +507,52 @@ HTML_INTERFACE = """
             justify-content: center;
             border: 2px dashed #dee2e6;
             transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
 
         .waveform.active {
             background: linear-gradient(135deg, #667eea20, #764ba220);
             border-color: #667eea;
             border-style: solid;
+        }
+
+        .waveform.downloading {
+            background: linear-gradient(135deg, #e1ecf420, #0c546020);
+            border-color: #0c5460;
+            border-style: solid;
+        }
+
+        .waveform.retrying {
+            background: linear-gradient(135deg, #ffeaa720, #d6891020);
+            border-color: #d68910;
+            border-style: solid;
+        }
+
+        .waveform-message {
+            text-align: center;
+            font-weight: 500;
+            color: #666;
+            padding: 0 1rem;
+            line-height: 1.4;
+        }
+
+        .waveform-message.downloading {
+            color: #0c5460;
+        }
+
+        .waveform-message.retrying {
+            color: #d68910;
+        }
+
+        .retry-progress {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 3px;
+            background: #d68910;
+            transition: width 0.3s ease;
+            width: 0%;
         }
 
         .waveform-bars {
@@ -596,7 +714,8 @@ HTML_INTERFACE = """
         </div>
 
         <div id="waveform" class="waveform">
-            <div id="waveform-content">Ready to record</div>
+            <div id="waveform-content" class="waveform-message">Ready to record</div>
+            <div id="retry-progress" class="retry-progress"></div>
         </div>
 
         <div id="progress" class="progress-section">
@@ -661,6 +780,7 @@ HTML_INTERFACE = """
                 this.diarizationPercent = document.getElementById('diarization-percent');
                 this.fileNotification = document.getElementById('fileNotification');
                 this.fileContent = document.getElementById('fileContent');
+                this.retryProgress = document.getElementById('retry-progress');
             }
 
             createWaveformBars() {
@@ -759,9 +879,7 @@ HTML_INTERFACE = """
             handleMessage(message) {
                 switch (message.type) {
                     case 'model_download':
-                        this.setStatus(message.message, 'processing');
-                        this.showWaveform(false);
-                        this.waveformContent.textContent = message.message;
+                        this.handleModelDownload(message.message);
                         break;
 
                     case 'recording_started':
@@ -814,10 +932,84 @@ HTML_INTERFACE = """
                     case 'error':
                         this.setStatus(`Error: ${message.message}`, 'error');
                         this.resetControls();
-                        this.showWaveform(false);
-                        this.waveformContent.textContent = 'Ready to record';
+                        this.resetWaveform();
                         break;
                 }
+            }
+
+            handleModelDownload(message) {
+                // Determine the type of download status based on message content
+                if (message.includes('Retrying') || message.includes('attempt')) {
+                    this.setStatus(message, 'retrying');
+                    this.showRetryProgress(message);
+                } else if (message.includes('Downloading') || message.includes('Extracting')) {
+                    this.setStatus(message, 'downloading');
+                    this.showDownloadProgress(message);
+                } else {
+                    this.setStatus(message, 'processing');
+                    this.showWaveformMessage(message, 'downloading');
+                }
+            }
+
+            showRetryProgress(message) {
+                this.showWaveform(false);
+                this.waveformEl.classList.remove('downloading');
+                this.waveformEl.classList.add('retrying');
+                this.waveformContent.className = 'waveform-message retrying';
+                this.waveformContent.textContent = message;
+                
+                // Show retry countdown if available
+                const retryMatch = message.match(/retrying in (\\d+) seconds/i);
+                if (retryMatch) {
+                    const seconds = parseInt(retryMatch[1]);
+                    this.startRetryCountdown(seconds);
+                }
+            }
+
+            showDownloadProgress(message) {
+                this.showWaveform(false);
+                this.waveformEl.classList.remove('retrying');
+                this.waveformEl.classList.add('downloading');
+                this.waveformContent.className = 'waveform-message downloading';
+                this.waveformContent.textContent = message;
+                this.retryProgress.style.width = '0%';
+            }
+
+            showWaveformMessage(message, type = '') {
+                this.showWaveform(false);
+                this.waveformEl.classList.remove('downloading', 'retrying');
+                if (type) {
+                    this.waveformEl.classList.add(type);
+                    this.waveformContent.className = `waveform-message ${type}`;
+                } else {
+                    this.waveformContent.className = 'waveform-message';
+                }
+                this.waveformContent.textContent = message;
+                this.retryProgress.style.width = '0%';
+            }
+
+            startRetryCountdown(seconds) {
+                let remaining = seconds;
+                this.retryProgress.style.width = '100%';
+                
+                const countdown = setInterval(() => {
+                    remaining--;
+                    const progress = (remaining / seconds) * 100;
+                    this.retryProgress.style.width = `${Math.max(0, progress)}%`;
+                    
+                    if (remaining <= 0) {
+                        clearInterval(countdown);
+                        this.retryProgress.style.width = '0%';
+                    }
+                }, 1000);
+            }
+
+            resetWaveform() {
+                this.showWaveform(false);
+                this.waveformEl.classList.remove('downloading', 'retrying');
+                this.waveformContent.className = 'waveform-message';
+                this.waveformContent.textContent = 'Ready to record';
+                this.retryProgress.style.width = '0%';
             }
 
             setStatus(text, type) {
@@ -885,6 +1077,7 @@ HTML_INTERFACE = """
                 this.stopBtn.disabled = true;
                 this.isRecording = false;
                 this.isPaused = false;
+                this.resetWaveform();
             }
 
             startRecording() {
@@ -975,19 +1168,10 @@ async def handle_websocket_message(session_id: str, data: dict):
             try:
                 language = message_data.get("language", "en")
 
-                # Notify client that model is being downloaded
-                await websocket_manager.send_message(session_id, {
-                    "type": "model_download",
-                    "message": f"Downloading '{language}' model, please wait"
-                })
-
-                # Ensure model exists (may take time)
-                model_ready = await ModelManager.ensure_model_silent(language)
+                # Ensure model exists with retry logic and user feedback
+                model_ready = await ModelManager.ensure_model_with_feedback(language, websocket_manager, session_id)
                 if not model_ready:
-                    await websocket_manager.send_message(session_id, {
-                        "type": "error",
-                        "message": f"Model for {language} is not available. Please check your internet connection and try again."
-                    })
+                    # Error message already sent by ensure_model_with_feedback
                     return
 
                 # Start recording
@@ -1137,7 +1321,7 @@ async def process_audio(session_id: str, language: str = "en"):
         transcription_data = []
         try:
             async for progress, data in transcribe_audio_with_progress(
-                audio_file, model_path, language
+                audio_file, model_path, language, 16000, websocket_manager, session_id
             ):
                 session = app_state.get_session(session_id)
                 if not session:
