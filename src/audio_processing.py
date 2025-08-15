@@ -396,38 +396,6 @@ class AudioRecorder:
                 AudioProcessingError.ErrorType.SYSTEM_ERROR
             )
     
-    def get_recent_audio_chunk(self, duration_seconds: float = 2.0) -> Optional[np.ndarray]:
-        """
-        Get recent audio chunk for real-time processing.
-        
-        Args:
-            duration_seconds: Duration of audio chunk to return
-            
-        Returns:
-            Recent audio chunk as numpy array or None if insufficient data
-        """
-        if not self.is_recording or not self._frames:
-            return None
-        
-        # Calculate required frames for duration
-        frames_needed = int(duration_seconds * self.sample_rate)
-        
-        # Get recent frames
-        with self._record_lock:
-            if len(self._frames) == 0:
-                return None
-            
-            # Convert list of frame chunks to single array
-            all_frames = np.concatenate(self._frames, axis=0) if self._frames else np.array([])
-            
-            if len(all_frames) < frames_needed:
-                # Return all available frames if we don't have enough
-                return all_frames.flatten() if len(all_frames) > 0 else None
-            
-            # Return the most recent frames
-            recent_frames = all_frames[-frames_needed:]
-            return recent_frames.flatten()
-
     def pause_recording(self):
         """Pause the recording"""
         if not self.is_recording:
