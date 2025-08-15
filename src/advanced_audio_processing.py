@@ -417,32 +417,67 @@ class AdvancedAudioProcessor:
         Returns:
             Processed audio chunk
         """
+        # Input validation
+        if audio is None:
+            logger.warning("Null audio input provided")
+            return np.array([], dtype=np.float32)
+        
+        if not isinstance(audio, np.ndarray):
+            try:
+                audio = np.array(audio, dtype=np.float32)
+            except Exception as e:
+                logger.error(f"Failed to convert audio to numpy array: {e}")
+                return np.array([], dtype=np.float32)
+        
+        if len(audio) == 0:
+            return audio
+        
+        # Check for valid audio range
+        if np.any(np.isnan(audio)) or np.any(np.isinf(audio)):
+            logger.warning("Invalid audio data (NaN or Inf), cleaning...")
+            audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+        
         try:
-            if len(audio) == 0:
+            processed = audio.astype(np.float32)
+            original_dtype = audio.dtype
+            
+            # Noise reduction with error handling
+            if enable_noise_reduction:
+                try:
+                    if self.noise_profile is not None:
+                        processed = self.reduce_noise_spectral_subtraction(processed)
+                    else:
+                        # Use Wiener filter as fallback
+                        processed = self.reduce_noise_wiener_filter(processed)
+                except Exception as nr_error:
+                    logger.warning(f"Noise reduction failed: {nr_error}")
+            
+            # Echo cancellation with error handling
+            if enable_echo_cancellation:
+                try:
+                    processed = self.cancel_echo(processed)
+                except Exception as ec_error:
+                    logger.warning(f"Echo cancellation failed: {ec_error}")
+            
+            # Speech enhancement with error handling
+            if enable_enhancement:
+                try:
+                    processed = self.enhance_speech(processed)
+                except Exception as enh_error:
+                    logger.warning(f"Speech enhancement failed: {enh_error}")
+            
+            # Final normalization with error handling
+            try:
+                processed = self.normalize_audio(processed)
+            except Exception as norm_error:
+                logger.warning(f"Audio normalization failed: {norm_error}")
+            
+            # Ensure output is valid
+            if np.any(np.isnan(processed)) or np.any(np.isinf(processed)):
+                logger.warning("Processing resulted in invalid data, using original")
                 return audio
             
-            processed = audio.astype(np.float32)
-            
-            # Noise reduction
-            if enable_noise_reduction:
-                if self.noise_profile is not None:
-                    processed = self.reduce_noise_spectral_subtraction(processed)
-                else:
-                    # Use Wiener filter as fallback
-                    processed = self.reduce_noise_wiener_filter(processed)
-            
-            # Echo cancellation
-            if enable_echo_cancellation:
-                processed = self.cancel_echo(processed)
-            
-            # Speech enhancement
-            if enable_enhancement:
-                processed = self.enhance_speech(processed)
-            
-            # Final normalization
-            processed = self.normalize_audio(processed)
-            
-            return processed.astype(audio.dtype)
+            return processed.astype(original_dtype)
             
         except Exception as e:
             logger.error(f"Audio chunk processing failed: {e}")
