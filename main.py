@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+import numpy as np
 from collections import defaultdict, deque
 from typing import Dict, List, Optional, Any, Union
 
@@ -32,7 +33,6 @@ logger = setup_app_logging()
 if logger is None:
     import logging
     import json
-    from datetime import datetime
     
     class StructuredFormatter(logging.Formatter):
         """
@@ -575,6 +575,18 @@ def validate_websocket_message(data: Dict[str, Any]) -> Dict[str, str]:
         
         if not isinstance(format_type, str) or format_type not in ["wav", "mp4"]:
             return {"valid": "false", "error": "Invalid format parameter"}
+        
+        # Validate advanced_audio parameter if present
+        if "advanced_audio" in message_data:
+            advanced_audio = message_data.get("advanced_audio")
+            if not isinstance(advanced_audio, bool):
+                return {"valid": "false", "error": "Invalid advanced_audio parameter - must be boolean"}
+    
+    elif message_type == "enable_streaming":
+        language = message_data.get("language", "en")
+        
+        if not isinstance(language, str) or language not in ["en", "pt", "es"]:
+            return {"valid": "false", "error": "Invalid language parameter for streaming"}
     
     return {"valid": "true", "error": ""}
 
@@ -1396,6 +1408,7 @@ async def handle_websocket_message(session_id: str, data: Dict[str, Any]) -> Non
             try:
                 language = message_data.get("language", "en")
                 format_type = message_data.get("format", "wav")
+                advanced_audio = message_data.get("advanced_audio", True)
 
                 # Create recorder with correct format
                 if not app_state.create_recorder_for_session(session_id, format_type):
@@ -1429,7 +1442,8 @@ async def handle_websocket_message(session_id: str, data: Dict[str, Any]) -> Non
                     "recording": True,
                     "start_time": time.time(),
                     "language": language,
-                    "format": format_type
+                    "format": format_type,
+                    "advanced_audio": advanced_audio
                 })
 
                 await websocket_manager.send_message(session_id, {
@@ -1582,32 +1596,48 @@ async def monitor_audio_streaming(session_id: str) -> None:
         sample_rate = 16000
         chunk_samples = int(chunk_duration * sample_rate)
         
-        import numpy as np
         start_time = time.time()
         
         while session and session["recording"]:
             if not session["paused"]:
                 try:
-                    # Get audio data from recorder (simulated for now)
-                    # In real implementation, this would come from the actual recorder
+                    # Get real audio data from recorder
                     current_time = time.time()
                     elapsed = current_time - start_time
                     
-                    # Create dummy audio chunk (replace with real audio capture)
-                    audio_chunk = np.random.normal(0, 0.1, chunk_samples).astype(np.float32)
+                    # Get real audio chunk from recorder
+                    audio_chunk = recorder.get_recent_audio_chunk(chunk_duration)
                     
-                    # Send to streaming processor
-                    await streaming_processor.add_audio_chunk(audio_chunk, elapsed)
-                    
-                    # Send audio level update
-                    level = np.abs(audio_chunk).mean() * 10  # Simulate level
-                    await websocket_manager.send_message(session_id, {
-                        "type": "audio_level",
-                        "level": min(1.0, level)
-                    })
+                    if audio_chunk is not None and len(audio_chunk) > 0:
+                        # Send to streaming processor with advanced audio setting
+                        enable_processing = session.get("advanced_audio", True)
+                        await streaming_processor.add_audio_chunk(audio_chunk, elapsed, enable_processing)
+                        
+                        # Send audio level update based on real audio
+                        level = np.abs(audio_chunk).mean()
+                        # Normalize level for display (assuming float32 range -1 to 1)
+                        level = min(1.0, level * 5.0)  # Scale for better visualization
+                        await websocket_manager.send_message(session_id, {
+                            "type": "audio_level",
+                            "level": level
+                        })
+                    else:
+                        # No audio data available yet, send zero level
+                        await websocket_manager.send_message(session_id, {
+                            "type": "audio_level",
+                            "level": 0.0
+                        })
                     
                 except Exception as chunk_error:
                     logger.error(f"Streaming chunk processing error: {chunk_error}")
+                    # Send zero level on error
+                    try:
+                        await websocket_manager.send_message(session_id, {
+                            "type": "audio_level",
+                            "level": 0.0
+                        })
+                    except:
+                        pass
             
             await asyncio.sleep(chunk_duration)
             session = app_state.get_session(session_id)

@@ -4,8 +4,6 @@ import time
 import numpy as np
 from typing import AsyncGenerator, Dict, Any, List, Tuple, Optional
 from collections import deque
-import threading
-import queue
 from concurrent.futures import ThreadPoolExecutor
 
 from src.transcription import TranscriptionService
@@ -98,28 +96,47 @@ class StreamingProcessor:
             self.is_processing = False
     
     async def stop_processing(self):
-        """Stop the streaming processing pipeline."""
+        """Stop the streaming processing pipeline with proper cleanup."""
         self.is_processing = False
         logger.info("Stopping streaming processing")
         
-        # Clear queues
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        # Wait a bit for workers to finish current tasks
+        await asyncio.sleep(0.5)
         
-        while not self.transcription_queue.empty():
-            try:
-                self.transcription_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        # Clear queues with timeout to prevent hanging
+        try:
+            # Clear audio queue
+            while not self.audio_queue.empty():
+                try:
+                    self.audio_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            
+            # Clear transcription queue
+            while not self.transcription_queue.empty():
+                try:
+                    self.transcription_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            
+            # Clear diarization queue
+            while not self.diarization_queue.empty():
+                try:
+                    self.diarization_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                    
+        except Exception as e:
+            logger.warning(f"Error during queue cleanup: {e}")
         
-        while not self.diarization_queue.empty():
-            try:
-                self.diarization_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        # Clear buffers
+        try:
+            self.transcription_buffer.clear()
+            self.diarization_buffer.clear()
+        except Exception as e:
+            logger.warning(f"Error during buffer cleanup: {e}")
+        
+        logger.info("Streaming processing stopped and cleaned up")
     
     async def add_audio_chunk(self, audio_data: np.ndarray, timestamp: float, 
                              enable_processing: bool = True) -> None:
@@ -186,18 +203,34 @@ class StreamingProcessor:
                 
                 audio_data = chunk_info["data"]
                 
-                # Add overlap from previous chunk
-                if previous_chunk is not None and len(previous_chunk) >= overlap_samples:
-                    overlap_data = previous_chunk[-overlap_samples:]
-                    audio_data = np.concatenate([overlap_data, audio_data])
-                    chunk_info["has_overlap"] = True
-                else:
+                # Add overlap from previous chunk with error handling
+                try:
+                    if previous_chunk is not None and len(previous_chunk) >= overlap_samples:
+                        overlap_data = previous_chunk[-overlap_samples:]
+                        audio_data = np.concatenate([overlap_data, audio_data])
+                        chunk_info["has_overlap"] = True
+                    else:
+                        chunk_info["has_overlap"] = False
+                except Exception as overlap_error:
+                    logger.warning(f"Audio overlap processing failed: {overlap_error}")
                     chunk_info["has_overlap"] = False
                 
-                # Queue for both transcription and diarization
-                chunk_info["data"] = audio_data
-                await self.transcription_queue.put(chunk_info.copy())
-                await self.diarization_queue.put(chunk_info.copy())
+                # Validate audio data before queuing
+                if audio_data is None or len(audio_data) == 0:
+                    logger.warning("Empty audio data, skipping chunk")
+                    continue
+                
+                # Queue for both transcription and diarization with error handling
+                try:
+                    chunk_info["data"] = audio_data
+                    await asyncio.wait_for(self.transcription_queue.put(chunk_info.copy()), timeout=1.0)
+                    await asyncio.wait_for(self.diarization_queue.put(chunk_info.copy()), timeout=1.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Queue put timeout, dropping chunk")
+                    continue
+                except Exception as queue_error:
+                    logger.error(f"Queue error: {queue_error}")
+                    continue
                 
                 previous_chunk = chunk_info["data"]
                 
@@ -345,19 +378,27 @@ class StreamingProcessor:
             if len(audio_data) < self.sample_rate * 1.0:  # Less than 1 second
                 return None
             
-            # Create temporary file for diarization
+            # Create temporary file for diarization with proper cleanup
             import tempfile
             import soundfile as sf
+            import os
             
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                sf.write(temp_file.name, audio_data, self.sample_rate)
+            temp_file_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                    temp_file_path = temp_file.name
+                    sf.write(temp_file_path, audio_data, self.sample_rate)
                 
                 # Run diarization
-                segments = self.diarization_service.diarize(temp_file.name)
+                segments = self.diarization_service.diarize(temp_file_path)
                 
-                # Clean up
-                import os
-                os.unlink(temp_file.name)
+            finally:
+                # Ensure cleanup even if diarization fails
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.unlink(temp_file_path)
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to cleanup temp file {temp_file_path}: {cleanup_error}")
                 
                 if segments:
                     return {
