@@ -52,16 +52,16 @@ class FileManager:
     def get_data_path(subdir="") -> str:
         """Get data directory path with validation"""
         # Use the fixed base directory path
-    base = Path(r"c:\\TranscrevAI_windows\\data")
+        base = Path(r"c:\\TranscrevAI_windows\\data")
         full_path = base / subdir
-        
+
         # Ensure data directory exists
         try:
             full_path.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             logger.error(f"Failed to create data directory: {full_path}")
             raise RuntimeError(f"Data directory creation failed: {str(e)}")
-        
+
         return os.path.normpath(str(full_path))
     
     @staticmethod

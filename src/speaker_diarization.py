@@ -201,6 +201,9 @@ class SpeakerDiarization:
             
             # Extract speech segments based on VAD
             speech_samples = []
+            if vad_segments is None:
+                logger.warning("vad_segments is None, using full audio as a single segment")
+                vad_segments = [(0.0, len(x) / Fs)]
             for start, end in vad_segments:
                 start_sample = max(0, int(start * Fs))
                 end_sample = min(len(x), int(end * Fs))
@@ -295,7 +298,6 @@ class SpeakerDiarization:
                     mid_window=2.0,
                     mid_step=0.1,
                     short_window=0.05,
-                    short_step=0.05,
                     lda_dim=min(35, mid_term_features.shape[0] - 1)
                 )
                 

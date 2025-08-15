@@ -415,7 +415,7 @@ async def transcribe_audio_with_progress(
         for item in chunk_results:
             if isinstance(item, tuple):
                 if item[0] == "progress":
-                    yield item[1], transcription_data
+                    yield int(item[1]), transcription_data
                 elif item[0] == "error":
                     raise TranscriptionError(f"Audio processing failed: {item[1]}")
             else:

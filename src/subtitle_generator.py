@@ -141,13 +141,14 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
 
         # Move temp file to final location with error handling
         try:
-            os.replace(temp_path, output_path)
+            # temp_path is already a string path
+            os.replace(str(temp_path), str(output_path))
         except OSError as e:
             logger.error(f"Failed to move temp file to final location: {e}")
             # Clean up temp file
-            if os.path.exists(temp_path):
+            if os.path.exists(str(temp_path)):
                 try:
-                    os.remove(temp_path)
+                    os.remove(str(temp_path))
                 except Exception:
                     pass
             raise RuntimeError(f"Failed to write SRT file to {output_path}: {e}") from e
@@ -160,7 +161,7 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
         # Clean up temp file if it exists and is in scope
         if 'temp_path' in locals() and temp_path and os.path.exists(temp_path):
             try:
-                os.remove(temp_path)
+                os.remove(str(temp_path))
             except Exception as cleanup_error:
                 logger.warning(f"Temp file cleanup failed: {cleanup_error}")
         
