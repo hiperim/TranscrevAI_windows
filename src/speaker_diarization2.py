@@ -6,9 +6,9 @@ import static_ffmpeg
 import sys
 import numpy as np
 import librosa
+import re
 import shutil
 import warnings
-import time
 from scipy.fftpack import fft
 from enum import Enum
 from unittest.mock import patch
@@ -16,10 +16,8 @@ from pyAudioAnalysis import audioSegmentation as aS
 from pyAudioAnalysis.MidTermFeatures import mid_feature_extraction
 from scipy.io import wavfile
 from src.file_manager import FileManager
-from src.logging_setup import setup_app_logging
 
-# Use proper logging setup
-logger = setup_app_logging(logger_name="transcrevai.speaker_diarization")
+logger = logging.getLogger(__name__)
 
 class DiarizationError(Enum):
     FILE_NOT_FOUND = 1
@@ -29,18 +27,18 @@ class DiarizationError(Enum):
 
 class SpeakerDiarization:
     """Enhanced speaker diarization with comprehensive error handling"""
-    
+
     def __init__(self):
         try:
             if shutil.which('ffmpeg') is None:
                 static_ffmpeg.add_paths()
-            
             self.ffmpeg_path = shutil.which('ffmpeg')
-            if not self.ffmpeg_path:
-                logger.warning("FFmpeg not found - some features may be limited")
+            if not self.ffmpeg_path or not os.access(self.ffmpeg_path, os.X_OK):
+                raise RuntimeError("FFmpeg not found or not executable")
         except Exception as e:
-            logger.warning(f"FFmpeg setup failed: {str(e)}")
-    
+            logger.critical(f"FFmpeg setup failed: {str(e)}")
+            raise RuntimeError("FFmpeg initialization failed") from e
+
     @staticmethod
     def safe_fft(x, n=None):
         """Enhanced FFT wrapper with comprehensive empty data handling"""
@@ -58,7 +56,7 @@ class SpeakerDiarization:
         except Exception as e:
             logger.error(f"FFT operation failed: {e}")
             return np.zeros(n if n and n > 0 else len(x), dtype=complex)
-    
+
     def preprocess_audio_with_vad(self, audio_file):
         """Enhanced Voice Activity Detection with better error handling"""
         try:
@@ -87,10 +85,10 @@ class SpeakerDiarization:
             try:
                 vad_segments = aS.silence_removal(
                     x, Fs,
-                    st_win=0.1,     # Smaller window for short audio
+                    st_win=0.1,  # Smaller window for short audio
                     st_step=0.05,
                     smooth_window=0.2,
-                    weight=0.3      # Lower threshold for detection
+                    weight=0.3  # Lower threshold for detection
                 )
                 
                 # Validate VAD results
@@ -117,7 +115,7 @@ class SpeakerDiarization:
         except Exception as e:
             logger.error(f"Audio preprocessing failed: {e}")
             raise ValueError(f"Cannot preprocess audio: {str(e)}")
-    
+
     async def diarize_audio(self, audio_file, number_speakers=0):
         """Enhanced diarization with comprehensive error handling"""
         try:
@@ -158,7 +156,7 @@ class SpeakerDiarization:
                     "end": 1.0,
                     "speaker": "Speaker_1"
                 }]
-    
+
     def _diarize(self, audio_file, number_speakers=0, vad_segments=None):
         """Enhanced internal diarization with FFT error fixes"""
         try:
@@ -166,6 +164,7 @@ class SpeakerDiarization:
             
             # Read and validate audio
             Fs, x = wavfile.read(audio_file)
+            
             if len(x) == 0:
                 raise ValueError("Empty audio data")
             
@@ -178,7 +177,6 @@ class SpeakerDiarization:
             for start, end in vad_segments:
                 start_sample = max(0, int(start * Fs))
                 end_sample = min(len(x), int(end * Fs))
-                
                 if end_sample > start_sample:
                     segment = x[start_sample:end_sample]
                     if len(segment) > 0:
@@ -208,18 +206,14 @@ class SpeakerDiarization:
                     x_filt = x_filt.astype(np.float32) / 32768
                 else:
                     x_filt = x_filt.astype(np.float32)
-                
-                if np.max(np.abs(x_filt)) > 1.0:
-                    x_filt = x_filt / np.max(np.abs(x_filt))
+                    if np.max(np.abs(x_filt)) > 1.0:
+                        x_filt = x_filt / np.max(np.abs(x_filt))
             else:
                 logger.warning("Silent audio after filtering, creating minimal noise")
                 x_filt = np.random.normal(0, 0.001, len(x_filt)).astype(np.float32)
             
-            # Save processed audio with unique filename to avoid conflicts
-            processed_dir = FileManager.get_data_path("processed")
-            unique_filename = f"vad_processed_{int(time.time()*1000)}_{os.getpid()}.wav"
-            vad_proc_wav = os.path.join(processed_dir, unique_filename)
-            
+            # Save processed audio
+            vad_proc_wav = os.path.join(FileManager.get_data_path("processed"), "vad_processed.wav")
             wavfile.write(vad_proc_wav, Fs, (x_filt * 32768).astype(np.int16))
             
             # Extract features with safe FFT and better validation
@@ -244,10 +238,10 @@ class SpeakerDiarization:
                         short_window=0.05,
                         short_step=0.05
                     )
-                
+                    
                 if not features or len(features) < 2:
                     raise ValueError("Feature extraction failed - insufficient data")
-                
+                    
                 mid_term_features = features[0]
                 if mid_term_features.shape[1] < 2:
                     raise ValueError("Insufficient features for diarization")
@@ -280,7 +274,7 @@ class SpeakerDiarization:
                 
                 if not isinstance(flags, np.ndarray) or len(flags) < 1:
                     raise ValueError("Invalid speaker flags")
-                    
+                
             except Exception as diar_error:
                 logger.error(f"Diarization algorithm failed: {diar_error}")
                 # Return single speaker fallback
@@ -292,10 +286,7 @@ class SpeakerDiarization:
             
             # Clean up temporary file
             if os.path.exists(vad_proc_wav):
-                try:
-                    os.remove(vad_proc_wav)
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to clean up temporary file: {cleanup_error}")
+                os.remove(vad_proc_wav)
             
             # Convert results to segments
             return self._convert_flags_to_segments(flags, len(x_filt) / Fs)
@@ -307,18 +298,16 @@ class SpeakerDiarization:
                 duration = len(x) / Fs if 'x' in locals() and 'Fs' in locals() else 1.0
             except:
                 duration = 1.0
-            
             return [{
                 "start": 0.0,
                 "end": duration,
                 "speaker": "Speaker_1"
             }]
-    
+
     def _convert_flags_to_segments(self, flags, total_duration):
         """Convert speaker flags to time segments with validation"""
         try:
             segments = []
-            
             if len(flags) == 0:
                 return [{
                     "start": 0.0,
@@ -371,7 +360,7 @@ class SpeakerDiarization:
                 "end": total_duration,
                 "speaker": "Speaker_1"
             }]
-    
+
     def get_audio_duration(self, file_path):
         """Get audio file duration with error handling"""
         try:

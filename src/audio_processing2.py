@@ -23,6 +23,7 @@ try:
     WINDOWS_AVAILABLE = True
 except ImportError:
     WINDOWS_AVAILABLE = False
+    logging.warning("Windows-specific modules not available. Some features may be limited.")
 
 try:
     import static_ffmpeg
@@ -30,13 +31,13 @@ try:
     FFMPEG_AVAILABLE = True
 except ImportError:
     FFMPEG_AVAILABLE = False
+    logging.warning("static_ffmpeg not available. Ensure FFmpeg is installed and in PATH.")
 
 from src.logging_setup import setup_app_logging
 from src.file_manager import FileManager
 from config.app_config import APP_PACKAGE_NAME
 
-# Use proper logging setup
-logger = setup_app_logging(logger_name="transcrevai.audio_processing")
+logger = setup_app_logging()
 
 class AudioProcessingError(Exception):
     """Custom exception for audio processing errors"""
@@ -72,7 +73,6 @@ class CrossPlatformFileHandler:
                 return await CrossPlatformFileHandler._windows_atomic_move(temp_path, final_path)
             else:
                 return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
-                
         except Exception as e:
             logger.error(f"Atomic move failed: {e}")
             return False
@@ -88,6 +88,7 @@ class CrossPlatformFileHandler:
             await CrossPlatformFileHandler._kill_file_locks(temp_path, final_path)
             
             # Use Windows API for atomic move with correct flags
+            # MOVEFILE_REPLACE_EXISTING = 1, MOVEFILE_WRITE_THROUGH = 8
             MOVEFILE_REPLACE_EXISTING = 0x1
             MOVEFILE_WRITE_THROUGH = 0x8
             
@@ -122,7 +123,6 @@ class CrossPlatformFileHandler:
             else:
                 logger.error("Move succeeded but file validation failed")
                 return False
-                
         except Exception as e:
             logger.error(f"POSIX atomic move failed: {e}")
             return False
@@ -222,7 +222,6 @@ class AtomicAudioFile:
             success = await CrossPlatformFileHandler.safe_atomic_move(
                 self.temp_path, self.final_path
             )
-            
             if not success:
                 raise AudioProcessingError(
                     f"Failed to commit atomic file operation: {self.final_path}",
@@ -237,7 +236,6 @@ class AudioRecorder:
             FileManager.get_data_path("recordings"),
             f"recording_{int(time.time())}.wav"
         )
-        
         self.temp_wav = self.get_temp_path()
         self.wav_file = self.temp_wav
         self.sample_rate = sample_rate
@@ -250,23 +248,23 @@ class AudioRecorder:
         # Ensure output directory exists
         os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
         
-        # Verify audio device availability (non-blocking)
+        # Verify audio device availability
         self._verify_audio_device()
         
-        # Verify FFmpeg availability (non-blocking)
+        # Verify FFmpeg availability
         self._verify_ffmpeg()
     
     def _verify_audio_device(self):
         """Verify audio input device availability"""
         try:
             devices = sd.query_devices()
-            input_devices = [d for d in devices if d.get('max_input_channels', 0) > 0]
-            if input_devices:
-                logger.info(f"Found {len(input_devices)} audio input devices")
-            else:
-                logger.warning("No audio input devices found")
+            input_devices = [d for d in devices if d['max_input_channels'] > 0]
+            if not input_devices:
+                raise RuntimeError("No audio input devices available")
+            logger.info(f"Found {len(input_devices)} audio input devices")
         except Exception as e:
-            logger.warning(f"Audio device verification failed: {e}")
+            logger.error(f"Audio device verification failed: {e}")
+            raise RuntimeError("Audio system not available")
     
     def _verify_ffmpeg(self):
         """Verify FFmpeg availability"""
@@ -290,7 +288,8 @@ class AudioRecorder:
                 )
                 logger.info("System FFmpeg verified")
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-            logger.warning(f"FFmpeg verification failed: {e}")
+            logger.critical(f"FFmpeg verification failed: {e}")
+            raise RuntimeError("FFmpeg is not available or not working correctly")
     
     def get_temp_path(self, extension: str = ".wav") -> str:
         """Generate a temporary file path"""
@@ -310,30 +309,25 @@ class AudioRecorder:
     
     def _check_system_resources(self):
         """Check system resources before recording"""
-        try:
-            # Check CPU usage
-            cpu_usage = psutil.cpu_percent(interval=0.1)
-            if cpu_usage > 95:
-                logger.warning(f"High CPU usage detected: {cpu_usage}%")
-            
-            # Check disk space
-            free_space = shutil.disk_usage(os.path.dirname(self.output_file)).free / (1024 ** 3)
-            if free_space < 0.1:  # Less than 100MB
-                raise IOError(f"Insufficient disk space: {free_space:.2f}GB available")
-        except Exception as e:
-            logger.warning(f"Resource check failed: {e}")
+        # Check CPU usage
+        cpu_usage = psutil.cpu_percent(interval=0.1)  # Reduced interval
+        if cpu_usage > 95:  # Increased threshold
+            logger.warning(f"High CPU usage detected: {cpu_usage}%")
+        
+        # Check disk space
+        free_space = shutil.disk_usage(os.path.dirname(self.output_file)).free / (1024 ** 3)
+        if free_space < 0.1:  # Less than 100MB
+            raise IOError(f"Insufficient disk space: {free_space:.2f}GB available")
     
     async def start_recording(self):
         """Start audio recording"""
         try:
             self._check_system_resources()
-            
             self.is_recording = True
             self._frames = []
             self._recording_start_time = time.time()
             
             await self._start_audio_stream()
-            
             logger.info("Audio recording started")
             
         except Exception as e:
@@ -361,10 +355,7 @@ class AudioRecorder:
         
         try:
             # Get default input device
-            try:
-                default_device = sd.default.device[0] if sd.default.device else None
-            except:
-                default_device = None
+            default_device = sd.default.device[0]  # Input device
             
             self._stream = sd.InputStream(
                 samplerate=self.sample_rate,
@@ -375,7 +366,6 @@ class AudioRecorder:
                 blocksize=1024,  # Smaller block size for better responsiveness
                 latency='low'
             )
-            
             self._stream.start()
             logger.info(f"Audio stream started with device {default_device}")
             
@@ -469,10 +459,8 @@ class AudioRecorder:
                     # Create minimal audio file instead of empty
                     silence_duration = 0.5  # 500ms of silence
                     empty_audio = np.zeros((int(self.sample_rate * silence_duration),), dtype=np.float32)
-                    
                     sf.write(temp_ctx.temp_path, empty_audio, self.sample_rate)
                     sf.write(self.temp_wav, empty_audio, self.sample_rate)
-                    
                     logger.warning("No audio frames recorded, created minimal audio file")
                 
                 # Validate temporary file
@@ -569,7 +557,6 @@ class AudioRecorder:
     async def _cleanup_resources(self):
         """Cleanup temporary files and resources"""
         temp_files = [self.temp_wav]
-        
         for temp_file in temp_files:
             if temp_file and os.path.exists(temp_file):
                 await CrossPlatformFileHandler.safe_delete(temp_file)
@@ -599,10 +586,8 @@ class AudioRecorder:
                     "format=duration", "-of",
                     "default=noprint_wrappers=1:nokey=1", file_path
                 ]
-                
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
                 return float(result.stdout.strip())
-                
         except Exception as e:
             logger.error(f"Failed to get audio duration: {e}")
             raise AudioProcessingError(

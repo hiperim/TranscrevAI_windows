@@ -3,24 +3,23 @@ import wave
 import json
 import logging
 import os
+import aiofiles
 import requests
 import zipfile
 import shutil
 from typing import AsyncGenerator, Tuple, List, Dict
 from pathlib import Path
+
 from src.file_manager import FileManager
 from vosk import Model, KaldiRecognizer
 from config.app_config import MODEL_DIR, LANGUAGE_MODELS
-from src.logging_setup import setup_app_logging
 
-# Use proper logging setup
-logger = setup_app_logging(logger_name="transcrevai.transcription")
+logger = logging.getLogger(__name__)
 
 class TranscriptionError(Exception):
     pass
 
 class ModelManager:
-    
     @staticmethod
     async def ensure_model_available(language_code: str) -> str:
         """Ensure language model is available, download if necessary"""
@@ -33,7 +32,6 @@ class ModelManager:
         
         # Download and extract model
         logger.info(f"Downloading model for {language_code}")
-        
         if language_code not in LANGUAGE_MODELS:
             raise ValueError(f"Unsupported language: {language_code}")
         
@@ -48,22 +46,56 @@ class ModelManager:
     
     @staticmethod
     async def _validate_model(model_path: str) -> bool:
-        """Simple model validation - only check for essential file"""
+        """Validate that Vosk model has all required files"""
         if not os.path.exists(model_path):
             return False
         
-        # Only check for the one file that always exists in Vosk models
-        essential_file = os.path.join(model_path, "final.mdl")
-        if os.path.exists(essential_file) and os.path.getsize(essential_file) > 0:
-            logger.info(f"Vosk model validation passed for: {model_path}")
-            return True
+        # Check for essential Vosk model files (based on actual Portuguese model structure)
+        required_files = [
+            "final.mdl",        # Acoustic model
+            "Gr.fst",          # Grammar FST
+            "HCLr.fst",        # HCL FST
+            "mfcc.conf",       # MFCC configuration
+            "phones.txt"       # Phone definitions
+        ]
         
-        logger.warning(f"Model validation failed - missing essential files in: {model_path}")
-        return False
+        # Check for ivector directory and its files
+        ivector_dir = os.path.join(model_path, "ivector")
+        if not os.path.exists(ivector_dir):
+            logger.warning(f"Missing ivector directory: {ivector_dir}")
+            return False
+        
+        required_ivector_files = [
+            "final.dubm",
+            "final.ie", 
+            "final.mat",
+            "global_cmvn.stats"
+        ]
+        
+        # Validate main model files
+        for file_name in required_files:
+            file_path = os.path.join(model_path, file_name)
+            if not os.path.exists(file_path):
+                logger.warning(f"Missing model file: {file_path}")
+                return False
+            
+            if os.path.getsize(file_path) == 0:
+                logger.warning(f"Empty model file: {file_path}")
+                return False
+        
+        # Validate ivector files
+        for file_name in required_ivector_files:
+            file_path = os.path.join(ivector_dir, file_name)
+            if not os.path.exists(file_path):
+                logger.warning(f"Missing ivector file: {file_path}")
+                return False
+        
+        logger.info(f"Vosk model validation passed for: {model_path}")
+        return True
     
     @staticmethod
     def _validate_zip_file(zip_path: str):
-        """Validate ZIP file integrity"""
+        """Validate ZIP file integrity and required content"""
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 # Test the ZIP file integrity
@@ -71,11 +103,11 @@ class ModelManager:
                 if bad_files:
                     raise RuntimeError(f"ZIP file contains corrupted files: {bad_files}")
                 
-                # Check if ZIP contains some model files
+                # Check if ZIP contains expected model files
                 all_files = zip_ref.namelist()
                 
                 # Look for key Vosk model files
-                key_files = ["final.mdl"]
+                key_files = ["final.mdl", "Gr.fst", "HCLr.fst", "mfcc.conf"]
                 found_files = []
                 
                 for file_path in all_files:
@@ -83,11 +115,12 @@ class ModelManager:
                     if file_name in key_files:
                         found_files.append(file_name)
                 
-                if not found_files:
-                    logger.warning("ZIP file may not contain a valid Vosk model")
+                missing_files = [f for f in key_files if f not in found_files]
+                if missing_files:
+                    logger.warning(f"ZIP file may be incomplete, missing files: {missing_files}")
                 else:
-                    logger.info(f"ZIP file validation passed: found model files")
-                    
+                    logger.info(f"ZIP file validation passed: found all key files")
+                
         except zipfile.BadZipFile:
             raise RuntimeError("Invalid or corrupted ZIP file")
         except Exception as e:
@@ -102,7 +135,7 @@ class ModelManager:
             os.makedirs(temp_dir, exist_ok=True)
             zip_path = os.path.join(temp_dir, f"{language_code}.zip")
             
-            # Download with retry mechanism
+            # Download with progress and retry mechanism
             max_retries = 3
             for attempt in range(max_retries):
                 try:
@@ -118,7 +151,6 @@ class ModelManager:
                             if chunk:
                                 f.write(chunk)
                                 downloaded += len(chunk)
-                                
                                 if total_size > 0:
                                     progress = (downloaded / total_size) * 100
                                     if downloaded % (10 * 1024 * 1024) == 0:  # Log every 10MB
@@ -135,7 +167,6 @@ class ModelManager:
                     logger.info("Download completed, validating ZIP file...")
                     await asyncio.to_thread(ModelManager._validate_zip_file, zip_path)
                     logger.info("ZIP file validation passed, extracting model...")
-                    
                     break
                     
                 except Exception as e:
@@ -176,23 +207,14 @@ class ModelManager:
             
             def find_and_move_model_files():
                 """Find model files in extracted directory and move to final location"""
-                # Look for directory containing final.mdl or just final.mdl itself
-                model_source_dir = None
                 
+                # Look for directory containing final.mdl
+                model_source_dir = None
                 for root, dirs, files in os.walk(temp_dir):
                     if 'final.mdl' in files:
                         model_source_dir = root
                         logger.info(f"Found model files in: {model_source_dir}")
                         break
-                
-                if not model_source_dir:
-                    # Look for any directory that contains model-like files
-                    for root, dirs, files in os.walk(temp_dir):
-                        # Look for directories with many files (likely model directories)
-                        if len(files) > 5:  
-                            model_source_dir = root
-                            logger.info(f"Found potential model directory: {model_source_dir}")
-                            break
                 
                 if not model_source_dir:
                     raise RuntimeError("Could not find model files in extracted archive")
@@ -213,16 +235,17 @@ class ModelManager:
                 
                 logger.info(f"Successfully moved model files to {model_path}")
                 
-                # Verify at least the essential file exists
-                essential_file = os.path.join(model_path, "final.mdl")
-                if not os.path.exists(essential_file):
-                    # Try to find it in subdirectories
-                    for root, dirs, files in os.walk(model_path):
-                        if 'final.mdl' in files:
-                            logger.info(f"Found final.mdl in subdirectory: {root}")
-                            return model_path
-                    
-                    raise RuntimeError("Missing essential model file after extraction: final.mdl")
+                # Verify key files exist
+                key_files = ["final.mdl", "Gr.fst", "HCLr.fst", "mfcc.conf"]
+                for key_file in key_files:
+                    file_path = os.path.join(model_path, key_file)
+                    if not os.path.exists(file_path):
+                        raise RuntimeError(f"Missing key model file after extraction: {key_file}")
+                
+                # Verify ivector directory
+                ivector_dir = os.path.join(model_path, "ivector")
+                if not os.path.exists(ivector_dir):
+                    raise RuntimeError("Missing ivector directory after extraction")
                 
                 return model_path
             
@@ -231,21 +254,13 @@ class ModelManager:
             
             # Clean up
             shutil.rmtree(temp_dir)
-            
             logger.info(f"Model extracted successfully to {model_path}")
             
         except Exception as e:
             # Clean up on error
-            cleanup_paths = []
-            if 'temp_dir' in locals() and os.path.exists(temp_dir):
-                cleanup_paths.append(temp_dir)
-            
-            for cleanup_path in cleanup_paths:
-                try:
+            for cleanup_path in [temp_dir if 'temp_dir' in locals() else None]:
+                if cleanup_path and os.path.exists(cleanup_path):
                     shutil.rmtree(cleanup_path)
-                except Exception as cleanup_error:
-                    logger.warning(f"Cleanup failed: {cleanup_error}")
-            
             raise RuntimeError(f"Failed to download/extract model: {str(e)}")
 
 class AsyncTranscriptionService:
@@ -286,6 +301,7 @@ async def transcribe_audio_with_progress(
     sample_rate: int = 16000
 ) -> AsyncGenerator[Tuple[int, List[Dict]], None]:
     """Enhanced transcription with automatic model management"""
+    
     try:
         logger.info(f"Starting transcription for {wav_file} with language {language_code}")
         
@@ -354,15 +370,15 @@ async def transcribe_audio_with_progress(
                         # Yield progress
                         progress = min(100, int((processed_frames / wave_info["total_frames"]) * 100))
                         chunk_results.append(("progress", progress))
-                
-                # Get final result
-                final_result = json.loads(recognizer.FinalResult())
-                if final_result.get("text", "").strip():
-                    chunk_results.append({
-                        "start": max(0, processed_frames / wave_info["framerate"] - 1),
-                        "end": processed_frames / wave_info["framerate"],
-                        "text": final_result.get("text", "")
-                    })
+                    
+                    # Get final result
+                    final_result = json.loads(recognizer.FinalResult())
+                    if final_result.get("text", "").strip():
+                        chunk_results.append({
+                            "start": max(0, processed_frames / wave_info["framerate"] - 1),
+                            "end": processed_frames / wave_info["framerate"],
+                            "text": final_result.get("text", "")
+                        })
                 
                 return chunk_results
                 
@@ -378,7 +394,7 @@ async def transcribe_audio_with_progress(
             if isinstance(item, tuple):
                 if item[0] == "progress":
                     yield item[1], transcription_data
-                elif item[0] == "error":
+                elif item == "error":
                     raise TranscriptionError(f"Audio processing failed: {item[1]}")
             else:
                 transcription_data.append(item)
