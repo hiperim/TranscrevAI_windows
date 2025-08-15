@@ -52,7 +52,7 @@ class FileManager:
     def get_data_path(subdir="") -> str:
         """Get data directory path with validation"""
         # Use the fixed base directory path
-        base = Path(r"C:\transcrevai_android\TranscrevAI_commit34\data")
+    base = Path(r"c:\\TranscrevAI_windows\\data")
         full_path = base / subdir
         
         # Ensure data directory exists
@@ -107,7 +107,7 @@ class FileManager:
             allowed_dirs = []
             
             # Application data directory - use fixed path
-            base_dir = Path(r"C:\transcrevai_android\TranscrevAI_commit34\data")
+            base_dir = Path(r"c:\\TranscrevAI_windows\\data")
             if base_dir.exists():
                 allowed_dirs.append(base_dir.resolve())
             else:
@@ -368,7 +368,7 @@ class FileManager:
                 return
             
             # Validate base_temp is actually our temp directory
-            expected_base = Path(r"C:\transcrevai_android\TranscrevAI_commit34\data\temp")
+            expected_base = Path(r"c:\\TranscrevAI_windows\\data\\temp")
             if not Path(base_temp).resolve().is_relative_to(expected_base.parent.resolve()):
                 raise SecurityError("Invalid temp directory for cleanup")
             

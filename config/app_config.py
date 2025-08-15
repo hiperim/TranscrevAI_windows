@@ -6,7 +6,7 @@ from pathlib import Path
 APP_PACKAGE_NAME = "TranscrevAI"
 
 # Base directory (project root) - Fixed path
-BASE_DIR = Path(r"C:\transcrevai_android\TranscrevAI_commit34")
+BASE_DIR = Path(r"c:\\TranscrevAI_windows\\data")
 
 # Data directories
 DATA_DIR = BASE_DIR / "data"
