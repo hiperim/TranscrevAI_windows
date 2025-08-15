@@ -1,23 +1,23 @@
-import asyncio 
-import logging 
-import os 
-import time 
- 
-import urllib.request 
-import zipfile 
-import shutil 
- 
- 
-from datetime import datetime 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect 
-from fastapi.responses import HTMLResponse, JSONResponse 
-import uvicorn 
+import asyncio
+import logging
+import os
+import time
 
-from src.audio_processing import AudioRecorder 
+import urllib.request
+import zipfile
+import shutil
+
+
+from datetime import datetime
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
+import uvicorn
+
+from src.audio_processing import AudioRecorder
 from src.transcription import transcribe_audio_with_progress
-from src.speaker_diarization import SpeakerDiarization 
-from src.subtitle_generator import generate_srt 
-from config.app_config import MODEL_DIR, LANGUAGE_MODELS 
+from src.speaker_diarization import SpeakerDiarization
+from src.subtitle_generator import generate_srt
+from config.app_config import MODEL_DIR, LANGUAGE_MODELS
 from src.logging_setup import setup_app_logging
 
 logger = setup_app_logging()
@@ -31,11 +31,11 @@ if logger is None:
         handler.setFormatter(formatter)
         logger.addHandler(handler)
 
-# FastAPI setup 
-app = FastAPI( 
-    title="TranscrevAI", 
-    description="Real-time Audio Transcription with AI", 
-    version="1.0.0" 
+# FastAPI setup
+app = FastAPI(
+    title="TranscrevAI",
+    description="Real-time Audio Transcription with AI",
+    version="1.0.0"
 )
 
 import os
@@ -97,7 +97,7 @@ class ModelManager:
                 logger.warning(f"Empty model file: {file_path}")
                 return False
         
-        # Check ivector files  
+        # Check ivector files 
         for file_name in required_ivector_files:
             file_path = os.path.join(ivector_dir, file_name)
             if not os.path.exists(file_path):
@@ -165,7 +165,7 @@ class ModelManager:
                 
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     zip_ref.extractall(temp_dir)
-                    logger.info(f"Extracted to temporary directory: {temp_dir}")
+                logger.info(f"Extracted to temporary directory: {temp_dir}")
                 
                 # Find the actual model files - look for am/final.mdl structure
                 model_source_dir = None
@@ -210,7 +210,7 @@ class ModelManager:
                     cleanup_paths.append(zip_path)
                 if 'temp_dir' in locals():
                     cleanup_paths.append(f"{model_path}_temp")
-                    
+                
                 for path in cleanup_paths:
                     if os.path.exists(path):
                         try:
@@ -240,7 +240,7 @@ class ModelManager:
 class SimpleState:
     def __init__(self):
         self.sessions = {}
-        
+    
     def create_session(self, session_id: str):
         try:
             # Create session without AudioRecorder initially
@@ -313,8 +313,8 @@ class SimpleWebSocketManager:
     async def disconnect(self, session_id: str):
         if session_id in self.connections:
             del self.connections[session_id]
-        await app_state.cleanup_session(session_id)
-        logger.info(f"WebSocket disconnected: {session_id}")
+            await app_state.cleanup_session(session_id)
+            logger.info(f"WebSocket disconnected: {session_id}")
     
     async def send_message(self, session_id: str, message: dict):
         if session_id in self.connections:
@@ -328,7 +328,7 @@ class SimpleWebSocketManager:
 app_state = SimpleState()
 websocket_manager = SimpleWebSocketManager()
 
-# Reponsive HTML interface w/ file path notifications
+# Responsive HTML interface w/ file path notifications - FIXED VERSION
 HTML_INTERFACE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -344,254 +344,162 @@ HTML_INTERFACE = """
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
-            align-items: center;
             justify-content: center;
-            color: #333;
+            align-items: center;
+            padding: 20px;
         }
 
-        .app {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
+        .container {
+            background: white;
             border-radius: 20px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            padding: 2rem;
+            padding: 40px;
             max-width: 600px;
-            width: 90%;
-            text-align: center;
-            position: relative;
+            width: 100%;
         }
 
-        .logo {
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
             font-size: 2.5rem;
             font-weight: 700;
-            margin-bottom: 0.5rem;
-            color: #333;
         }
 
-        .tagline {
+        .subtitle {
+            text-align: center;
             color: #666;
-            margin-bottom: 2rem;
+            margin-bottom: 30px;
             font-size: 1.1rem;
-        }
-
-        .status {
-            padding: 1rem;
-            border-radius: 12px;
-            margin-bottom: 2rem;
-            font-weight: 500;
-            transition: all 0.3s ease;
-        }
-
-        .status.connecting { background: #fff3cd; color: #856404; }
-        .status.ready { background: #d4edda; color: #155724; }
-        .status.recording { background: #f8d7da; color: #721c24; }
-        .status.processing { background: #cce5ff; color: #004085; }
-        .status.downloading { background: #e1ecf4; color: #0c5460; }
-        .status.retrying { background: #ffeaa7; color: #d68910; }
-        .status.error { background: #f5c6cb; color: #721c24; }
-
-        .file-notification {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: #28a745;
-            color: white;
-            padding: 1rem;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            max-width: 400px;
-            z-index: 1000;
-            transform: translateX(450px);
-            transition: transform 0.3s ease;
-            font-size: 0.9rem;
-            line-height: 1.4;
-        }
-
-        .file-notification.show {
-            transform: translateX(0);
-        }
-
-        .file-notification .close-btn {
-            float: right;
-            background: none;
-            border: none;
-            color: white;
-            font-size: 18px;
-            cursor: pointer;
-            margin-left: 10px;
         }
 
         .controls {
             display: flex;
-            gap: 1rem;
+            flex-direction: column;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .control-row {
+            display: flex;
+            gap: 15px;
             justify-content: center;
-            margin: 4rem 0;
             flex-wrap: wrap;
         }
 
-        .btn {
-            padding: 0.8rem 1.5rem;
-            border: none;
-            border-radius: 12px;
+        .select {
+            padding: 12px 16px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
             font-size: 1rem;
-            font-weight: 600;
+            background: white;
+            margin: 0 0.5rem;
+        }
+
+        .button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
             cursor: pointer;
             transition: all 0.3s ease;
-            min-width: 120px;
+            font-weight: 600;
+            min-width: 100px;
         }
 
-        .btn:disabled {
-            opacity: 0.5;
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .record-btn {
+            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+            color: white;
+        }
+
+        .pause-btn {
+            background: linear-gradient(45deg, #ffa726, #fb8c00);
+            color: white;
+        }
+
+        .stop-btn {
+            background: linear-gradient(45deg, #66bb6a, #43a047);
+            color: white;
+        }
+
+        .button:disabled {
+            opacity: 0.6;
             cursor: not-allowed;
+            transform: none;
         }
 
-        .btn-primary {
-            background: #4CAF50;
-            color: white;
-        }
-
-        .btn-primary:hover:not(:disabled) {
-            background: #45a049;
-            transform: translateY(-2px);
-        }
-
-        .btn-secondary {
-            background: #2196F3;
-            color: white;
-        }
-
-        .btn-secondary:hover:not(:disabled) {
-            background: #1976D2;
-            transform: translateY(-2px);
-        }
-
-        .btn-danger {
-            background: #f44336;
-            color: white;
-        }
-
-        .btn-danger:hover:not(:disabled) {
-            background: #da190b;
-            transform: translateY(-2px);
+        .status {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-weight: 500;
         }
 
         .waveform {
             height: 80px;
-            background: #f8f9fa;
-            border-radius: 12px;
-            margin: 3rem 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: 2px dashed #dee2e6;
-            transition: all 0.3s ease;
+            background: #f1f3f4;
+            border-radius: 8px;
+            margin: 20px 0;
             position: relative;
             overflow: hidden;
         }
 
-        .waveform.active {
-            background: #f8f9fa;
-            border-color: #666;
-            border-style: solid;
-        }
-
-        .waveform.downloading {
-            background: linear-gradient(135deg, #e1ecf420, #0c546020);
-            border-color: #0c5460;
-            border-style: solid;
-        }
-
-        .waveform.retrying {
-            background: linear-gradient(135deg, #ffeaa720, #d6891020);
-            border-color: #d68910;
-            border-style: solid;
-        }
-
-        .waveform-message {
-            text-align: center;
-            font-weight: 500;
-            color: #666;
-            padding: 0 1rem;
-            line-height: 1.4;
-        }
-
-        .waveform-message.downloading {
-            color: #0c5460;
-        }
-
-        .waveform-message.retrying {
-            color: #d68910;
-        }
-
-        .retry-progress {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            height: 3px;
-            background: #d68910;
-            transition: width 0.3s ease;
-            width: 0%;
-        }
-
-        .waveform-bars {
+        .waveform-content {
+            height: 100%;
             display: flex;
-            gap: 2px;
-            align-items: end;
-            height: 40px;
+            align-items: center;
+            justify-content: center;
+            color: #666;
         }
 
-        .bar {
-            width: 3px;
-            background: #666;
-            border-radius: 2px;
-            transition: height 0.1s ease;
-        }
-
-        .progress-section {
-            margin: 2rem 0;
-            opacity: 0;
-            transform: translateY(20px);
-            transition: all 0.3s ease;
-        }
-
-        .progress-section.visible {
-            opacity: 1;
-            transform: translateY(0);
+        .progress {
+            margin: 20px 0;
         }
 
         .progress-item {
-            margin: 1rem 0;
+            margin-bottom: 15px;
         }
 
         .progress-label {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 0.5rem;
-            font-size: 0.9rem;
+            margin-bottom: 5px;
             font-weight: 500;
         }
 
         .progress-bar {
+            width: 100%;
             height: 8px;
-            background: #e9ecef;
+            background: #e1e5e9;
             border-radius: 4px;
             overflow: hidden;
         }
 
         .progress-fill {
             height: 100%;
-            background: #333;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            width: 0%;
             transition: width 0.3s ease;
-            border-radius: 4px;
         }
 
         .results {
-            margin-top: 2rem;
-            text-align: left;
+            max-height: 300px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
             opacity: 0;
             transform: translateY(20px);
             transition: all 0.3s ease;
@@ -602,189 +510,160 @@ HTML_INTERFACE = """
             transform: translateY(0);
         }
 
-        .result-item {
-            background: #f8f9fa;
-            padding: 1rem;
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #4caf50;
+            color: white;
+            padding: 15px 20px;
             border-radius: 8px;
-            margin: 0.5rem 0;
-            border-left: 4px solid #333;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+            z-index: 1000;
+            max-width: 400px;
         }
 
-        .speaker-tag {
-            font-size: 0.8rem;
-            color: #666;
-            margin-bottom: 0.5rem;
+        .notification.show {
+            opacity: 1;
+            transform: translateX(0);
         }
 
-        .settings {
-            margin-bottom: 2rem;
-        }
-
-        .settings select {
-            padding: 0.5rem;
-            border: 2px solid #e9ecef;
-            border-radius: 8px;
-            font-size: 1rem;
-            background: white;
-            margin: 0 0.5rem;
+        .notification.error {
+            background: #f44336;
         }
 
         /* Responsive design */
-        @media (max-width: 600px) {
-            .app {
-                padding: 1rem;
-                margin: 1rem;
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+                margin: 10px;
             }
             
-            .logo {
+            h1 {
                 font-size: 2rem;
             }
             
-            .controls {
+            .control-row {
                 flex-direction: column;
-                align-items: center;
             }
             
-            .btn {
+            .select, .button {
                 width: 100%;
-                max-width: 250px;
             }
-
-            .file-notification {
-                position: fixed;
-                top: 10px;
-                left: 10px;
-                right: 10px;
-                max-width: none;
-                transform: translateY(-100px);
-            }
-
-            .file-notification.show {
-                transform: translateY(0);
-            }
-        }
-
-        /* Animations */
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-        }
-
-        .recording .btn-danger {
-            animation: pulse 2s infinite;
         }
     </style>
 </head>
 <body>
-    <div class="app">
-        <div class="logo">TranscrevAI</div>
-        <div class="tagline">Real-time Audio Transcription with Speaker Diarization</div>
+    <div class="container">
+        <h1>TranscrevAI</h1>
+        <p class="subtitle">Real-time Audio Transcription with Speaker Diarization</p>
         
-        <div class="settings">
-            <select id="language">
-                <option value="en">English</option>
-                <option value="pt">Portuguese</option>
-                <option value="es">Spanish</option>
-            </select>
-            <select id="format">
-                <option value="wav">.WAV</option>
-                <option value="mp4">.MP4</option>
-            </select>
-        </div>
-
         <div class="controls">
-            <button id="startBtn" class="btn btn-primary" disabled>Start</button>
-            <button id="pauseBtn" class="btn btn-secondary" disabled>Pause</button>
-            <button id="stopBtn" class="btn btn-danger" disabled>Stop</button>
+            <div class="control-row">
+                <select id="language" class="select">
+                    <option value="en">English</option>
+                    <option value="pt">Portuguese</option>
+                    <option value="es">Spanish</option>
+                </select>
+                
+                <select id="format" class="select">
+                    <option value="wav">.WAV</option>
+                    <option value="mp4">.MP4</option>
+                </select>
+            </div>
+            
+            <div class="control-row">
+                <button id="recordBtn" class="button record-btn">Record</button>
+                <button id="pauseBtn" class="button pause-btn" disabled>Pause</button>
+                <button id="stopBtn" class="button stop-btn" disabled>Stop</button>
+            </div>
         </div>
-
+        
+        <div id="status" class="status">Ready to record</div>
+        
         <div id="waveform" class="waveform">
-            <div id="waveform-content" class="waveform-message">Ready to record</div>
-            <div id="retry-progress" class="retry-progress"></div>
+            <div id="waveform-content" class="waveform-content">Audio visualization will appear here</div>
         </div>
-
-        <div id="progress" class="progress-section">
+        
+        <div id="progress" class="progress">
             <div class="progress-item">
                 <div class="progress-label">
                     <span>Transcription</span>
                     <span id="transcription-percent">0%</span>
                 </div>
                 <div class="progress-bar">
-                    <div id="transcription-fill" class="progress-fill" style="width: 0%"></div>
+                    <div id="transcription-progress" class="progress-fill"></div>
                 </div>
             </div>
+            
             <div class="progress-item">
                 <div class="progress-label">
                     <span>Diarization</span>
                     <span id="diarization-percent">0%</span>
                 </div>
                 <div class="progress-bar">
-                    <div id="diarization-fill" class="progress-fill" style="width: 0%"></div>
+                    <div id="diarization-progress" class="progress-fill"></div>
                 </div>
             </div>
         </div>
-
-        <div id="results" class="results"></div>
+        
+        <div id="results" class="results">
+            <h3>Results will appear here</h3>
+        </div>
     </div>
-
-    <!-- File notification popup -->
-    <div id="fileNotification" class="file-notification">
-        <button class="close-btn" onclick="this.parentElement.classList.remove('show')">&times;</button>
-        <div id="fileContent"></div>
-    </div>
+    
+    <div id="notification" class="notification"></div>
 
     <script>
         class TranscrevAI {
             constructor() {
                 this.ws = null;
-                this.sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                this.sessionId = this.generateSessionId();
                 this.isRecording = false;
                 this.isPaused = false;
-                this.reconnectAttempts = 0;
-                this.maxReconnectAttempts = 5;
                 
-                this.initElements();
-                this.connect();
-                this.setupEventListeners();
-                this.createWaveformBars();
-            }
-
-            initElements() {
-                this.statusEl = document.getElementById('status');
-                this.startBtn = document.getElementById('startBtn');
+                // Get DOM elements
+                this.recordBtn = document.getElementById('recordBtn');
                 this.pauseBtn = document.getElementById('pauseBtn');
                 this.stopBtn = document.getElementById('stopBtn');
                 this.languageEl = document.getElementById('language');
+                
+                // CRITICAL FIX: Safe format element initialization
                 this.formatEl = document.getElementById('format');
+                if (!this.formatEl) {
+                    console.warn('Format selector not found, using default WAV format');
+                    // Create a mock element to prevent further errors
+                    this.formatEl = { value: 'wav' };
+                }
+                
                 this.waveformEl = document.getElementById('waveform');
                 this.waveformContent = document.getElementById('waveform-content');
                 this.progressEl = document.getElementById('progress');
-                this.resultsEl = document.getElementById('results');
-                this.transcriptionFill = document.getElementById('transcription-fill');
-                this.diarizationFill = document.getElementById('diarization-fill');
+                this.transcriptionProgress = document.getElementById('transcription-progress');
+                this.diarizationProgress = document.getElementById('diarization-progress');
                 this.transcriptionPercent = document.getElementById('transcription-percent');
                 this.diarizationPercent = document.getElementById('diarization-percent');
-                this.fileNotification = document.getElementById('fileNotification');
-                this.fileContent = document.getElementById('fileContent');
-                this.retryProgress = document.getElementById('retry-progress');
-            }
-
-            createWaveformBars() {
-                const barsContainer = document.createElement('div');
-                barsContainer.className = 'waveform-bars';
-                barsContainer.style.display = 'none';
+                this.statusEl = document.getElementById('status');
+                this.resultsEl = document.getElementById('results');
+                this.notificationEl = document.getElementById('notification');
                 
-                for (let i = 0; i < 20; i++) {
-                    const bar = document.createElement('div');
-                    bar.className = 'bar';
-                    bar.style.height = '5px';
-                    barsContainer.appendChild(bar);
-                }
-                
-                this.waveformEl.appendChild(barsContainer);
-                this.waveformBars = barsContainer;
+                this.setupEventListeners();
+                this.connect();
             }
-
+            
+            generateSessionId() {
+                return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            }
+            
+            setupEventListeners() {
+                this.recordBtn.addEventListener('click', () => this.startRecording());
+                this.pauseBtn.addEventListener('click', () => this.togglePause());
+                this.stopBtn.addEventListener('click', () => this.stopRecording());
+            }
+            
             connect() {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.host}/ws/${this.sessionId}`;
@@ -792,292 +671,193 @@ HTML_INTERFACE = """
                 this.ws = new WebSocket(wsUrl);
                 
                 this.ws.onopen = () => {
-                    this.setStatus('Ready to record', 'ready');
-                    this.startBtn.disabled = false;
-                    this.reconnectAttempts = 0;
-                };
-                
-                this.ws.onmessage = (event) => {
-                    try {
-                        const message = JSON.parse(event.data);
-                        this.handleMessage(message);
-                    } catch (e) {
-                        console.error('Message parse error:', e);
-                    }
+                    console.log('Connected to server');
+                    this.updateStatus('Connected - Ready to record');
                 };
                 
                 this.ws.onclose = () => {
-                    this.setStatus('Connection lost', 'error');
-                    this.handleReconnect();
+                    console.log('Disconnected from server');
+                    this.updateStatus('Disconnected - Please refresh the page');
+                    setTimeout(() => this.connect(), 3000);
                 };
                 
                 this.ws.onerror = (error) => {
                     console.error('WebSocket error:', error);
-                    this.setStatus('Connection error', 'error');
+                    this.showError('Connection error. Please refresh the page.');
+                };
+                
+                this.ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    this.handleMessage(message);
                 };
             }
-
-            handleReconnect() {
-                if (this.reconnectAttempts < this.maxReconnectAttempts) {
-                    this.reconnectAttempts++;
-                    this.setStatus(`Reconnecting... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`, 'connecting');
-                    setTimeout(() => this.connect(), 2000 * this.reconnectAttempts);
-                } else {
-                    this.setStatus('Failed to reconnect. Refresh page.', 'error');
+            
+            handleMessage(message) {
+                switch (message.type) {
+                    case 'recording_started':
+                        this.isRecording = true;
+                        this.updateButtons();
+                        this.updateStatus('Recording...');
+                        break;
+                        
+                    case 'recording_stopped':
+                        this.isRecording = false;
+                        this.isPaused = false;
+                        this.updateButtons();
+                        this.updateStatus('Processing audio...');
+                        break;
+                        
+                    case 'recording_paused':
+                        this.isPaused = true;
+                        this.updateButtons();
+                        this.updateStatus('Recording paused');
+                        break;
+                        
+                    case 'recording_resumed':
+                        this.isPaused = false;
+                        this.updateButtons();
+                        this.updateStatus('Recording...');
+                        break;
+                        
+                    case 'audio_level':
+                        this.updateWaveform(message.level);
+                        break;
+                        
+                    case 'progress':
+                        this.updateProgress(message.transcription || 0, message.diarization || 0);
+                        break;
+                        
+                    case 'processing_complete':
+                        this.handleResults(message);
+                        break;
+                        
+                    case 'error':
+                        this.showError(message.message);
+                        this.resetState();
+                        break;
+                        
+                    default:
+                        console.log('Unknown message type:', message.type);
                 }
             }
-
-            setupEventListeners() {
-                this.startBtn.onclick = () => this.startRecording();
-                this.pauseBtn.onclick = () => this.togglePause();
-                this.stopBtn.onclick = () => this.stopRecording();
+            
+            updateButtons() {
+                this.recordBtn.disabled = this.isRecording;
+                this.pauseBtn.disabled = !this.isRecording;
+                this.stopBtn.disabled = !this.isRecording;
                 
-                // Heartbeat
-                setInterval(() => {
-                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                        this.send('ping');
-                    }
-                }, 30000);
+                if (this.isPaused) {
+                    this.pauseBtn.textContent = 'Resume';
+                } else {
+                    this.pauseBtn.textContent = 'Pause';
+                }
             }
-
-            send(type, data = {}) {
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({ type, data }));
+            
+            updateStatus(text) {
+                this.statusEl.textContent = text;
+            }
+            
+            updateWaveform(level) {
+                if (this.isRecording && !this.isPaused) {
+                    const intensity = Math.floor(level * 255);
+                    const color = `rgb(${intensity}, ${Math.floor(intensity * 0.7)}, ${Math.floor(intensity * 0.3)})`;
+                    this.waveformContent.style.background = `linear-gradient(90deg, ${color} ${level * 100}%, #f1f3f4 ${level * 100}%)`;
+                    this.waveformContent.textContent = `Recording... (Level: ${Math.floor(level * 100)}%)`;
+                }
+            }
+            
+            updateProgress(transcription, diarization) {
+                this.transcriptionProgress.style.width = `${transcription}%`;
+                this.diarizationProgress.style.width = `${diarization}%`;
+                this.transcriptionPercent.textContent = `${transcription}%`;
+                this.diarizationPercent.textContent = `${diarization}%`;
+            }
+            
+            handleResults(data) {
+                this.updateStatus('Processing complete!');
+                this.resetState();
+                
+                let resultsHTML = '<h3>Transcription Results</h3>';
+                
+                if (data.transcription_data && data.transcription_data.length > 0) {
+                    resultsHTML += '<div style="margin: 15px 0;"><strong>Transcription:</strong></div>';
+                    data.transcription_data.forEach(item => {
+                        resultsHTML += `<div style="margin: 10px 0; padding: 10px; background: white; border-radius: 5px;">
+                            <strong>Speaker ${item.speaker || 'Unknown'}:</strong> ${item.text || item.content || 'No text'}
+                        </div>`;
+                    });
+                } else {
+                    resultsHTML += '<div>No transcription data available.</div>';
+                }
+                
+                if (data.speakers_detected > 0) {
+                    resultsHTML += `<div style="margin: 15px 0;"><strong>Speakers detected:</strong> ${data.speakers_detected}</div>`;
+                }
+                
+                if (data.duration) {
+                    resultsHTML += `<div><strong>Duration:</strong> ${Math.round(data.duration)} seconds</div>`;
+                }
+                
+                this.resultsEl.innerHTML = resultsHTML;
+                this.resultsEl.classList.add('visible');
+                
+                // Show file notification if paths are available
+                if (data.audio_file || data.srt_file) {
+                    this.showFileNotification(data.audio_file, data.srt_file);
                 }
             }
 
             showFileNotification(audioPath, srtPath) {
-                let content = `<strong>Files saved successfully!</strong><br><br>`;
+                let content = `Files saved successfully!\n`;
                 
                 // Detect format from file extension
                 const formatType = audioPath.toLowerCase().endsWith('.mp4') ? 'MP4 Video' : 'WAV Audio';
-                content += `<strong>${formatType}:</strong><br>${audioPath}<br><br>`;
+                content += `${formatType}: ${audioPath}\n`;
                 
                 if (srtPath) {
-                    content += `<strong>Subtitles:</strong><br>${srtPath}`;
+                    content += `Subtitles: ${srtPath}`;
                 }
                 
-                this.fileContent.innerHTML = content;
-                this.fileNotification.classList.add('show');
+                this.showNotification(content, 'success');
+            }
+            
+            showNotification(message, type = 'success') {
+                this.notificationEl.textContent = message;
+                this.notificationEl.className = `notification ${type}`;
+                this.notificationEl.classList.add('show');
                 
-                // Auto-hide after 5 seconds
                 setTimeout(() => {
-                    this.fileNotification.classList.remove('show');
+                    this.notificationEl.classList.remove('show');
                 }, 5000);
             }
-
-            handleMessage(message) {
-                switch (message.type) {
-                    case 'model_download':
-                        this.handleModelDownload(message.message);
-                        break;
-
-                    case 'recording_started':
-                        this.isRecording = true;
-                        this.setStatus('Recording...', 'recording');
-                        this.startBtn.disabled = true;
-                        this.pauseBtn.disabled = false;
-                        this.stopBtn.disabled = false;
-                        this.waveformContent.textContent = 'Recording...';
-                        this.showWaveform(true);
-                        break;
-
-                    case 'recording_paused':
-                        this.isPaused = true;
-                        this.setStatus('Paused', 'recording');
-                        this.pauseBtn.textContent = 'Resume';
-                        break;
-
-                    case 'recording_resumed':
-                        this.isPaused = false;
-                        this.setStatus('Recording...', 'recording');
-                        this.pauseBtn.textContent = 'Pause';
-                        break;
-
-                    case 'recording_stopped':
-                        this.isRecording = false;
-                        this.setStatus('Processing...', 'processing');
-                        this.resetControls();
-                        this.showWaveform(false);
-                        this.showProgress(true);
-                        break;
-
-                    case 'audio_level':
-                        this.updateWaveform(message.level);
-                        break;
-
-                    case 'progress':
-                        this.updateProgress(message.transcription, message.diarization);
-                        break;
-
-                    case 'processing_complete':
-                        this.setStatus('Complete!', 'ready');
-                        this.showResults(message);
-                        this.showProgress(false);
-
-                        // Show file paths notification
-                        this.showFileNotification(message.audio_file, message.srt_file);
-                        break;
-
-                    case 'error':
-                        this.setStatus(`Error: ${message.message}`, 'error');
-                        this.resetControls();
-                        this.resetWaveform();
-                        break;
-                }
+            
+            showError(message) {
+                this.showNotification(message, 'error');
+                console.error('Error:', message);
             }
-
-            handleModelDownload(message) {
-                // Determine the type of download status based on message content
-                if (message.includes('Retrying') || message.includes('attempt')) {
-                    this.setStatus(message, 'retrying');
-                    this.showRetryProgress(message);
-                } else if (message.includes('Downloading') || message.includes('Extracting')) {
-                    this.setStatus(message, 'downloading');
-                    this.showDownloadProgress(message);
-                } else {
-                    this.setStatus(message, 'processing');
-                    this.showWaveformMessage(message, 'downloading');
-                }
-            }
-
-            showRetryProgress(message) {
-                this.showWaveform(false);
-                this.waveformEl.classList.remove('downloading');
-                this.waveformEl.classList.add('retrying');
-                this.waveformContent.className = 'waveform-message retrying';
-                this.waveformContent.textContent = message;
-                
-                // Show retry countdown if available
-                const retryMatch = message.match(/retrying in (\\d+) seconds/i);
-                if (retryMatch) {
-                    const seconds = parseInt(retryMatch[1]);
-                    this.startRetryCountdown(seconds);
-                }
-            }
-
-            showDownloadProgress(message) {
-                this.showWaveform(false);
-                this.waveformEl.classList.remove('retrying');
-                this.waveformEl.classList.add('downloading');
-                this.waveformContent.className = 'waveform-message downloading';
-                this.waveformContent.textContent = message;
-                this.retryProgress.style.width = '0%';
-            }
-
-            showWaveformMessage(message, type = '') {
-                this.showWaveform(false);
-                this.waveformEl.classList.remove('downloading', 'retrying');
-                if (type) {
-                    this.waveformEl.classList.add(type);
-                    this.waveformContent.className = `waveform-message ${type}`;
-                } else {
-                    this.waveformContent.className = 'waveform-message';
-                }
-                this.waveformContent.textContent = message;
-                this.retryProgress.style.width = '0%';
-            }
-
-            startRetryCountdown(seconds) {
-                let remaining = seconds;
-                this.retryProgress.style.width = '100%';
-                
-                const countdown = setInterval(() => {
-                    remaining--;
-                    const progress = (remaining / seconds) * 100;
-                    this.retryProgress.style.width = `${Math.max(0, progress)}%`;
-                    
-                    if (remaining <= 0) {
-                        clearInterval(countdown);
-                        this.retryProgress.style.width = '0%';
-                    }
-                }, 1000);
-            }
-
-            resetWaveform() {
-                this.showWaveform(false);
-                this.waveformEl.classList.remove('downloading', 'retrying');
-                this.waveformContent.className = 'waveform-message';
-                this.waveformContent.textContent = 'Ready to record';
-                this.retryProgress.style.width = '0%';
-            }
-
-            setStatus(text, type) {
-                this.statusEl.textContent = text;
-                this.statusEl.className = `status ${type}`;
-            }
-
-            showWaveform(show) {
-                this.waveformContent.style.display = show ? 'none' : 'block';
-                this.waveformBars.style.display = show ? 'flex' : 'none';
-                this.waveformEl.classList.toggle('active', show);
-            }
-
-            updateWaveform(level) {
-                if (this.isRecording && !this.isPaused) {
-                    const bars = this.waveformBars.children;
-                    for (let i = 0; i < bars.length; i++) {
-                        const height = Math.random() * level * 40 + 5;
-                        bars[i].style.height = `${height}px`;
-                    }
-                }
-            }
-
-            showProgress(show) {
-                this.progressEl.classList.toggle('visible', show);
-                if (!show) {
-                    this.updateProgress(0, 0);
-                }
-            }
-
-            updateProgress(transcription, diarization) {
-                this.transcriptionFill.style.width = `${transcription}%`;
-                this.diarizationFill.style.width = `${diarization}%`;
-                this.transcriptionPercent.textContent = `${transcription}%`;
-                this.diarizationPercent.textContent = `${diarization}%`;
-            }
-
-            showResults(data) {
-                let html = '';
-                if (data.transcription_data && data.transcription_data.length > 0) {
-                    data.transcription_data.forEach((item, i) => {
-                        html += `
-                            <div class="result-item">
-                                <div class="speaker-tag">Segment ${i + 1}</div>
-                                <div>${item.text || 'No transcription'}</div>
-                            </div>
-                        `;
-                    });
-                } else {
-                    html = '<div class="result-item">No transcription available</div>';
-                }
-                
-                if (data.speakers_detected > 0) {
-                    html = `<div class="result-item"><strong>${data.speakers_detected} speakers detected</strong></div>` + html;
-                }
-                
-                this.resultsEl.innerHTML = html;
-                this.resultsEl.classList.add('visible');
-            }
-
-            resetControls() {
-                this.startBtn.disabled = false;
-                this.pauseBtn.disabled = true;
-                this.pauseBtn.textContent = 'Pause';
-                this.stopBtn.disabled = true;
+            
+            resetState() {
                 this.isRecording = false;
                 this.isPaused = false;
-                this.resetWaveform();
+                this.updateButtons();
+                this.waveformContent.style.background = '#f1f3f4';
+                this.waveformContent.textContent = 'Audio visualization will appear here';
+                this.updateProgress(0, 0);
             }
-
+            
+            // CRITICAL FIX: Safe format access with fallback
             startRecording() {
                 this.resultsEl.classList.remove('visible');
+                
+                // Safe format access with fallback
+                const formatValue = this.formatEl && this.formatEl.value ? this.formatEl.value : 'wav';
+                
                 this.send('start_recording', { 
                     language: this.languageEl.value,
-                    format: this.formatEl.value 
+                    format: formatValue
                 });
             }
-
+            
             togglePause() {
                 if (this.isPaused) {
                     this.send('resume_recording');
@@ -1085,13 +865,31 @@ HTML_INTERFACE = """
                     this.send('pause_recording');
                 }
             }
-
+            
             stopRecording() {
                 this.send('stop_recording');
             }
+            
+            // CRITICAL FIX: Enhanced error handling for WebSocket send
+            send(type, data = {}) {
+                try {
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.send(JSON.stringify({
+                            type: type,
+                            data: data
+                        }));
+                    } else {
+                        throw new Error('WebSocket is not connected');
+                    }
+                } catch (error) {
+                    console.error('WebSocket send error:', error);
+                    this.showError('Connection error. Please refresh the page.');
+                    this.resetState();
+                }
+            }
         }
-
-        // Start the app when page loads
+        
+        // Initialize the application
         document.addEventListener('DOMContentLoaded', () => {
             new TranscrevAI();
         });
@@ -1293,7 +1091,7 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
         # Get audio file
         if not session or not session.get("recorder"):
             return
-            
+        
         audio_file = session.get("recorder").output_file
         
         # Enhanced file validation
@@ -1303,7 +1101,7 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
                 "message": "Audio file not found. Recording may have failed."
             })
             return
-            
+        
         file_size = os.path.getsize(audio_file)
         if file_size == 0:
             await websocket_manager.send_message(session_id, {
@@ -1365,7 +1163,7 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
                 
                 if data:
                     transcription_data.extend(data)
-            
+                
         except Exception as e:
             logger.error(f"Transcription error: {e}")
             await websocket_manager.send_message(session_id, {
