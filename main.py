@@ -108,16 +108,11 @@ class ModelManager:
         if ModelManager.validate_model(language):
             return True
         
-        # Try to download with retry logic and user feedback
+        # Try to download silently in background
         try:
-            return await ModelManager._download_model_with_retry(language, websocket_manager, session_id)
+            return await ModelManager._download_model_with_retry(language, None, None)
         except Exception as e:
             logger.error(f"Model download failed: {e}")
-            if websocket_manager and session_id:
-                await websocket_manager.send_message(session_id, {
-                    "type": "error",
-                    "message": f"Model setup failed: {str(e)}"
-                })
             return False
     
     @staticmethod
@@ -137,18 +132,7 @@ class ModelManager:
         
         for attempt in range(max_retries):
             try:
-                # Send user feedback about retry attempt
-                if websocket_manager and session_id:
-                    if attempt == 0:
-                        await websocket_manager.send_message(session_id, {
-                            "type": "model_download",
-                            "message": f"Downloading '{language}' model, please wait..."
-                        })
-                    else:
-                        await websocket_manager.send_message(session_id, {
-                            "type": "model_download",
-                            "message": f"Connection lost. Retrying download... (attempt {attempt + 1}/{max_retries})"
-                        })
+                # Silent download - no user messages
                 
                 zip_path = f"{model_path}.zip"
                 
@@ -167,12 +151,7 @@ class ModelManager:
                 if not zipfile.is_zipfile(zip_path):
                     raise Exception("Downloaded file is not a valid ZIP")
                 
-                # Update user on extraction progress
-                if websocket_manager and session_id:
-                    await websocket_manager.send_message(session_id, {
-                        "type": "model_download",
-                        "message": f"Download complete. Extracting '{language}' model..."
-                    })
+                # Silent extraction
                 
                 # Extract ZIP to temporary directory first
                 temp_dir = f"{model_path}_temp"
@@ -213,11 +192,6 @@ class ModelManager:
                 
                 # Validate the extracted model
                 if ModelManager.validate_model(language):
-                    if websocket_manager and session_id:
-                        await websocket_manager.send_message(session_id, {
-                            "type": "model_download",
-                            "message": f"'{language}' model ready. Starting recording..."
-                        })
                     return True
                 else:
                     raise Exception("Model validation failed after extraction")
@@ -245,19 +219,9 @@ class ModelManager:
                 # If this is not the last attempt, wait before retrying
                 if attempt < max_retries - 1:
                     wait_time = 2 * (attempt + 1)  # Progressive backoff
-                    if websocket_manager and session_id:
-                        await websocket_manager.send_message(session_id, {
-                            "type": "model_download",
-                            "message": f"Retrying in {wait_time} seconds..."
-                        })
                     await asyncio.sleep(wait_time)
                 else:
-                    # Final attempt failed
-                    if websocket_manager and session_id:
-                        await websocket_manager.send_message(session_id, {
-                            "type": "error",
-                            "message": f"Failed to download '{language}' model after {max_retries} attempts. Please check your internet connection and try again."
-                        })
+                    # Final attempt failed - silent failure
                     return False
         
         return False
@@ -1170,13 +1134,7 @@ async def handle_websocket_message(session_id: str, data: dict):
             try:
                 language = message_data.get("language", "en")
 
-                # Ensure model exists with retry logic and user feedback
-                model_ready = await ModelManager.ensure_model_with_feedback(language, websocket_manager, session_id)
-                if not model_ready:
-                    # Error message already sent by ensure_model_with_feedback
-                    return
-
-                # Start recording
+                # Start recording immediately (no waiting for model)
                 await recorder.start_recording()
 
                 app_state.update_session(session_id, {
@@ -1190,10 +1148,18 @@ async def handle_websocket_message(session_id: str, data: dict):
                     "message": "Recording started"
                 })
 
+                # Start model download silently in background (non-blocking)
+                model_task = asyncio.create_task(
+                    ModelManager.ensure_model_silent(language)
+                )
+                
                 # Start audio monitoring and processing
                 asyncio.create_task(monitor_audio(session_id))
                 task = asyncio.create_task(process_audio(session_id, language))
-                app_state.update_session(session_id, {"task": task})
+                app_state.update_session(session_id, {
+                    "task": task,
+                    "model_task": model_task
+                })
 
             except Exception as e:
                 logger.error(f"Start recording error: {e}")
@@ -1308,16 +1274,30 @@ async def process_audio(session_id: str, language: str = "en"):
         
         logger.info(f"Processing: {audio_file} (size: {file_size} bytes)")
         
+        # Wait for background model download to complete silently
+        session = app_state.get_session(session_id)
+        if session and session.get("model_task"):
+            try:
+                # Wait for model download to finish (background task)
+                await session["model_task"]
+            except Exception as e:
+                logger.error(f"Background model download failed: {e}")
+                # Try to ensure model is available as fallback
+                await ModelManager.ensure_model_silent(language)
+        
         # Get correct model path
         model_path = ModelManager.get_model_path(language)
         
-        # Validate model one more time before transcription
+        # Validate model before transcription
         if not ModelManager.validate_model(language):
-            await websocket_manager.send_message(session_id, {
-                "type": "error",
-                "message": f"Model validation failed for {language}. Please try again."
-            })
-            return
+            # Try one more time to get the model silently
+            await ModelManager.ensure_model_silent(language)
+            if not ModelManager.validate_model(language):
+                await websocket_manager.send_message(session_id, {
+                    "type": "error",
+                    "message": f"Model for {language} is not available. Please check your internet connection and try again."
+                })
+                return
         
         # Transcription with enhanced error handling
         transcription_data = []
