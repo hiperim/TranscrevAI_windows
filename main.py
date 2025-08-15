@@ -2,23 +2,22 @@ import asyncio
 import logging 
 import os 
 import time 
-import json 
+ 
 import urllib.request 
 import zipfile 
 import shutil 
-from typing import Dict, Optional 
-from pathlib import Path 
+ 
+ 
 from datetime import datetime 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException 
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect 
 from fastapi.responses import HTMLResponse, JSONResponse 
 import uvicorn 
 
 from src.audio_processing import AudioRecorder 
 from src.transcription import transcribe_audio_with_progress
 from src.speaker_diarization import SpeakerDiarization 
-from src.file_manager import FileManager 
 from src.subtitle_generator import generate_srt 
-from config.app_config import MODEL_DIR, DATA_DIR, LANGUAGE_MODELS 
+from config.app_config import MODEL_DIR, LANGUAGE_MODELS 
 from src.logging_setup import setup_app_logging
 
 logger = setup_app_logging()
@@ -109,7 +108,7 @@ class ModelManager:
         return True
     
     @staticmethod
-    async def ensure_model_with_feedback(language: str, websocket_manager=None, session_id=None) -> bool:
+    async def ensure_model_with_feedback(language: str, _websocket_manager=None, _session_id=None) -> bool:
         # Ensure model exists with user feedback and retry logic
         if ModelManager.validate_model(language):
             return True
@@ -127,7 +126,7 @@ class ModelManager:
         return await ModelManager.ensure_model_with_feedback(language, None, None)
     
     @staticmethod
-    async def _download_model_with_retry(language: str, websocket_manager=None, session_id=None, max_retries=3) -> bool:
+    async def _download_model_with_retry(language: str, _websocket_manager=None, _session_id=None, max_retries=3) -> bool:
         # Enhanced download with retry logic and user feedback
         if language not in LANGUAGE_MODELS:
             logger.error(f"No model URL available for language: {language}")
@@ -172,7 +171,7 @@ class ModelManager:
                 model_source_dir = None
                 
                 # Look for the directory containing am/final.mdl
-                for root, dirs, files in os.walk(temp_dir):
+                for root, _dirs, _files in os.walk(temp_dir):
                     # Check if this directory has an 'am' subdirectory with final.mdl
                     am_path = os.path.join(root, 'am', 'final.mdl')
                     if os.path.exists(am_path):
@@ -244,17 +243,10 @@ class SimpleState:
         
     def create_session(self, session_id: str):
         try:
-            # Create AudioRecorder with data path
-            from src.file_manager import FileManager
-            recordings_dir = FileManager.get_data_path("recordings")
-            output_file = os.path.join(
-                recordings_dir, 
-                f"recording_{int(time.time())}.wav"
-            )
-            recorder = AudioRecorder(output_file=output_file)
-            
+            # Create session without AudioRecorder initially
+            # AudioRecorder will be created when recording starts with the correct format
             self.sessions[session_id] = {
-                "recorder": recorder,
+                "recorder": None,
                 "recording": False,
                 "paused": False,
                 "progress": {"transcription": 0, "diarization": 0},
@@ -266,6 +258,26 @@ class SimpleState:
             return True
         except Exception as e:
             logger.error(f"Failed to create session: {e}")
+            return False
+    
+    def create_recorder_for_session(self, session_id: str, format_type: str = "wav"):
+        try:
+            from src.file_manager import FileManager
+            recordings_dir = FileManager.get_data_path("recordings")
+            extension = "wav" if format_type == "wav" else "mp4"
+            output_file = os.path.join(
+                recordings_dir, 
+                f"recording_{int(time.time())}.{extension}"
+            )
+            recorder = AudioRecorder(output_file=output_file)
+            
+            if session_id in self.sessions:
+                self.sessions[session_id]["recorder"] = recorder
+                logger.info(f"AudioRecorder created for session {session_id} with format {format_type}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to create recorder for session: {e}")
             return False
     
     def get_session(self, session_id: str):
@@ -614,6 +626,7 @@ HTML_INTERFACE = """
             border-radius: 8px;
             font-size: 1rem;
             background: white;
+            margin: 0 0.5rem;
         }
 
         /* Responsive design */
@@ -672,6 +685,10 @@ HTML_INTERFACE = """
                 <option value="en">English</option>
                 <option value="pt">Portuguese</option>
                 <option value="es">Spanish</option>
+            </select>
+            <select id="format">
+                <option value="wav">WAV Audio</option>
+                <option value="mp4">MP4 Video</option>
             </select>
         </div>
 
@@ -738,6 +755,7 @@ HTML_INTERFACE = """
                 this.pauseBtn = document.getElementById('pauseBtn');
                 this.stopBtn = document.getElementById('stopBtn');
                 this.languageEl = document.getElementById('language');
+                this.formatEl = document.getElementById('format');
                 this.waveformEl = document.getElementById('waveform');
                 this.waveformContent = document.getElementById('waveform-content');
                 this.progressEl = document.getElementById('progress');
@@ -830,7 +848,11 @@ HTML_INTERFACE = """
 
             showFileNotification(audioPath, srtPath) {
                 let content = `<strong>Files saved successfully!</strong><br><br>`;
-                content += `<strong>Audio:</strong><br>${audioPath}<br><br>`;
+                
+                // Detect format from file extension
+                const formatType = audioPath.toLowerCase().endsWith('.mp4') ? 'MP4 Video' : 'WAV Audio';
+                content += `<strong>${formatType}:</strong><br>${audioPath}<br><br>`;
+                
                 if (srtPath) {
                     content += `<strong>Subtitles:</strong><br>${srtPath}`;
                 }
@@ -1050,7 +1072,10 @@ HTML_INTERFACE = """
 
             startRecording() {
                 this.resultsEl.classList.remove('visible');
-                this.send('start_recording', { language: this.languageEl.value });
+                this.send('start_recording', { 
+                    language: this.languageEl.value,
+                    format: this.formatEl.value 
+                });
             }
 
             togglePause() {
@@ -1129,12 +1154,29 @@ async def handle_websocket_message(session_id: str, data: dict):
         })
         return
     
-    recorder = session["recorder"]
-    
     if message_type == "start_recording":
-        if not session["recording"]:
+        if not session.get("recording", False):
             try:
                 language = message_data.get("language", "en")
+                format_type = message_data.get("format", "wav")
+
+                # Create recorder with correct format
+                if not app_state.create_recorder_for_session(session_id, format_type):
+                    await websocket_manager.send_message(session_id, {
+                        "type": "error",
+                        "message": "Failed to create recorder"
+                    })
+                    return
+                
+                # Get the newly created recorder
+                session = app_state.get_session(session_id)
+                if not session or session.get("recorder") is None:
+                    await websocket_manager.send_message(session_id, {
+                        "type": "error",
+                        "message": "Session or recorder not found"
+                    })
+                    return
+                recorder = session["recorder"]
 
                 # Start recording immediately (no waiting for model)
                 await recorder.start_recording()
@@ -1142,7 +1184,8 @@ async def handle_websocket_message(session_id: str, data: dict):
                 app_state.update_session(session_id, {
                     "recording": True,
                     "start_time": time.time(),
-                    "language": language
+                    "language": language,
+                    "format": format_type
                 })
 
                 await websocket_manager.send_message(session_id, {
@@ -1157,7 +1200,7 @@ async def handle_websocket_message(session_id: str, data: dict):
                 
                 # Start audio monitoring and processing
                 asyncio.create_task(monitor_audio(session_id))
-                task = asyncio.create_task(process_audio(session_id, language))
+                task = asyncio.create_task(process_audio(session_id, language, format_type))
                 app_state.update_session(session_id, {
                     "task": task,
                     "model_task": model_task
@@ -1171,8 +1214,9 @@ async def handle_websocket_message(session_id: str, data: dict):
                 })
     
     elif message_type == "stop_recording":
-        if session["recording"]:
+        if session and session.get("recording") and session.get("recorder"):
             try:
+                recorder = session["recorder"]
                 await recorder.stop_recording()
                 duration = time.time() - session.get("start_time", time.time())
                 
@@ -1194,7 +1238,8 @@ async def handle_websocket_message(session_id: str, data: dict):
                 })
     
     elif message_type == "pause_recording":
-        if session["recording"] and not session["paused"]:
+        if session and session.get("recording") and not session.get("paused") and session.get("recorder"):
+            recorder = session["recorder"]
             recorder.pause_recording()
             app_state.update_session(session_id, {"paused": True})
             await websocket_manager.send_message(session_id, {
@@ -1202,7 +1247,8 @@ async def handle_websocket_message(session_id: str, data: dict):
             })
     
     elif message_type == "resume_recording":
-        if session["recording"] and session["paused"]:
+        if session and session.get("recording") and session.get("paused") and session.get("recorder"):
+            recorder = session["recorder"]
             recorder.resume_recording()
             app_state.update_session(session_id, {"paused": False})
             await websocket_manager.send_message(session_id, {
@@ -1233,7 +1279,7 @@ async def monitor_audio(session_id: str):
         logger.error(f"Audio monitoring error: {e}")
 
 # Enhanced processing pipeline with proper SRT generation
-async def process_audio(session_id: str, language: str = "en"):
+async def process_audio(session_id: str, language: str = "en", _format_type: str = "wav"):
     try:
         session = app_state.get_session(session_id)
         if not session:
@@ -1248,7 +1294,7 @@ async def process_audio(session_id: str, language: str = "en"):
         if not session or not session.get("recorder"):
             return
             
-        audio_file = session["recorder"].output_file
+        audio_file = session.get("recorder").output_file
         
         # Enhanced file validation
         if not os.path.exists(audio_file):
@@ -1281,7 +1327,7 @@ async def process_audio(session_id: str, language: str = "en"):
         if session and session.get("model_task"):
             try:
                 # Wait for model download to finish (background task)
-                await session["model_task"]
+                await session.get("model_task")
             except Exception as e:
                 logger.error(f"Background model download failed: {e}")
                 # Try to ensure model is available as fallback
