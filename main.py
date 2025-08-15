@@ -687,8 +687,8 @@ HTML_INTERFACE = """
                 <option value="es">Spanish</option>
             </select>
             <select id="format">
-                <option value="wav">WAV Audio</option>
-                <option value="mp4">MP4 Video</option>
+                <option value="wav">.WAV</option>
+                <option value="mp4">.MP4</option>
             </select>
         </div>
 
