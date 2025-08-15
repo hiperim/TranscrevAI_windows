@@ -50,8 +50,8 @@ class TranscriptionError(Exception):
 class ModelManager:
     
     @staticmethod
-    async def ensure_model_available(language_code: str) -> str:
-        """Ensure language model is available, download if necessary"""
+    async def ensure_model_available(language_code: str, websocket_manager=None, session_id=None) -> str:
+        """Ensure language model is available, download if necessary with user feedback"""
         model_path = os.path.join(MODEL_DIR, language_code)
         
         # Check if model already exists and is valid
@@ -66,11 +66,17 @@ class ModelManager:
             raise ValueError(f"Unsupported language: {language_code}")
         
         model_url = LANGUAGE_MODELS[language_code]
-        await ModelManager._download_and_extract_model(model_url, language_code, model_path)
+        await ModelManager._download_and_extract_model(model_url, language_code, model_path, websocket_manager, session_id)
         
         # Validate downloaded model
         if not await ModelManager._validate_model(model_path):
             raise RuntimeError(f"Downloaded model for {language_code} is invalid")
+        
+        if websocket_manager and session_id:
+            await websocket_manager.send_message(session_id, {
+                "type": "model_download",
+                "message": f"'{language_code}' model ready. Starting transcription..."
+            })
         
         return model_path
     
@@ -122,20 +128,34 @@ class ModelManager:
             raise RuntimeError(f"ZIP validation failed: {e}")
     
     @staticmethod
-    async def _download_and_extract_model(url: str, language_code: str, model_path: str):
-        """Download and extract Vosk model with enhanced error handling"""
+    async def _download_and_extract_model(url: str, language_code: str, model_path: str, websocket_manager=None, session_id=None):
+        """Download and extract Vosk model with enhanced error handling and user feedback"""
         try:
             # Create temporary download directory
             temp_dir = os.path.join(MODEL_DIR, f"temp_{language_code}")
             os.makedirs(temp_dir, exist_ok=True)
             zip_path = os.path.join(temp_dir, f"{language_code}.zip")
             
-            # Download with retry mechanism
+            # Download with retry mechanism and user feedback
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     logger.info(f"Downloading model from {url} (attempt {attempt + 1}/{max_retries})")
-                    response = requests.get(url, stream=True, timeout=60)
+                    
+                    # Send user feedback about retry attempt
+                    if websocket_manager and session_id:
+                        if attempt == 0:
+                            await websocket_manager.send_message(session_id, {
+                                "type": "model_download",
+                                "message": f"Downloading '{language_code}' model, please wait..."
+                            })
+                        else:
+                            await websocket_manager.send_message(session_id, {
+                                "type": "model_download",
+                                "message": f"Connection lost. Retrying download... (attempt {attempt + 1}/{max_retries})"
+                            })
+                    
+                    response = requests.get(url, stream=True, timeout=120)  # Increased timeout
                     response.raise_for_status()
                     
                     total_size = int(response.headers.get('content-length', 0))
@@ -151,6 +171,12 @@ class ModelManager:
                                     progress = (downloaded / total_size) * 100
                                     if downloaded % (10 * 1024 * 1024) == 0:  # Log every 10MB
                                         logger.info(f"Download progress: {progress:.1f}%")
+                                        # Send progress update to user
+                                        if websocket_manager and session_id:
+                                            await websocket_manager.send_message(session_id, {
+                                                "type": "model_download",
+                                                "message": f"Downloading '{language_code}' model... {progress:.0f}%"
+                                            })
                     
                     # Validate downloaded file size
                     if total_size > 0 and downloaded != total_size:
@@ -161,15 +187,33 @@ class ModelManager:
                         raise RuntimeError("Downloaded file is not a valid ZIP file")
                     
                     logger.info("Download completed, validating ZIP file...")
+                    if websocket_manager and session_id:
+                        await websocket_manager.send_message(session_id, {
+                            "type": "model_download",
+                            "message": f"Download complete. Validating '{language_code}' model..."
+                        })
+                    
                     await asyncio.to_thread(ModelManager._validate_zip_file, zip_path)
                     logger.info("ZIP file validation passed, extracting model...")
+                    
+                    if websocket_manager and session_id:
+                        await websocket_manager.send_message(session_id, {
+                            "type": "model_download",
+                            "message": f"Extracting '{language_code}' model..."
+                        })
                     
                     break
                     
                 except Exception as e:
                     logger.warning(f"Download attempt {attempt + 1} failed: {e}")
                     if attempt < max_retries - 1:
-                        await asyncio.sleep(2)  # Wait before retry
+                        wait_time = 2 * (attempt + 1)  # Progressive backoff
+                        if websocket_manager and session_id:
+                            await websocket_manager.send_message(session_id, {
+                                "type": "model_download",
+                                "message": f"Retrying in {wait_time} seconds..."
+                            })
+                        await asyncio.sleep(wait_time)
                         continue
                     else:
                         raise RuntimeError(f"Download failed after {max_retries} attempts: {e}")
@@ -283,8 +327,8 @@ class AsyncTranscriptionService:
         self._models = {}
         self._model_lock = asyncio.Lock()
     
-    async def load_language_model(self, language_code: str) -> Any:
-        """Load or get cached language model with automatic download"""
+    async def load_language_model(self, language_code: str, websocket_manager=None, session_id=None) -> Any:
+        """Load or get cached language model with automatic download and user feedback"""
         if not VOSK_AVAILABLE:
             logger.warning("Vosk not available, returning dummy model")
             return Model()  # Return dummy model
@@ -293,7 +337,7 @@ class AsyncTranscriptionService:
             if language_code not in self._models:
                 try:
                     # Ensure model is available (download if necessary)
-                    model_path = await ModelManager.ensure_model_available(language_code)
+                    model_path = await ModelManager.ensure_model_available(language_code, websocket_manager, session_id)
                     
                     # Load model in thread pool
                     loop = asyncio.get_event_loop()
@@ -315,9 +359,11 @@ async def transcribe_audio_with_progress(
     wav_file: str,
     model_path: str,
     language_code: str,
-    sample_rate: int = 16000
+    sample_rate: int = 16000,
+    websocket_manager=None,
+    session_id=None
 ) -> AsyncGenerator[Tuple[int, List[Dict]], None]:
-    """Enhanced transcription with automatic model management"""
+    """Enhanced transcription with automatic model management and user feedback"""
     try:
         logger.info(f"Starting transcription for {wav_file} with language {language_code}")
         
@@ -328,7 +374,7 @@ async def transcribe_audio_with_progress(
             return
         
         # Load model with automatic download if needed
-        model = await transcription_service.load_language_model(language_code)
+        model = await transcription_service.load_language_model(language_code, websocket_manager, session_id)
         
         # Validate audio file
         if not os.path.exists(wav_file):
