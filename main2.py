@@ -1,36 +1,37 @@
-# TranscrevAI - Simple, Clean, Production Ready 
-import asyncio 
-import logging 
-import os 
-import time 
-import json 
-import urllib.request 
-import zipfile 
-import shutil 
-from typing import Dict, Optional 
-from pathlib import Path 
-from datetime import datetime 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException 
-from fastapi.responses import HTMLResponse, JSONResponse 
-import uvicorn 
+# TranscrevAI - Simple, Clean, Production Ready
+import asyncio
+import logging
+import os
+import time
+import json
+import urllib.request
+import zipfile
+import shutil
+from typing import Dict, Optional
+from pathlib import Path
+from datetime import datetime
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
+import uvicorn
 
-from src.audio_processing import AudioRecorder 
+from src.audio_processing import AudioRecorder
 from src.transcription import transcribe_audio_with_progress
-from src.speaker_diarization import SpeakerDiarization 
-from src.file_manager import FileManager 
-from src.subtitle_generator import generate_srt 
-from config.app_config import MODEL_DIR, DATA_DIR, LANGUAGE_MODELS 
+from src.speaker_diarization import SpeakerDiarization
+from src.file_manager import FileManager
+from src.subtitle_generator import generate_srt
+from config.app_config import MODEL_DIR, DATA_DIR, LANGUAGE_MODELS
 from src.logging_setup import setup_app_logging
 
 # Simple logging setup
 logger = setup_app_logging()
 
-# Clean, simple FastAPI setup 
-app = FastAPI( 
-    title="TranscrevAI", 
-    description="Real-time Audio Transcription - Simple & Powerful", 
-    version="1.0.0" 
+# Clean, simple FastAPI setup
+app = FastAPI(
+    title="TranscrevAI",
+    description="Real-time Audio Transcription - Simple & Powerful",
+    version="1.0.0"
 )
+
 
 class ModelManager:
     """Background model management - no UI interference"""
@@ -179,6 +180,8 @@ class ModelManager:
                     else:
                         os.remove(path)
             return False
+
+
 
 # Simple state management - no over-engineering
 class SimpleState:
@@ -1055,7 +1058,7 @@ async def monitor_audio(session_id: str):
     except Exception as e:
         logger.error(f"Audio monitoring error: {e}")
 
-# Enhanced processing pipeline with proper SRT generation
+# Enhanced processing pipeline with FIXED SRT generation
 async def process_audio(session_id: str, language: str = "en"):
     try:
         session = app_state.get_session(session_id)
@@ -1171,7 +1174,6 @@ async def process_audio(session_id: str, language: str = "en"):
         srt_file = None
         if transcription_data and len(transcription_data) > 0:
             try:
-                from src.subtitle_generator import generate_srt
                 srt_file = await generate_srt(transcription_data, diarization_segments)
                 if srt_file:
                     logger.info(f"SRT generated successfully: {srt_file}")
@@ -1208,3 +1210,4 @@ if __name__ == "__main__":
         log_level="info",
         access_log=False  # Disable for production
     )
+
