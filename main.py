@@ -69,7 +69,13 @@ class ModelManager:
         # Check for required ivector directory
         ivector_dir = os.path.join(model_path, 'ivector')
         if not os.path.exists(ivector_dir):
-            logger.warning(f"Missing ivector directory: {ivector_dir}")
+            # Debug: List what's actually in the model directory
+            try:
+                actual_contents = os.listdir(model_path)
+                logger.warning(f"Missing ivector directory: {ivector_dir}")
+                logger.warning(f"Actual contents of {model_path}: {actual_contents}")
+            except Exception as e:
+                logger.warning(f"Could not list model directory contents: {e}")
             return False
         
         # Check for required ivector files

@@ -134,7 +134,7 @@ async def transcribe_audio_with_progress(
         recognizer = KaldiRecognizer(model, wave_info["framerate"])
         
         # Process audio in chunks with progress updates
-        chunk_size = 4096
+        chunk_size = 16384  # Increased for better word recognition
         transcription_data = []
         processed_frames = 0
         
@@ -194,12 +194,52 @@ async def transcribe_audio_with_progress(
             else:
                 transcription_data.append(item)
                 progress = min(100, len(transcription_data) * 10)
+                # Yield without filtering during processing (filtering happens at end)
                 yield progress, transcription_data
+        
+        # Filter duplicates and clean up transcription data
+        def filter_transcription_duplicates(segments):
+            """Filter segments with identical text and overlapping timestamps"""
+            if not segments:
+                return segments
+            
+            filtered = []
+            for current in segments:
+                # Skip empty or very short transcriptions
+                if not current.get('text') or len(current.get('text', '').strip()) < 2:
+                    continue
+                
+                should_add = True
+                current_text = current.get('text', '').strip().lower()
+                current_start = current.get('start', 0)
+                current_end = current.get('end', 0)
+                
+                # Check against previous segments for duplicates
+                for prev in filtered[-3:]:  # Only check last 3 segments for efficiency
+                    prev_text = prev.get('text', '').strip().lower()
+                    prev_start = prev.get('start', 0)
+                    prev_end = prev.get('end', 0)
+                    
+                    # Check if texts are identical and timestamps overlap
+                    if current_text == prev_text:
+                        # Check for timestamp overlap
+                        overlap = min(current_end, prev_end) - max(current_start, prev_start)
+                        if overlap > 0:  # Timestamps overlap
+                            should_add = False
+                            break
+                
+                if should_add:
+                    filtered.append(current)
+            
+            return filtered
+        
+        # Apply filtering
+        transcription_data = filter_transcription_duplicates(transcription_data)
         
         # Final yield
         yield 100, transcription_data
         
-        logger.info(f"Transcription completed: {len(transcription_data)} segments")
+        logger.info(f"Transcription completed: {len(transcription_data)} segments (after filtering)")
         
     except Exception as e:
         logger.error(f"Transcription failed: {e}")
