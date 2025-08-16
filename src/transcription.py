@@ -130,11 +130,21 @@ async def transcribe_audio_with_progress(
         if wave_info["total_frames"] == 0:
             raise ValueError("Audio file contains no audio data")
         
+        logger.info(f"Audio info - Channels: {wave_info['channels']}, Sample rate: {wave_info['framerate']}, "
+                   f"Total frames: {wave_info['total_frames']}, Duration: {wave_info['total_frames']/wave_info['framerate']:.2f}s")
+        
+        # Validate audio format for Vosk (mono, 16-bit PCM)
+        if wave_info["channels"] != 1:
+            logger.warning(f"Audio has {wave_info['channels']} channels, Vosk expects mono. This may affect transcription quality.")
+        
+        if wave_info["sample_width"] != 2:
+            logger.warning(f"Audio has {wave_info['sample_width']} bytes per sample, Vosk expects 16-bit (2 bytes). This may affect transcription quality.")
+        
         # Create recognizer
         recognizer = KaldiRecognizer(model, wave_info["framerate"])
         
         # Process audio in chunks with progress updates
-        chunk_size = 16384  # Increased for better word recognition
+        chunk_size = 8192  # Reduced for more frequent intermediate results
         transcription_data = []
         processed_frames = 0
         
@@ -154,13 +164,16 @@ async def transcribe_audio_with_progress(
                         # Process chunk
                         if recognizer.AcceptWaveform(data):
                             result = json.loads(recognizer.Result())
-                            if result.get("text", "").strip():
-                                chunk_results.append({
+                            text = result.get("text", "").strip()
+                            if text:
+                                segment = {
                                     "start": processed_frames / wave_info["framerate"] - 
                                             len(data) / (wave_info["sample_width"] * wave_info["framerate"]),
                                     "end": processed_frames / wave_info["framerate"],
-                                    "text": result.get("text", "")
-                                })
+                                    "text": text
+                                }
+                                chunk_results.append(segment)
+                                logger.debug(f"Interim result: '{text}' at {segment['start']:.2f}-{segment['end']:.2f}s")
                         
                         # Yield progress
                         progress = min(100, int((processed_frames / wave_info["total_frames"]) * 100))
@@ -168,12 +181,19 @@ async def transcribe_audio_with_progress(
                 
                 # Get final result
                 final_result = json.loads(recognizer.FinalResult())
-                if final_result.get("text", "").strip():
-                    chunk_results.append({
+                final_text = final_result.get("text", "").strip()
+                logger.info(f"Final result: '{final_text}' (length: {len(final_text)})")
+                
+                if final_text:
+                    final_segment = {
                         "start": max(0, processed_frames / wave_info["framerate"] - 1),
                         "end": processed_frames / wave_info["framerate"],
-                        "text": final_result.get("text", "")
-                    })
+                        "text": final_text
+                    }
+                    chunk_results.append(final_segment)
+                    logger.info(f"Added final segment: '{final_text}' at {final_segment['start']:.2f}-{final_segment['end']:.2f}s")
+                else:
+                    logger.warning("No final transcription result detected")
                 
                 return chunk_results
                 
@@ -205,8 +225,9 @@ async def transcribe_audio_with_progress(
             
             filtered = []
             for current in segments:
-                # Skip empty or very short transcriptions
-                if not current.get('text') or len(current.get('text', '').strip()) < 2:
+                # Skip empty transcriptions but be less aggressive with short ones
+                text = current.get('text', '').strip()
+                if not text:
                     continue
                 
                 should_add = True
@@ -233,13 +254,20 @@ async def transcribe_audio_with_progress(
             
             return filtered
         
-        # Apply filtering
+        # Apply filtering and log details
+        original_count = len(transcription_data)
         transcription_data = filter_transcription_duplicates(transcription_data)
+        filtered_count = len(transcription_data)
+        
+        logger.info(f"Transcription processing: {original_count} raw segments → {filtered_count} filtered segments")
+        
+        if original_count > 0 and filtered_count == 0:
+            logger.warning("All transcription segments were filtered out - this may indicate an issue with filtering logic or audio quality")
         
         # Final yield
         yield 100, transcription_data
         
-        logger.info(f"Transcription completed: {len(transcription_data)} segments (after filtering)")
+        logger.info(f"Transcription completed: {filtered_count} segments (after filtering)")
         
     except Exception as e:
         logger.error(f"Transcription failed: {e}")

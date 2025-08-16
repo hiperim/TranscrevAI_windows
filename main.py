@@ -57,15 +57,7 @@ class ModelManager:
             logger.warning(f"Model directory not found: {model_path}")
             return False
         
-        # Check for required model files (actual structure)
-        required_files = [
-            'am/final.mdl',
-            'graph/Gr.fst', 
-            'graph/HCLr.fst',
-            'conf/mfcc.conf'
-        ]
-        
-        # Check for required ivector directory
+        # Check for ivector directory (common to both structures)
         ivector_dir = os.path.join(model_path, 'ivector')
         if not os.path.exists(ivector_dir):
             # Debug: List what's actually in the model directory
@@ -85,18 +77,6 @@ class ModelManager:
             'global_cmvn.stats'
         ]
         
-        # Check main model files
-        for file_name in required_files:
-            file_path = os.path.join(model_path, file_name)
-            if not os.path.exists(file_path):
-                logger.warning(f"Missing model file: {file_path}")
-                return False
-            
-            # Check file is not empty
-            if os.path.getsize(file_path) == 0:
-                logger.warning(f"Empty model file: {file_path}")
-                return False
-        
         # Check ivector files 
         for file_name in required_ivector_files:
             file_path = os.path.join(ivector_dir, file_name)
@@ -104,8 +84,46 @@ class ModelManager:
                 logger.warning(f"Missing ivector file: {file_path}")
                 return False
         
-        logger.info(f"Model validation passed for: {language}")
-        return True
+        # Try hierarchical structure first (am/final.mdl, graph/Gr.fst, etc.)
+        hierarchical_files = [
+            'am/final.mdl',
+            'graph/Gr.fst', 
+            'graph/HCLr.fst',
+            'conf/mfcc.conf'
+        ]
+        
+        hierarchical_valid = True
+        for file_name in hierarchical_files:
+            file_path = os.path.join(model_path, file_name)
+            if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+                hierarchical_valid = False
+                break
+        
+        if hierarchical_valid:
+            logger.info(f"Model validation passed for {language} (hierarchical structure)")
+            return True
+        
+        # Try flat structure (final.mdl, Gr.fst, etc. in root)
+        flat_files = [
+            'final.mdl',
+            'Gr.fst', 
+            'HCLr.fst',
+            'mfcc.conf'
+        ]
+        
+        flat_valid = True
+        for file_name in flat_files:
+            file_path = os.path.join(model_path, file_name)
+            if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+                flat_valid = False
+                break
+        
+        if flat_valid:
+            logger.info(f"Model validation passed for {language} (flat structure)")
+            return True
+        
+        logger.warning(f"Model validation failed for {language} - neither hierarchical nor flat structure found")
+        return False
     
     @staticmethod
     async def ensure_model_with_feedback(language: str, _websocket_manager=None, _session_id=None) -> bool:
@@ -167,17 +185,28 @@ class ModelManager:
                     zip_ref.extractall(temp_dir)
                 logger.info(f"Extracted to temporary directory: {temp_dir}")
                 
-                # Find the actual model files - look for am/final.mdl structure
+                # Find the actual model files - handle different archive structures
                 model_source_dir = None
                 
-                # Look for the directory containing am/final.mdl
+                # First, look for the standard hierarchical structure (am/final.mdl)
                 for root, _dirs, _files in os.walk(temp_dir):
-                    # Check if this directory has an 'am' subdirectory with final.mdl
                     am_path = os.path.join(root, 'am', 'final.mdl')
                     if os.path.exists(am_path):
                         model_source_dir = root
-                        logger.info(f"Found model files in: {model_source_dir}")
+                        logger.info(f"Found hierarchical model structure in: {model_source_dir}")
                         break
+                
+                # If not found, look for flat structure (final.mdl in root)
+                if not model_source_dir:
+                    for root, _dirs, files in os.walk(temp_dir):
+                        if 'final.mdl' in files:
+                            # Check if this is likely a valid model directory
+                            # Look for other required files in the same directory
+                            required_files = ['final.mdl', 'Gr.fst', 'HCLr.fst', 'mfcc.conf']
+                            if all(f in files for f in required_files):
+                                model_source_dir = root
+                                logger.info(f"Found flat model structure in: {model_source_dir}")
+                                break
                 
                 if not model_source_dir:
                     raise Exception("Could not find model files in downloaded archive")
