@@ -812,7 +812,7 @@ HTML_INTERFACE = """
                     resultsHTML += '<div style="margin: 15px 0;"><strong>Transcription:</strong></div>';
                     data.transcription_data.forEach(item => {
                         resultsHTML += `<div style="margin: 10px 0; padding: 10px; background: white; border-radius: 5px;">
-                            <strong>Speaker ${item.speaker || 'Unknown'}:</strong> ${item.text || item.content || 'No text'}
+                            <strong>${(item.speaker || 'Speaker_1').replace('_', ' ')}:</strong> ${item.text || item.content || 'No text'}
                         </div>`;
                     });
                 } else {
@@ -1240,7 +1240,7 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
                 })
                 
                 if data:
-                    transcription_data.extend(data)
+                    transcription_data = data
                 
         except Exception as e:
             logger.error(f"Transcription error: {e}")
@@ -1259,7 +1259,7 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
             # Use the correct method for diarization; assuming 'diarize' is the correct method
             segments = diarizer.diarize(wav_file_for_processing)
             diarization_segments = segments if segments else []
-            unique_speakers = len(set(seg.get('speaker', 'Unknown') for seg in diarization_segments)) if diarization_segments else 0
+            unique_speakers = len(set(seg.get('speaker', 'Speaker_1') for seg in diarization_segments)) if diarization_segments else 0
 
             # Optionally, send 100% progress if needed
             await websocket_manager.send_message(session_id, {

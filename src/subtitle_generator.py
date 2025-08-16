@@ -83,7 +83,7 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
                             combined_segments.append({
                                 "start": d_segment["start"],
                                 "end": d_segment["end"],
-                                "speaker": d_segment.get("speaker", "Speaker"),
+                                "speaker": d_segment.get("speaker", "Speaker_1"),
                                 "text": " ".join(matched_text)
                             })
                 else:
@@ -96,7 +96,7 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
                             combined_segments.append({
                                 "start": start_time,
                                 "end": end_time,
-                                "speaker": "Speaker",
+                                "speaker": "Speaker_1",
                                 "text": t_data["text"]
                             })
 
@@ -114,7 +114,7 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
                         combined_segments = [{
                             "start": 0.0,
                             "end": 5.0,  # Default 5 second segment
-                            "speaker": "Speaker",
+                            "speaker": "Speaker_1",
                             "text": all_text.strip()
                         }]
                     else:

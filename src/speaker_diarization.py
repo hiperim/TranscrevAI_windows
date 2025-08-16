@@ -282,7 +282,7 @@ class SpeakerDiarization:
                     raise ValueError("Insufficient features for diarization")
                     
             except Exception as feature_error:
-                logger.error(f"Feature extraction failed: {feature_error}")
+                logger.warning(f"Feature extraction failed ({feature_error}), falling back to single speaker")
                 # Return single speaker fallback
                 return [{
                     "start": 0.0,
