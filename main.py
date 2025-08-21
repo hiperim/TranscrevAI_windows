@@ -2,12 +2,11 @@ import asyncio
 import logging
 import os
 import time
-
+import random
+import tempfile
 import urllib.request
 import zipfile
 import shutil
-
-
 from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -17,12 +16,12 @@ from src.audio_processing import AudioRecorder
 from src.transcription import transcribe_audio_with_progress
 from src.speaker_diarization import SpeakerDiarization
 from src.subtitle_generator import generate_srt
-from config.app_config import MODEL_DIR, LANGUAGE_MODELS
+from src.file_manager import FileManager
+from config.app_config import MODEL_DIR, LANGUAGE_MODELS, LANGUAGE_MODELS_SMALL, MODEL_CONFIG
 from src.logging_setup import setup_app_logging
 
 logger = setup_app_logging()
 if logger is None:
-    import logging
     logger = logging.getLogger("TranscrevAI")
     logger.setLevel(logging.INFO)
     if not logger.hasHandlers():
@@ -37,8 +36,6 @@ app = FastAPI(
     description="Real-time Audio Transcription with AI",
     version="1.0.0"
 )
-
-import os
 
 class ModelManager:
     # Background model management - no UI interference
@@ -146,11 +143,27 @@ class ModelManager:
     @staticmethod
     async def _download_model_with_retry(language: str, _websocket_manager=None, _session_id=None, max_retries=3) -> bool:
         # Enhanced download with retry logic and user feedback
-        if language not in LANGUAGE_MODELS:
-            logger.error(f"No model URL available for language: {language}")
-            return False
+        # Choose model based on configuration
+        if MODEL_CONFIG.get("use_large_models", True):
+            models_dict = LANGUAGE_MODELS
+            model_type = "large"
+        else:
+            models_dict = LANGUAGE_MODELS_SMALL
+            model_type = "small"
         
-        model_url = LANGUAGE_MODELS[language]
+        if language not in models_dict:
+            logger.error(f"No {model_type} model URL available for language: {language}")
+            # Fallback to the other model set
+            fallback_dict = LANGUAGE_MODELS_SMALL if model_type == "large" else LANGUAGE_MODELS
+            if language in fallback_dict:
+                logger.info(f"Using fallback {('small' if model_type == 'large' else 'large')} model for {language}")
+                models_dict = fallback_dict
+            else:
+                logger.error(f"No model available for language: {language}")
+                return False
+        
+        model_url = models_dict[language]
+        logger.info(f"Downloading {model_type} model for {language}: {model_url}")
         model_path = ModelManager.get_model_path(language)
         
         for attempt in range(max_retries):
@@ -291,7 +304,6 @@ class SimpleState:
     
     def create_recorder_for_session(self, session_id: str, format_type: str = "wav"):
         try:
-            from src.file_manager import FileManager
             recordings_dir = FileManager.get_data_path("recordings")
             extension = "wav" if format_type == "wav" else "mp4"
             output_file = os.path.join(
@@ -810,11 +822,68 @@ HTML_INTERFACE = """
                 
                 if (data.transcription_data && data.transcription_data.length > 0) {
                     resultsHTML += '<div style="margin: 15px 0;"><strong>Transcription:</strong></div>';
+                    
+                    // ENHANCED: Group transcription text by speaker for better readability
+                    const groupedBySpeaker = {};
+                    
+                    // Group segments by speaker with temporal proximity
                     data.transcription_data.forEach(item => {
-                        resultsHTML += `<div style="margin: 10px 0; padding: 10px; background: white; border-radius: 5px;">
-                            <strong>${(item.speaker || 'Speaker_1').replace('_', ' ')}:</strong> ${item.text || item.content || 'No text'}
-                        </div>`;
+                        const speakerName = (item.speaker || 'Speaker_1').replace('_', ' ');
+                        const text = item.text || item.content || '';
+                        
+                        if (text.trim()) {
+                            if (!groupedBySpeaker[speakerName]) {
+                                groupedBySpeaker[speakerName] = {
+                                    texts: [],
+                                    firstTime: item.start || 0,
+                                    lastTime: item.end || 0
+                                };
+                            }
+                            
+                            groupedBySpeaker[speakerName].texts.push(text.trim());
+                            
+                            // Update timing info
+                            if (item.start !== undefined && item.start < groupedBySpeaker[speakerName].firstTime) {
+                                groupedBySpeaker[speakerName].firstTime = item.start;
+                            }
+                            if (item.end !== undefined && item.end > groupedBySpeaker[speakerName].lastTime) {
+                                groupedBySpeaker[speakerName].lastTime = item.end;
+                            }
+                        }
                     });
+                    
+                    // Display grouped results
+                    Object.keys(groupedBySpeaker).sort().forEach(speakerName => {
+                        const speakerData = groupedBySpeaker[speakerName];
+                        const combinedText = speakerData.texts.join(' ').trim();
+                        
+                        if (combinedText) {
+                            const duration = speakerData.lastTime - speakerData.firstTime;
+                            const timeInfo = duration > 0 ? ` (${speakerData.firstTime.toFixed(1)}s - ${speakerData.lastTime.toFixed(1)}s)` : '';
+                            
+                            resultsHTML += `<div style="margin: 10px 0; padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #007bff;">
+                                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                                    <strong style="color: #007bff; font-size: 1.1em;">${speakerName}:</strong>
+                                    <span style="font-size: 0.9em; color: #666;">${timeInfo}</span>
+                                </div>
+                                <div style="margin-top: 8px; line-height: 1.4; font-size: 1em;">
+                                    ${combinedText}
+                                </div>
+                            </div>`;
+                        }
+                    });
+                    
+                    // Fallback: if no grouped text found, show original format
+                    if (Object.keys(groupedBySpeaker).length === 0) {
+                        data.transcription_data.forEach(item => {
+                            const text = item.text || item.content || 'No text';
+                            if (text.trim() !== 'No text' && text.trim()) {
+                                resultsHTML += `<div style="margin: 10px 0; padding: 10px; background: white; border-radius: 5px;">
+                                    <strong>${(item.speaker || 'Speaker_1').replace('_', ' ')}:</strong> ${text}
+                                </div>`;
+                            }
+                        });
+                    }
                 } else {
                     resultsHTML += '<div>No transcription data available.</div>';
                 }
@@ -1092,7 +1161,6 @@ async def monitor_audio(session_id: str):
         while session and session["recording"]:
             if not session["paused"]:
                 # Simulate audio level - replace with real audio level detection
-                import random
                 level = random.uniform(0.1, 1.0) if random.random() > 0.3 else 0.0
                 
                 await websocket_manager.send_message(session_id, {
@@ -1153,9 +1221,6 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
         wav_file_for_processing = audio_file
         if audio_file.endswith('.mp4'):
             try:
-                from src.file_manager import FileManager
-                import tempfile
-                
                 # Create temporary WAV file for processing
                 temp_dir = FileManager.get_data_path("temp")
                 FileManager.ensure_directory_exists(temp_dir)
@@ -1256,12 +1321,12 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
         
         try:
             diarizer = SpeakerDiarization()
-            # Use the correct method for diarization; assuming 'diarize' is the correct method
-            segments = diarizer.diarize(wav_file_for_processing)
+            # FIXED: Use the correct async method for diarization
+            segments = await diarizer.diarize_audio(wav_file_for_processing)
             diarization_segments = segments if segments else []
             unique_speakers = len(set(seg.get('speaker', 'Speaker_1') for seg in diarization_segments)) if diarization_segments else 0
 
-            # Optionally, send 100% progress if needed
+            # Send 100% diarization progress after completion
             await websocket_manager.send_message(session_id, {
                 "type": "progress",
                 "transcription": 100,
