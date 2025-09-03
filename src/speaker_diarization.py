@@ -18,43 +18,21 @@ from src.logging_setup import setup_app_logging
 # Use proper logging setup first
 logger = setup_app_logging(logger_name="transcrevai.speaker_diarization")
 
-# Import pyAudioAnalysis with graceful fallback
+# Import PyAnnote.Audio for neural diarization
 try:
-    from pyAudioAnalysis import audioSegmentation as aS
-    from pyAudioAnalysis.MidTermFeatures import mid_feature_extraction
-    PYAUDIO_ANALYSIS_AVAILABLE = True
+    from pyannote.audio import Pipeline
+    from pyannote.audio.pipelines import VoiceActivityDetection
+    from pyannote.audio.pipelines.utils import get_devices
+    import torch
+    PYANNOTE_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"pyAudioAnalysis not available: {e}")
-    PYAUDIO_ANALYSIS_AVAILABLE = False
-    aS = None
-    mid_feature_extraction = None
+    logger.warning(f"PyAnnote.Audio not available: {e}")
+    PYANNOTE_AVAILABLE = False
+    Pipeline = None
+    VoiceActivityDetection = None
+    torch = None
 
-# Import scikit-learn for alternative diarization
-try:
-    from sklearn.cluster import KMeans, AgglomerativeClustering
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.metrics.pairwise import cosine_similarity
-    from sklearn.metrics import silhouette_score
-    from sklearn.decomposition import PCA
-    SKLEARN_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"scikit-learn not available: {e}")
-    SKLEARN_AVAILABLE = False
-
-# Import additional libraries for frequency analysis
-try:
-    import pyloudnorm as pyln
-    PYLOUDNORM_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"pyloudnorm not available: {e}")
-    PYLOUDNORM_AVAILABLE = False
-
-try:
-    import noisereduce as nr
-    NOISEREDUCE_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"noisereduce not available: {e}")
-    NOISEREDUCE_AVAILABLE = False
+from config.app_config import PYANNOTE_CONFIG
 
 class DiarizationError(Enum):
     FILE_NOT_FOUND = 1
@@ -63,18 +41,48 @@ class DiarizationError(Enum):
     INSUFFICIENT_DATA = 4
 
 class SpeakerDiarization:
-    """Enhanced speaker diarization with comprehensive error handling"""
+    """PyAnnote.Audio neural speaker diarization"""
     
     def __init__(self):
+        self.pipeline = None
+        self.device = "cuda" if torch and torch.cuda.is_available() else "cpu"
+        logger.info(f"PyAnnote device: {self.device}")
+        
         try:
             if shutil.which('ffmpeg') is None:
                 static_ffmpeg.add_paths()
-            
             self.ffmpeg_path = shutil.which('ffmpeg')
-            if not self.ffmpeg_path:
-                logger.warning("FFmpeg not found - some features may be limited")
         except Exception as e:
-            logger.warning(f"FFmpeg setup failed: {str(e)}")
+            logger.warning(f"FFmpeg setup failed: {e}")
+    
+    async def _load_pyannote_pipeline(self):
+        """Load PyAnnote.Audio pipeline"""
+        if self.pipeline is not None:
+            return self.pipeline
+            
+        if not PYANNOTE_AVAILABLE:
+            raise RuntimeError("PyAnnote.Audio not available")
+        
+        try:
+            loop = asyncio.get_event_loop()
+            self.pipeline = await loop.run_in_executor(
+                None,
+                Pipeline.from_pretrained,
+                PYANNOTE_CONFIG["pipeline"],
+                cache_dir=PYANNOTE_CONFIG["cache_dir"],
+                use_auth_token=PYANNOTE_CONFIG.get("use_auth_token")
+            )
+            
+            # Configure pipeline
+            if hasattr(self.pipeline, "to") and self.device:
+                self.pipeline = self.pipeline.to(torch.device(self.device))
+            
+            logger.info(f"PyAnnote pipeline loaded: {PYANNOTE_CONFIG['pipeline']}")
+            return self.pipeline
+            
+        except Exception as e:
+            logger.error(f"Failed to load PyAnnote pipeline: {e}")
+            raise RuntimeError(f"PyAnnote pipeline loading failed: {str(e)}")
     
     @staticmethod
     def safe_fft(x, n=None):
@@ -443,9 +451,9 @@ class SpeakerDiarization:
         return merged
 
     async def diarize_audio(self, audio_file, number_speakers=0):
-        """Enhanced diarization with comprehensive error handling"""
+        """Neural speaker diarization using PyAnnote.Audio"""
         try:
-            logger.info(f"Starting diarization process for {audio_file}")
+            logger.info(f"Starting PyAnnote.Audio diarization for {audio_file}")
             
             # Validate input file
             if not os.path.exists(audio_file):
@@ -454,56 +462,63 @@ class SpeakerDiarization:
             if os.path.getsize(audio_file) == 0:
                 raise ValueError("Audio file is empty")
             
-            # Perform VAD preprocessing with enhanced error handling
-            try:
-                vad_segments = self.preprocess_audio_with_vad(audio_file)
-            except Exception as vad_error:
-                logger.error(f"VAD preprocessing failed: {vad_error}")
-                # Create fallback segments
-                duration = self.get_audio_duration(audio_file)
-                vad_segments = [(0.0, duration)]
+            # Load PyAnnote pipeline
+            pipeline = await self._load_pyannote_pipeline()
             
-            # ENHANCED: Try frequency-based diarization first (primary method)
-            try:
-                logger.info("Attempting frequency-based diarization (primary method)")
-                min_speakers = max(2, number_speakers) if number_speakers > 0 else 2
-                max_speakers = min(5, max(min_speakers, number_speakers + 1)) if number_speakers > 0 else 5
-                
-                freq_segments = await asyncio.to_thread(
-                    self._frequency_based_diarization, 
-                    audio_file, 
-                    min_speakers, 
-                    max_speakers
-                )
-                
-                if freq_segments and len(freq_segments) > 0:
-                    unique_speakers = len(set(seg.get('speaker', 'Speaker_1') for seg in freq_segments))
-                    logger.info(f"Frequency-based diarization successful: {len(freq_segments)} segments, {unique_speakers} speakers")
-                    return freq_segments
-                else:
-                    logger.warning("Frequency-based diarization returned no segments, falling back")
-                    
-            except Exception as freq_error:
-                logger.warning(f"Frequency-based diarization failed: {freq_error}, falling back to traditional methods")
+            # Configure speakers if specified
+            if number_speakers > 0:
+                pipeline.instantiate({
+                    "clustering": {
+                        "num_clusters": number_speakers
+                    }
+                })
             
-            # Fallback to traditional diarization methods
-            return await asyncio.to_thread(self.diarize, audio_file, number_speakers, vad_segments)
+            # Run diarization
+            loop = asyncio.get_event_loop()
+            diarization = await loop.run_in_executor(
+                None,
+                pipeline,
+                audio_file
+            )
+            
+            # Convert PyAnnote format to TranscrevAI format
+            segments = []
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                segments.append({
+                    "start": float(turn.start),
+                    "end": float(turn.end), 
+                    "speaker": f"Speaker_{speaker}",
+                    "confidence": 0.95,  # PyAnnote typically high confidence
+                    "method": "neural_pyannote"
+                })
+            
+            # Sort segments by start time
+            segments.sort(key=lambda x: x["start"])
+            
+            unique_speakers = len(set(seg["speaker"] for seg in segments))
+            logger.info(f"PyAnnote diarization completed: {len(segments)} segments, {unique_speakers} speakers")
+            
+            return segments
             
         except Exception as e:
-            logger.error(f"Diarization failed: {e}")
-            # Return fallback single speaker segment
+            logger.error(f"PyAnnote diarization failed: {e}")
+            # Fallback to simple single speaker
             try:
                 duration = self.get_audio_duration(audio_file)
                 return [{
                     "start": 0.0,
                     "end": duration,
-                    "speaker": "Speaker_1"
+                    "speaker": "Speaker_1",
+                    "confidence": 0.5,
+                    "method": "fallback"
                 }]
             except:
                 return [{
                     "start": 0.0,
                     "end": 1.0,
-                    "speaker": "Speaker_1"
+                    "speaker": "Speaker_1",
+                    "confidence": 0.5,
+                    "method": "fallback"
                 }]
     
     def diarize(self, audio_file, number_speakers=0, vad_segments=None):
