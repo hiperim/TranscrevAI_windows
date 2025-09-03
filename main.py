@@ -17,7 +17,8 @@ from src.transcription import transcribe_audio_with_progress
 from src.speaker_diarization import SpeakerDiarization
 from src.subtitle_generator import generate_srt
 from src.file_manager import FileManager
-from config.app_config import MODEL_DIR, LANGUAGE_MODELS, LANGUAGE_MODELS_SMALL, MODEL_CONFIG
+from config.app_config import WHISPER_MODEL_DIR, WHISPER_MODELS, WHISPER_CONFIG
+from src.concurrent_engine import concurrent_processor
 from src.logging_setup import setup_app_logging
 
 logger = setup_app_logging()
@@ -37,246 +38,98 @@ app = FastAPI(
     version="1.0.0"
 )
 
-class ModelManager:
-    # Background model management - no UI interference
-
-    @staticmethod
-    def get_model_path(language: str) -> str:
-        # Use config-based model path
-        return os.path.join(MODEL_DIR, language)
+class WhisperModelManager:
+    """Whisper model management with automatic downloads"""
     
     @staticmethod
-    def validate_model(language: str) -> bool:
-        # Validate if model exists and has required files
-        model_path = ModelManager.get_model_path(language)
-        
-        if not os.path.exists(model_path):
-            logger.warning(f"Model directory not found: {model_path}")
-            return False
-        
-        # Check for ivector directory (common to both structures)
-        ivector_dir = os.path.join(model_path, 'ivector')
-        if not os.path.exists(ivector_dir):
-            # Debug: List what's actually in the model directory
-            try:
-                actual_contents = os.listdir(model_path)
-                logger.warning(f"Missing ivector directory: {ivector_dir}")
-                logger.warning(f"Actual contents of {model_path}: {actual_contents}")
-            except Exception as e:
-                logger.warning(f"Could not list model directory contents: {e}")
-            return False
-        
-        # Check for required ivector files
-        required_ivector_files = [
-            'final.dubm',
-            'final.ie', 
-            'final.mat',
-            'global_cmvn.stats'
-        ]
-        
-        # Check ivector files 
-        for file_name in required_ivector_files:
-            file_path = os.path.join(ivector_dir, file_name)
-            if not os.path.exists(file_path):
-                logger.warning(f"Missing ivector file: {file_path}")
-                return False
-        
-        # Try hierarchical structure first (am/final.mdl, graph/Gr.fst, etc.)
-        hierarchical_files = [
-            'am/final.mdl',
-            'graph/Gr.fst', 
-            'graph/HCLr.fst',
-            'conf/mfcc.conf'
-        ]
-        
-        hierarchical_valid = True
-        for file_name in hierarchical_files:
-            file_path = os.path.join(model_path, file_name)
-            if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-                hierarchical_valid = False
-                break
-        
-        if hierarchical_valid:
-            logger.info(f"Model validation passed for {language} (hierarchical structure)")
-            return True
-        
-        # Try flat structure (final.mdl, Gr.fst, etc. in root)
-        flat_files = [
-            'final.mdl',
-            'Gr.fst', 
-            'HCLr.fst',
-            'mfcc.conf'
-        ]
-        
-        flat_valid = True
-        for file_name in flat_files:
-            file_path = os.path.join(model_path, file_name)
-            if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-                flat_valid = False
-                break
-        
-        if flat_valid:
-            logger.info(f"Model validation passed for {language} (flat structure)")
-            return True
-        
-        logger.warning(f"Model validation failed for {language} - neither hierarchical nor flat structure found")
-        return False
+    def get_model_name(language: str) -> str:
+        """Get Whisper model name for language"""
+        return WHISPER_MODELS.get(language, "small")
     
     @staticmethod
-    async def ensure_model_with_feedback(language: str, _websocket_manager=None, _session_id=None) -> bool:
-        # Ensure model exists with user feedback and retry logic
-        if ModelManager.validate_model(language):
-            return True
-        
-        # Try to download silently in background
+    async def ensure_whisper_model(language: str, websocket_manager=None, session_id=None) -> bool:
+        """Ensure Whisper model is available, download if necessary"""
         try:
-            return await ModelManager._download_model_with_retry(language, None, None)
+            import whisper
+            
+            model_name = WhisperModelManager.get_model_name(language)
+            
+            # Send download start notification
+            if websocket_manager and session_id:
+                await websocket_manager.send_message(session_id, {
+                    "type": "model_download_start",
+                    "message": f"Downloading {model_name} model for {language}...",
+                    "language": language,
+                    "model": model_name
+                })
+            
+            # Check if model is already cached
+            try:
+                # Try to load model to check if it's available
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    whisper.load_model,
+                    model_name,
+                    "cpu",  # Use CPU for validation
+                    str(WHISPER_MODEL_DIR)
+                )
+                
+                logger.info(f"Whisper model '{model_name}' already available for {language}")
+                
+                # Send download complete notification
+                if websocket_manager and session_id:
+                    await websocket_manager.send_message(session_id, {
+                        "type": "model_download_complete",
+                        "message": f"Model {model_name} ready",
+                        "language": language,
+                        "model": model_name
+                    })
+                
+                return True
+                
+            except Exception as e:
+                logger.info(f"Model '{model_name}' not cached, downloading: {e}")
+                
+                # Download model
+                await loop.run_in_executor(
+                    None,
+                    whisper.load_model,
+                    model_name,
+                    "cpu",
+                    str(WHISPER_MODEL_DIR)
+                )
+                
+                logger.info(f"Whisper model '{model_name}' downloaded successfully for {language}")
+                
+                # Send download complete notification
+                if websocket_manager and session_id:
+                    await websocket_manager.send_message(session_id, {
+                        "type": "model_download_complete",
+                        "message": f"Model {model_name} downloaded successfully",
+                        "language": language,
+                        "model": model_name
+                    })
+                
+                return True
+                
         except Exception as e:
-            logger.error(f"Model download failed: {e}")
+            logger.error(f"Whisper model setup failed for {language}: {e}")
+            
+            # Send download error notification
+            if websocket_manager and session_id:
+                await websocket_manager.send_message(session_id, {
+                    "type": "model_download_error",
+                    "message": f"Failed to download model for {language}: {str(e)}",
+                    "language": language
+                })
+            
             return False
     
     @staticmethod
     async def ensure_model_silent(language: str) -> bool:
-        # Backward compatibility method
-        return await ModelManager.ensure_model_with_feedback(language, None, None)
-    
-    @staticmethod
-    async def _download_model_with_retry(language: str, _websocket_manager=None, _session_id=None, max_retries=3) -> bool:
-        # Enhanced download with retry logic and user feedback
-        # Choose model based on configuration
-        if MODEL_CONFIG.get("use_large_models", True):
-            models_dict = LANGUAGE_MODELS
-            model_type = "large"
-        else:
-            models_dict = LANGUAGE_MODELS_SMALL
-            model_type = "small"
-        
-        if language not in models_dict:
-            logger.error(f"No {model_type} model URL available for language: {language}")
-            # Fallback to the other model set
-            fallback_dict = LANGUAGE_MODELS_SMALL if model_type == "large" else LANGUAGE_MODELS
-            if language in fallback_dict:
-                logger.info(f"Using fallback {('small' if model_type == 'large' else 'large')} model for {language}")
-                models_dict = fallback_dict
-            else:
-                logger.error(f"No model available for language: {language}")
-                return False
-        
-        model_url = models_dict[language]
-        logger.info(f"Downloading {model_type} model for {language}: {model_url}")
-        model_path = ModelManager.get_model_path(language)
-        
-        for attempt in range(max_retries):
-            try:
-                # Silent download - no user messages
-                
-                zip_path = f"{model_path}.zip"
-                
-                # Create model directory with correct path
-                base_models_dir = os.path.dirname(model_path)
-                os.makedirs(base_models_dir, exist_ok=True)
-                
-                # Download model with timeout and retry logic
-                try:
-                    urllib.request.urlretrieve(model_url, zip_path)
-                    logger.info(f"Downloaded model to: {zip_path}")
-                except Exception as download_error:
-                    raise Exception(f"Download failed: {download_error}")
-                
-                # Validate ZIP file
-                if not zipfile.is_zipfile(zip_path):
-                    raise Exception("Downloaded file is not a valid ZIP")
-                
-                # Silent extraction
-                
-                # Extract ZIP to temporary directory first
-                temp_dir = f"{model_path}_temp"
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-                
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(temp_dir)
-                logger.info(f"Extracted to temporary directory: {temp_dir}")
-                
-                # Find the actual model files - handle different archive structures
-                model_source_dir = None
-                
-                # First, look for the standard hierarchical structure (am/final.mdl)
-                for root, _dirs, _files in os.walk(temp_dir):
-                    am_path = os.path.join(root, 'am', 'final.mdl')
-                    if os.path.exists(am_path):
-                        model_source_dir = root
-                        logger.info(f"Found hierarchical model structure in: {model_source_dir}")
-                        break
-                
-                # If not found, look for flat structure (final.mdl in root)
-                if not model_source_dir:
-                    for root, _dirs, files in os.walk(temp_dir):
-                        if 'final.mdl' in files:
-                            # Check if this is likely a valid model directory
-                            # Look for other required files in the same directory
-                            required_files = ['final.mdl', 'Gr.fst', 'HCLr.fst', 'mfcc.conf']
-                            if all(f in files for f in required_files):
-                                model_source_dir = root
-                                logger.info(f"Found flat model structure in: {model_source_dir}")
-                                break
-                
-                if not model_source_dir:
-                    raise Exception("Could not find model files in downloaded archive")
-                
-                # Remove existing model directory if it exists
-                if os.path.exists(model_path):
-                    shutil.rmtree(model_path)
-                
-                # Move model files to final location
-                shutil.move(model_source_dir, model_path)
-                
-                # Clean up
-                shutil.rmtree(temp_dir)
-                os.remove(zip_path)
-                
-                logger.info(f"Model extracted to: {model_path}")
-                
-                # Validate the extracted model
-                if ModelManager.validate_model(language):
-                    return True
-                else:
-                    raise Exception("Model validation failed after extraction")
-                
-            except Exception as e:
-                logger.error(f"Download attempt {attempt + 1} failed for {language}: {e}")
-                
-                # Clean up on failure
-                cleanup_paths = []
-                if 'zip_path' in locals():
-                    cleanup_paths.append(zip_path)
-                if 'temp_dir' in locals():
-                    cleanup_paths.append(f"{model_path}_temp")
-                
-                for path in cleanup_paths:
-                    if os.path.exists(path):
-                        try:
-                            if os.path.isdir(path):
-                                shutil.rmtree(path)
-                            else:
-                                os.remove(path)
-                        except Exception as cleanup_error:
-                            logger.warning(f"Cleanup failed for {path}: {cleanup_error}")
-                
-                # If this is not the last attempt, wait before retrying
-                if attempt < max_retries - 1:
-                    wait_time = 2 * (attempt + 1)  # Progressive backoff
-                    await asyncio.sleep(wait_time)
-                else:
-                    # Final attempt failed - silent failure
-                    return False
-        
-        return False
-
-    @staticmethod
-    async def _download_model_silent(language: str) -> bool:
-        # Wrapper for backward compatibility
-        return await ModelManager._download_model_with_retry(language, None, None, 3)
+        """Silent model ensuring for backward compatibility"""
+        return await WhisperModelManager.ensure_whisper_model(language)
 
 # Simple state management
 class SimpleState:
@@ -605,6 +458,7 @@ HTML_INTERFACE = """
         <div class="controls">
             <div class="control-row">
                 <select id="language" class="select">
+                    <option value="" disabled selected>[Select Language]</option>
                     <option value="en">English</option>
                     <option value="pt">Portuguese</option>
                     <option value="es">Spanish</option>
@@ -766,6 +620,19 @@ HTML_INTERFACE = """
                         
                     case 'progress':
                         this.updateProgress(message.transcription || 0, message.diarization || 0);
+                        break;
+                        
+                    case 'model_download_start':
+                        this.updateStatus(`Downloading ${message.model} model for ${message.language}...`);
+                        break;
+                        
+                    case 'model_download_complete':
+                        this.updateStatus('Model ready - Processing audio...');
+                        break;
+                        
+                    case 'model_download_error':
+                        this.showError(`Model download failed: ${message.message}`);
+                        this.resetState();
                         break;
                         
                     case 'processing_complete':
@@ -947,6 +814,12 @@ HTML_INTERFACE = """
             startRecording() {
                 this.resultsEl.classList.remove('visible');
                 
+                // Validate language selection
+                if (!this.languageEl.value) {
+                    this.showError('Please select a language before recording');
+                    return;
+                }
+                
                 // Safe format access with fallback
                 const formatValue = this.formatEl && this.formatEl.value ? this.formatEl.value : 'wav';
                 
@@ -1089,14 +962,14 @@ async def handle_websocket_message(session_id: str, data: dict):
                     "message": "Recording started"
                 })
 
-                # Start model download silently in background (non-blocking)
+                # Start Whisper model download with user feedback
                 model_task = asyncio.create_task(
-                    ModelManager.ensure_model_silent(language)
+                    WhisperModelManager.ensure_whisper_model(language, websocket_manager, session_id)
                 )
                 
-                # Start audio monitoring and processing
+                # Start audio monitoring and concurrent processing
                 asyncio.create_task(monitor_audio(session_id))
-                task = asyncio.create_task(process_audio(session_id, language, format_type))
+                task = asyncio.create_task(process_audio_concurrent(session_id, language, format_type))
                 app_state.update_session(session_id, {
                     "task": task,
                     "model_task": model_task
@@ -1173,8 +1046,8 @@ async def monitor_audio(session_id: str):
     except Exception as e:
         logger.error(f"Audio monitoring error: {e}")
 
-# Enhanced processing pipeline with proper SRT generation
-async def process_audio(session_id: str, language: str = "en", _format_type: str = "wav"):
+# Enhanced concurrent processing pipeline
+async def process_audio_concurrent(session_id: str, language: str = "en", _format_type: str = "wav"):
     try:
         session = app_state.get_session(session_id)
         if not session:
@@ -1263,79 +1136,42 @@ async def process_audio(session_id: str, language: str = "en", _format_type: str
                 })
                 return
         
-        # Wait for background model download to complete silently
+        # Wait for background model download to complete
         session = app_state.get_session(session_id)
         if session and session.get("model_task"):
             try:
-                # Wait for model download to finish (background task)
-                await session.get("model_task")
+                model_ready = await session.get("model_task")
+                if not model_ready:
+                    await websocket_manager.send_message(session_id, {
+                        "type": "error",
+                        "message": f"Failed to download Whisper model for {language}"
+                    })
+                    return
             except Exception as e:
-                logger.error(f"Background model download failed: {e}")
-                # Try to ensure model is available as fallback
-                await ModelManager.ensure_model_silent(language)
-        
-        # Get correct model path
-        model_path = ModelManager.get_model_path(language)
-        
-        # Validate model before transcription
-        if not ModelManager.validate_model(language):
-            # Try one more time to get the model silently
-            await ModelManager.ensure_model_silent(language)
-            if not ModelManager.validate_model(language):
+                logger.error(f"Model download failed: {e}")
                 await websocket_manager.send_message(session_id, {
                     "type": "error",
-                    "message": f"Model for {language} is not available. Please check your internet connection and try again."
+                    "message": f"Model download failed: {str(e)}"
                 })
                 return
         
-        # Transcription with enhanced error handling
-        transcription_data = []
+        # Use concurrent processing engine
         try:
-            async for progress, data in transcribe_audio_with_progress(
-                wav_file_for_processing, model_path, language, 16000
-            ):
-                session = app_state.get_session(session_id)
-                if not session:
-                    break
-                
-                await websocket_manager.send_message(session_id, {
-                    "type": "progress",
-                    "transcription": progress,
-                    "diarization": 0
-                })
-                
-                if data:
-                    transcription_data = data
-                
+            result = await concurrent_processor.process_audio_concurrent(
+                session_id, wav_file_for_processing, language, websocket_manager
+            )
+            
+            transcription_data = result.get("transcription_data", [])
+            diarization_segments = result.get("diarization_segments", [])
+            unique_speakers = result.get("speakers_detected", 0)
+            
         except Exception as e:
-            logger.error(f"Transcription error: {e}")
+            logger.error(f"Concurrent processing error: {e}")
             await websocket_manager.send_message(session_id, {
-                "type": "error", 
-                "message": f"Transcription failed: {str(e)}"
+                "type": "error",
+                "message": f"Processing failed: {str(e)}"
             })
             return
-        
-        # Speaker Diarization with fixed progress updates 
-        diarization_segments = []
-        unique_speakers = 0
-        
-        try:
-            diarizer = SpeakerDiarization()
-            # FIXED: Use the correct async method for diarization
-            segments = await diarizer.diarize_audio(wav_file_for_processing)
-            diarization_segments = segments if segments else []
-            unique_speakers = len(set(seg.get('speaker', 'Speaker_1') for seg in diarization_segments)) if diarization_segments else 0
-
-            # Send 100% diarization progress after completion
-            await websocket_manager.send_message(session_id, {
-                "type": "progress",
-                "transcription": 100,
-                "diarization": 100
-            })
-
-        except Exception as e:
-            logger.error(f"Diarization error: {e}")
-            unique_speakers = 0
         
         # Generate SRT subtitle file
         srt_file = None

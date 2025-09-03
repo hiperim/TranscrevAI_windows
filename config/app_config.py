@@ -24,20 +24,16 @@ for directory in [DATA_DIR, MODEL_DIR, TEMP_DIR, RECORDINGS_DIR, TRANSCRIPTS_DIR
 DEFAULT_SAMPLE_RATE = 16000
 DEFAULT_CHUNK_SIZE = 4096
 
-# Supported languages and their model URLs
-# Using larger, more accurate models for better transcription quality
-LANGUAGE_MODELS = {
-    "en": "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip",  # Large model ~1.8GB (was small ~50MB)
-    "pt": "https://alphacephei.com/vosk/models/vosk-model-pt-fb-v0.1.1-pruned.zip",  # Large model ~1.2GB (was small ~39MB)
-    "es": "https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip"  # Large model ~1.4GB (was small ~39MB)
+# Whisper Models Configuration
+WHISPER_MODELS = {
+    "en": "small.en",  # English-only optimized small model
+    "pt": "small",     # Multilingual small model for Portuguese  
+    "es": "small"      # Multilingual small model for Spanish
 }
 
-# Alternative smaller models for faster download/testing (optional)
-LANGUAGE_MODELS_SMALL = {
-    "en": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
-    "pt": "https://alphacephei.com/vosk/models/vosk-model-small-pt-0.3.zip",
-    "es": "https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip"
-}
+# Model directories
+WHISPER_MODEL_DIR = MODEL_DIR / "whisper"
+PYANNOTE_MODEL_DIR = MODEL_DIR / "pyannote"
 
 # FastAPI Configuration
 FASTAPI_CONFIG = {
@@ -121,16 +117,38 @@ AUDIO_CONFIG = {
     "format": "wav"
 }
 
-# Model Configuration
-MODEL_CONFIG = {
-    "cache_models": True,
-    "max_cached_models": 3,
-    "download_timeout": 600,  # 10 minutes (increased for large models)
-    "extraction_timeout": 300,  # 5 minutes (increased for large models)
-    "auto_download": True,  # Automatically download missing models
-    "validate_on_startup": True,
-    "use_large_models": True,  # Set to False to use smaller, faster models
-    "model_preference": "accuracy"  # "accuracy" for large models, "speed" for small models
+# Whisper Configuration
+WHISPER_CONFIG = {
+    "device": "cpu",  # Use "cuda" if GPU available
+    "compute_type": "int8",  # Quantization for performance
+    "download_root": str(WHISPER_MODEL_DIR),
+    "language_detection": True,
+    "word_timestamps": True,
+    "temperature": 0.0,  # Deterministic output
+    "best_of": 1,  # Single decode for speed
+    "beam_size": 5,
+    "patience": 1.0,
+    "length_penalty": 1.0,
+    "suppress_tokens": "-1",
+    "initial_prompt": None,
+    "condition_on_previous_text": True,
+    "fp16": False,  # Avoid GPU dependency
+    "compression_ratio_threshold": 2.4,
+    "logprob_threshold": -1.0,
+    "no_speech_threshold": 0.6
+}
+
+# PyAnnote.Audio Configuration
+PYANNOTE_CONFIG = {
+    "pipeline": "pyannote/speaker-diarization-3.1",
+    "segmentation_model": "pyannote/segmentation-3.0", 
+    "embedding_model": "pyannote/wespeaker-voxceleb-resnet34-LM",
+    "cache_dir": str(PYANNOTE_MODEL_DIR),
+    "use_auth_token": None,  # Set if using gated models
+    "device": "cpu",  # Use "cuda" if GPU available
+    "num_speakers": None,  # Auto-detect
+    "min_speakers": 1,
+    "max_speakers": 10
 }
 
 # ENHANCED: Speaker Diarization Configuration
