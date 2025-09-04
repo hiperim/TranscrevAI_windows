@@ -266,6 +266,9 @@ class TestAudioRecorder:
                 await self._recorder.stop_recording()
                 validated = False
                 output_path = Path(output_file)
+                converted_duration = None
+                result = None
+                
                 for _ in range(60):  # 0.5s delays: 30s total
                     try:
                         if output_path.exists():
@@ -286,12 +289,15 @@ class TestAudioRecorder:
                     # Before:
                     # subprocess.run(["powershell", "Get-Process *ffmpeg* | Stop-Process -Force"], shell=True, check=False)
                     subprocess.run(["powershell", f"Get-Process *ffmpeg* | Where-Object {{$_.Path -like '*{output_path.name}*'}} | Stop-Process -Force"], shell=True, check=False)
-                    if not validated:
-                        pytest.fail(f"MP4 validation failed after 60 attempts. Duration: {converted_duration if 'converted_duration' in locals() else 'N/A'}")
-            converted_duration = float(result.stdout.strip())
-            source_duration = sum(frame.shape[0] for frame in frames_copy) / self._recorder.sample_rate
-            assert abs(source_duration - converted_duration) <= 0.15, \
-                f"Duration mismatch: {source_duration:.1f}s vs. {converted_duration:.1f}s"
+                
+                if not validated:
+                    pytest.fail(f"MP4 validation failed after 60 attempts. Duration: {converted_duration if converted_duration is not None else 'N/A'}")
+                
+                # Only proceed with assertion if we have valid results
+                if result is not None and converted_duration is not None:
+                    source_duration = sum(frame.shape[0] for frame in frames_copy) / self._recorder.sample_rate
+                    assert abs(source_duration - converted_duration) <= 0.15, \
+                        f"Duration mismatch: {source_duration:.1f}s vs. {converted_duration:.1f}s"
         finally:
             if Path(output_file).exists():
                 await TestPerformance.safe_remove(output_file)
