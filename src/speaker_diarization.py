@@ -48,19 +48,39 @@ from src.logging_setup import setup_app_logging
 # Use proper logging setup first
 logger = setup_app_logging(logger_name="transcrevai.speaker_diarization")
 
-# Import PyAnnote.Audio for neural diarization
-try:
-    from pyannote.audio import Pipeline
-    from pyannote.audio.pipelines import VoiceActivityDetection
-    from pyannote.audio.pipelines.utils import get_devices
-    import torch
-    PYANNOTE_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"PyAnnote.Audio not available: {e}")
-    PYANNOTE_AVAILABLE = False
-    Pipeline = None
-    VoiceActivityDetection = None
-    torch = None
+# Lazy import for PyAnnote.Audio neural diarization
+PYANNOTE_AVAILABLE = False
+Pipeline = None
+VoiceActivityDetection = None
+torch = None
+_pyannote_imports_attempted = False
+
+def _ensure_pyannote_imports():
+    """Lazy import of PyAnnote.Audio dependencies"""
+    global PYANNOTE_AVAILABLE, Pipeline, VoiceActivityDetection, torch, _pyannote_imports_attempted
+    
+    if _pyannote_imports_attempted:
+        return PYANNOTE_AVAILABLE
+    
+    _pyannote_imports_attempted = True
+    try:
+        from pyannote.audio import Pipeline as _Pipeline
+        from pyannote.audio.pipelines import VoiceActivityDetection as _VAD
+        import torch as _torch
+        
+        Pipeline = _Pipeline
+        VoiceActivityDetection = _VAD
+        torch = _torch
+        PYANNOTE_AVAILABLE = True
+        logger.info("PyAnnote.Audio dependencies loaded successfully")
+    except ImportError as e:
+        logger.warning(f"PyAnnote.Audio not available: {e}")
+        PYANNOTE_AVAILABLE = False
+        Pipeline = None
+        VoiceActivityDetection = None
+        torch = None
+    
+    return PYANNOTE_AVAILABLE
 
 from config.app_config import PYANNOTE_CONFIG
 
@@ -75,22 +95,45 @@ class SpeakerDiarization:
 
     def __init__(self):
         self.pipeline = None
-        self.device = "cuda" if torch and torch.cuda.is_available() else "cpu"
-        logger.info(f"PyAnnote device: {self.device}")
+        self._device = None  # Lazy device detection
+        self._ffmpeg_path = None  # Lazy FFmpeg setup
 
-        try:
-            if shutil.which('ffmpeg') is None:
-                static_ffmpeg.add_paths()
-            self.ffmpeg_path = shutil.which('ffmpeg')
-        except Exception as e:
-            logger.warning(f"FFmpeg setup failed: {e}")
+    @property 
+    def device(self):
+        """Lazy device detection only when needed"""
+        if self._device is None:
+            if _ensure_pyannote_imports() and torch:
+                self._device = "cuda" if torch.cuda.is_available() else "cpu"
+                logger.info(f"PyAnnote device: {self._device}")
+            else:
+                self._device = "cpu"
+        return self._device
+    
+    @property
+    def ffmpeg_path(self):
+        """Lazy FFmpeg path detection"""
+        if self._ffmpeg_path is None:
+            try:
+                if shutil.which('ffmpeg') is None:
+                    # Lazy load static_ffmpeg
+                    try:
+                        import static_ffmpeg
+                        static_ffmpeg.add_paths()
+                    except ImportError:
+                        logger.warning("static_ffmpeg not available")
+                self._ffmpeg_path = shutil.which('ffmpeg')
+            except Exception as e:
+                logger.warning(f"FFmpeg setup failed: {e}")
+                self._ffmpeg_path = None
+        return self._ffmpeg_path
 
     async def _load_pyannote_pipeline(self):
         """Load PyAnnote.Audio pipeline"""
         if self.pipeline is not None:
             return self.pipeline
 
-        if not PYANNOTE_AVAILABLE or Pipeline is None:  # Fix: Add None check
+        # Ensure PyAnnote dependencies are loaded
+        if not _ensure_pyannote_imports():
             raise RuntimeError("PyAnnote.Audio not available")
 
         try:

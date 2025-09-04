@@ -39,81 +39,140 @@ app = FastAPI(
 )
 
 class WhisperModelManager:
-    """Whisper model management with automatic downloads"""
+    """Whisper model management with automatic downloads and caching"""
+    
+    _model_cache = {}
+    _loading_locks = {}
+    _cache_ttl = 3600  # 1 hour cache TTL
+    _cache_timestamps = {}
     
     @staticmethod
     def get_model_name(language: str) -> str:
         """Get Whisper model name for language"""
         return WHISPER_MODELS.get(language, "small")
     
-    @staticmethod
-    async def ensure_whisper_model(language: str, websocket_manager=None, session_id=None) -> bool:
+    @classmethod
+    async def get_cached_model(cls, language: str):
+        """Get cached model if available and not expired"""
+        model_name = cls.get_model_name(language)
+        
+        if model_name in cls._model_cache:
+            # Check if cache is still valid
+            cache_time = cls._cache_timestamps.get(model_name, 0)
+            if time.time() - cache_time < cls._cache_ttl:
+                logger.info(f"Using cached Whisper model: {model_name}")
+                return cls._model_cache[model_name]
+            else:
+                # Cache expired, remove it
+                del cls._model_cache[model_name]
+                del cls._cache_timestamps[model_name]
+        
+        return None
+    
+    @classmethod
+    async def cache_model(cls, language: str, model):
+        """Cache model with timestamp"""
+        model_name = cls.get_model_name(language)
+        cls._model_cache[model_name] = model
+        cls._cache_timestamps[model_name] = time.time()
+        logger.info(f"Cached Whisper model: {model_name}")
+    
+    @classmethod  
+    async def ensure_whisper_model(cls, language: str, websocket_manager=None, session_id=None) -> bool:
         """Ensure Whisper model is available, download if necessary"""
         try:
             import whisper
             
-            model_name = WhisperModelManager.get_model_name(language)
-            
-            # Use running event loop for executor tasks (ensure 'loop' is always bound)
-            loop = asyncio.get_running_loop()
-            
-            # Send download start notification
-            if websocket_manager and session_id:
-                await websocket_manager.send_message(session_id, {
-                    "type": "model_download_start",
-                    "message": f"Downloading {model_name} model for {language}...",
-                    "language": language,
-                    "model": model_name
-                })
+            model_name = cls.get_model_name(language)
             
             # Check if model is already cached
-            try:
-                # Try to load model to check if it's available
-                await loop.run_in_executor(
-                    None,
-                    whisper.load_model,
-                    model_name,
-                    "cpu",  # Use CPU for validation
-                    str(WHISPER_MODEL_DIR)
-                )
-                
-                logger.info(f"Whisper model '{model_name}' already available for {language}")
-                
-                # Send download complete notification
+            cached_model = await cls.get_cached_model(language)
+            if cached_model:
+                # Send completion notification for cached model
                 if websocket_manager and session_id:
                     await websocket_manager.send_message(session_id, {
                         "type": "model_download_complete",
-                        "message": f"Model {model_name} ready",
+                        "message": f"Model {model_name} ready (cached)",
                         "language": language,
                         "model": model_name
                     })
-                
                 return True
+            
+            # Use locking to prevent concurrent downloads of same model
+            if model_name not in cls._loading_locks:
+                cls._loading_locks[model_name] = asyncio.Lock()
+            
+            async with cls._loading_locks[model_name]:
+                # Double-check cache after acquiring lock
+                cached_model = await cls.get_cached_model(language)
+                if cached_model:
+                    return True
+            
+                # Use running event loop for executor tasks
+                loop = asyncio.get_running_loop()
                 
-            except Exception as e:
-                logger.info(f"Model '{model_name}' not cached, downloading: {e}")
-                
-                # Download model
-                await loop.run_in_executor(
-                    None,
-                    whisper.load_model,
-                    model_name,
-                    "cpu",
-                    str(WHISPER_MODEL_DIR)
-                )
-                
-                logger.info(f"Whisper model '{model_name}' downloaded successfully for {language}")
-                
-                # Send download complete notification
+                # Send download start notification
                 if websocket_manager and session_id:
                     await websocket_manager.send_message(session_id, {
-                        "type": "model_download_complete",
-                        "message": f"Model {model_name} downloaded successfully",
+                        "type": "model_download_start",
+                        "message": f"Loading {model_name} model for {language}...",
                         "language": language,
                         "model": model_name
                     })
-                
-                return True
+            
+                # Try to load and cache model  
+                try:
+                    model = await loop.run_in_executor(
+                        None,
+                        whisper.load_model,
+                        model_name,
+                        "cpu",  # Use CPU for validation
+                        str(WHISPER_MODEL_DIR)
+                    )
+                    
+                    # Cache the loaded model
+                    await cls.cache_model(language, model)
+                    
+                    logger.info(f"Whisper model '{model_name}' loaded and cached for {language}")
+                    
+                    # Send completion notification
+                    if websocket_manager and session_id:
+                        await websocket_manager.send_message(session_id, {
+                            "type": "model_download_complete",
+                            "message": f"Model {model_name} ready",
+                            "language": language,
+                            "model": model_name
+                        })
+                    
+                    return True
+                    
+                except Exception as e:
+                    logger.info(f"Model '{model_name}' not available, downloading: {e}")
+                    
+                    # Download and cache model
+                    model = await loop.run_in_executor(
+                        None,
+                        whisper.load_model,
+                        model_name,
+                        "cpu",
+                        str(WHISPER_MODEL_DIR)
+                    )
+                    
+                    # Cache the downloaded model
+                    await cls.cache_model(language, model)
+                    
+                    logger.info(f"Whisper model '{model_name}' downloaded and cached for {language}")
+                    
+                    # Send completion notification
+                    if websocket_manager and session_id:
+                        await websocket_manager.send_message(session_id, {
+                            "type": "model_download_complete", 
+                            "message": f"Model {model_name} downloaded successfully",
+                            "language": language,
+                            "model": model_name
+                        })
+                    
+                    return True
                 
         except Exception as e:
             logger.error(f"Whisper model setup failed for {language}: {e}")

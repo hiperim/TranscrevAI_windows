@@ -50,15 +50,20 @@ class FileManager:
     def get_data_path(subdir="") -> str:
         # Get data directory path with validation
         # Use cross-platform base directory
-        from config.app_config import DATA_DIR
+        from config.app_config import DATA_DIR, _ensure_directories_created
+        
+        # Lazy directory creation
+        _ensure_directories_created()
+        
         full_path = DATA_DIR / subdir
 
-        # Ensure data directory exists
-        try:
-            full_path.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.error(f"Failed to create data directory: {full_path}")
-            raise RuntimeError(f"Data directory creation failed: {str(e)}")
+        # Ensure specific subdirectory exists
+        if subdir:
+            try:
+                full_path.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                logger.error(f"Failed to create data directory: {full_path}")
+                raise RuntimeError(f"Data directory creation failed: {str(e)}")
 
         return os.path.normpath(str(full_path))
     
