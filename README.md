@@ -2,9 +2,7 @@ Simplified project's workflow:
 
 (1)|Audio Input| --> (2)[Platform check]
 
-(2) -->|Android| (3)[Mock hardware access]
-
-(2) -->|Desktop| (4)[Desktop/Windows capture]
+(2) -->|Desktop| (3/4)[Desktop capture]
 
 (3)/(4) --> (5)[Format validation]
 

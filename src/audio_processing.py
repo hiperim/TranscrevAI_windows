@@ -23,6 +23,10 @@ try:
     WINDOWS_AVAILABLE = True
 except ImportError:
     WINDOWS_AVAILABLE = False
+    win32file = None
+    win32con = None
+    pywintypes = None
+    windll = None
 
 try:
     import static_ffmpeg
@@ -88,6 +92,9 @@ class CrossPlatformFileHandler:
             await CrossPlatformFileHandler._kill_file_locks(temp_path, final_path)
             
             # Use Windows API for atomic move with correct flags
+            if windll is None:
+                return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
+                
             MOVEFILE_REPLACE_EXISTING = 0x1
             MOVEFILE_WRITE_THROUGH = 0x8
             
@@ -145,7 +152,7 @@ class CrossPlatformFileHandler:
     @staticmethod
     async def _force_file_sync(path: Path):
         """Force file synchronization to disk"""
-        if WINDOWS_AVAILABLE and sys.platform == "win32":
+        if WINDOWS_AVAILABLE and sys.platform == "win32" and win32file is not None and win32con is not None and windll is not None:
             try:
                 handle = win32file.CreateFile(
                     str(path),

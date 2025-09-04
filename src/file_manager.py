@@ -49,9 +49,9 @@ class FileManager:
     @staticmethod
     def get_data_path(subdir="") -> str:
         # Get data directory path with validation
-        # Use the fixed base directory path
-        base = Path(r"c:\\TranscrevAI_windows\\data")
-        full_path = base / subdir
+        # Use cross-platform base directory
+        from config.app_config import DATA_DIR
+        full_path = DATA_DIR / subdir
 
         # Ensure data directory exists
         try:
@@ -104,8 +104,9 @@ class FileManager:
             # Define allowed directories with existence checks
             allowed_dirs = []
             
-            # Application data directory - use fixed path
-            base_dir = Path(r"c:\\TranscrevAI_windows\\data")
+            # Application data directory - use cross-platform path
+            from config.app_config import DATA_DIR
+            base_dir = DATA_DIR
             if base_dir.exists():
                 allowed_dirs.append(base_dir.resolve())
             else:
@@ -366,8 +367,8 @@ class FileManager:
                 return
             
             # Validate base_temp is actually our temp directory
-            expected_base = Path(r"c:\\TranscrevAI_windows\\data\\temp")
-            if not Path(base_temp).resolve().is_relative_to(expected_base.parent.resolve()):
+            from config.app_config import TEMP_DIR
+            if not Path(base_temp).resolve().is_relative_to(TEMP_DIR.parent.resolve()):
                 raise SecurityError("Invalid temp directory for cleanup")
             
             # Get list of items to clean atomically
