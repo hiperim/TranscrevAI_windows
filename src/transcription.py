@@ -46,31 +46,6 @@ whisper = None
 torch = None
 _ml_imports_attempted = False
 
-# TorchCodec imports for future-proofing
-TORCHCODEC_AVAILABLE = False
-torchcodec = None
-_torchcodec_imports_attempted = False
-
-def _ensure_torchcodec_imports():
-    """Lazy import of TorchCodec dependencies"""
-    global TORCHCODEC_AVAILABLE, torchcodec, _torchcodec_imports_attempted
-    
-    if _torchcodec_imports_attempted:
-        return TORCHCODEC_AVAILABLE
-    
-    _torchcodec_imports_attempted = True
-    
-    try:
-        import torchcodec as _torchcodec
-        torchcodec = _torchcodec
-        TORCHCODEC_AVAILABLE = True
-        logger.info("TorchCodec dependencies loaded successfully")
-    except ImportError as e:
-        logger.info(f"TorchCodec not available, using fallback: {e}")
-        TORCHCODEC_AVAILABLE = False
-        torchcodec = None
-    
-    return TORCHCODEC_AVAILABLE
 
 def _ensure_ml_imports():
     """Lazy import of heavy ML dependencies"""
@@ -109,9 +84,9 @@ def _ensure_ml_imports():
 
     return WHISPER_AVAILABLE
 
-def load_audio_with_torchcodec(audio_file, sr=16000, mono=True):
+def load_audio_librosa(audio_file, sr=16000, mono=True):
     """
-    Load audio using TorchCodec when available, fallback to librosa
+    Load audio using librosa
     
     Args:
         audio_file: Path to audio file
@@ -121,40 +96,6 @@ def load_audio_with_torchcodec(audio_file, sr=16000, mono=True):
     Returns:
         tuple: (audio_data, sample_rate)
     """
-    try:
-        # Try TorchCodec first
-        if _ensure_torchcodec_imports() and torchcodec is not None:
-            try:
-                # Use TorchCodec decoder
-                decoder = torchcodec.decoders._core.create_from_file(audio_file)
-                frames, _ = decoder.get_next_chunk()
-                
-                # Convert to numpy and handle channels
-                audio_data = frames.squeeze().numpy()
-                
-                # Get sample rate from decoder metadata
-                metadata = decoder.get_metadata()
-                original_sr = int(metadata.sample_rate)
-                
-                # Convert to mono if needed
-                if mono and len(audio_data.shape) > 1:
-                    audio_data = audio_data.mean(axis=1)
-                
-                # Resample if needed
-                if sr is not None and sr != original_sr:
-                    audio_data = librosa.resample(audio_data.astype(np.float32), 
-                                                orig_sr=original_sr, target_sr=sr)
-                    return audio_data, sr
-                
-                return audio_data.astype(np.float32), original_sr
-                
-            except Exception as e:
-                logger.warning(f"TorchCodec loading failed: {e}, falling back to librosa")
-                
-    except Exception as e:
-        logger.debug(f"TorchCodec not available: {e}")
-    
-    # Fallback to librosa - ensure float32 consistency
     audio_data, sample_rate = librosa.load(audio_file, sr=sr, mono=mono, dtype=np.float32)
     return audio_data, sample_rate
 
@@ -341,9 +282,9 @@ async def transcribe_audio_with_progress(
 
         def transcribe_with_whisper():
             try:
-                # Load and preprocess audio using TorchCodec when available
-                logger.info("Loading audio with TorchCodec support")
-                audio_data, sr = load_audio_with_torchcodec(wav_file, sr=16000, mono=True)
+                # Load and preprocess audio using librosa
+                logger.info("Loading audio with librosa")
+                audio_data, sr = load_audio_librosa(wav_file, sr=16000, mono=True)
                 
                 if len(audio_data) == 0:
                     raise ValueError("No audio data loaded")
@@ -439,11 +380,11 @@ async def transcribe_audio_with_progress(
         logger.error(f"Transcription failed: {e}")
         raise TranscriptionError(f"Transcription error: {str(e)}")
 
-# Additional utility functions for TorchCodec migration
+# Additional utility functions
 
-def get_audio_info_with_torchcodec(audio_file):
+def get_audio_info(audio_file):
     """
-    Get audio file information using TorchCodec when available
+    Get audio file information using soundfile
     
     Args:
         audio_file: Path to audio file
@@ -452,22 +393,6 @@ def get_audio_info_with_torchcodec(audio_file):
         dict: Audio file information (duration, sample_rate, channels)
     """
     try:
-        # Try TorchCodec first
-        if _ensure_torchcodec_imports() and torchcodec is not None:
-            try:
-                decoder = torchcodec.decoders._core.create_from_file(audio_file)
-                metadata = decoder.get_metadata()
-                
-                return {
-                    "duration": float(metadata.duration_seconds),
-                    "sample_rate": int(metadata.sample_rate),
-                    "channels": int(metadata.num_channels),
-                    "method": "torchcodec"
-                }
-            except Exception as e:
-                logger.warning(f"TorchCodec info extraction failed: {e}, falling back to soundfile")
-        
-        # Fallback to soundfile
         info = sf.info(audio_file)
         return {
             "duration": float(info.duration),
@@ -485,9 +410,9 @@ def get_audio_info_with_torchcodec(audio_file):
             "method": "fallback"
         }
 
-def convert_audio_format_with_torchcodec(input_file, output_file, target_sr=16000, mono=True):
+def convert_audio_format(input_file, output_file, target_sr=16000, mono=True):
     """
-    Convert audio format using TorchCodec when available
+    Convert audio format using librosa
     
     Args:
         input_file: Input audio file path
@@ -499,8 +424,8 @@ def convert_audio_format_with_torchcodec(input_file, output_file, target_sr=1600
         bool: Success status
     """
     try:
-        # Load audio using TorchCodec support
-        audio_data, sr = load_audio_with_torchcodec(input_file, sr=target_sr, mono=mono)
+        # Load audio using librosa
+        audio_data, sr = load_audio_librosa(input_file, sr=target_sr, mono=mono)
         
         # Save using soundfile
         sf.write(output_file, audio_data, target_sr)
@@ -515,10 +440,8 @@ def convert_audio_format_with_torchcodec(input_file, output_file, target_sr=1600
 # Maintain backward compatibility with existing functions
 def load_audio_librosa_fallback(audio_file, sr=16000, mono=True):
     """
-    Fallback audio loading using librosa (for backward compatibility)
-    
-    This function is kept for backward compatibility but internally
-    uses the new TorchCodec-enabled loader
+    DEPRECATED: Legacy function for loading audio with librosa.
+    Use load_audio_librosa instead.
     """
-    logger.warning("Using deprecated load_audio_librosa_fallback, consider using load_audio_with_torchcodec")
-    return load_audio_with_torchcodec(audio_file, sr=sr, mono=mono)
+    logger.warning("Using deprecated load_audio_librosa_fallback, use load_audio_librosa instead")
+    return load_audio_librosa(audio_file, sr=sr, mono=mono)

@@ -62,31 +62,6 @@ VoiceActivityDetection = None
 torch = None
 _pyannote_imports_attempted = False
 
-# TorchCodec imports for future-proofing
-TORCHCODEC_AVAILABLE = False
-torchcodec = None
-_torchcodec_imports_attempted = False
-
-def _ensure_torchcodec_imports():
-    """Lazy import of TorchCodec dependencies"""
-    global TORCHCODEC_AVAILABLE, torchcodec, _torchcodec_imports_attempted
-    
-    if _torchcodec_imports_attempted:
-        return TORCHCODEC_AVAILABLE
-    
-    _torchcodec_imports_attempted = True
-    
-    try:
-        import torchcodec as _torchcodec
-        torchcodec = _torchcodec
-        TORCHCODEC_AVAILABLE = True
-        logger.info("TorchCodec dependencies loaded successfully")
-    except ImportError as e:
-        logger.info(f"TorchCodec not available, using fallback: {e}")
-        TORCHCODEC_AVAILABLE = False
-        torchcodec = None
-    
-    return TORCHCODEC_AVAILABLE
 
 def _ensure_pyannote_imports():
     """Lazy import of PyAnnote.Audio dependencies"""
@@ -116,9 +91,9 @@ def _ensure_pyannote_imports():
     
     return PYANNOTE_AVAILABLE
 
-def load_audio_with_torchcodec(audio_file, sr=None, mono=True):
+def load_audio_librosa(audio_file, sr=None, mono=True):
     """
-    Load audio using TorchCodec when available, fallback to librosa
+    Load audio using librosa
     
     Args:
         audio_file: Path to audio file
@@ -128,43 +103,6 @@ def load_audio_with_torchcodec(audio_file, sr=None, mono=True):
     Returns:
         tuple: (audio_data, sample_rate)
     """
-    try:
-        # Try TorchCodec first
-        if _ensure_torchcodec_imports() and torchcodec is not None:
-            try:
-                # Use TorchCodec decoder - check if decoders module exists
-                if hasattr(torchcodec, 'decoders') and hasattr(torchcodec.decoders, '_core'):  # type: ignore
-                    decoder = torchcodec.decoders._core.create_from_file(audio_file)  # type: ignore
-                else:
-                    raise Exception("TorchCodec decoders._core not available")
-                frames, _ = decoder.get_next_chunk()
-                
-                # Convert to numpy and handle channels
-                audio_data = frames.squeeze().numpy()
-                
-                # Get sample rate from decoder metadata
-                metadata = decoder.get_metadata()
-                original_sr = int(metadata.sample_rate)
-                
-                # Convert to mono if needed
-                if mono and len(audio_data.shape) > 1:
-                    audio_data = audio_data.mean(axis=1)
-                
-                # Resample if needed
-                if sr is not None and sr != original_sr:
-                    audio_data = librosa.resample(audio_data.astype(np.float32), 
-                                                orig_sr=original_sr, target_sr=sr)
-                    return audio_data, sr
-                
-                return audio_data.astype(np.float32), original_sr
-                
-            except Exception as e:
-                logger.warning(f"TorchCodec loading failed: {e}, falling back to librosa")
-                
-    except Exception as e:
-        logger.debug(f"TorchCodec not available: {e}")
-    
-    # Fallback to librosa
     return librosa.load(audio_file, sr=sr, mono=mono)
 
 from config.app_config import PYAUDIOANALYSIS_CONFIG
@@ -450,9 +388,9 @@ class SpeakerDiarization:
         try:
             logger.info(f"Starting frequency-based diarization with {min_speakers}-{max_speakers} speakers")
 
-            # Read audio file using TorchCodec if available
+            # Read audio file using librosa
             try:
-                audio_data, sample_rate = load_audio_with_torchcodec(audio_file, sr=None, mono=True)
+                audio_data, sample_rate = load_audio_librosa(audio_file, sr=None, mono=True)
                 logger.info(f"Audio loaded: {len(audio_data)} samples at {sample_rate}Hz")
             except Exception as e:
                 logger.error(f"Failed to load audio: {e}")
