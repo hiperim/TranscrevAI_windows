@@ -72,7 +72,18 @@ WHISPER_MODELS = {
 
 # Model directories
 WHISPER_MODEL_DIR = MODEL_DIR / "whisper"
-PYANNOTE_MODEL_DIR = MODEL_DIR / "pyannote"
+PYAUDIOANALYSIS_MODEL_DIR = MODEL_DIR / "pyaudioanalysis"
+
+# PyAudioAnalysis Configuration - Free speaker diarization
+PYAUDIOANALYSIS_CONFIG = {
+    "default_speakers": 2,  # Default number of speakers
+    "classifier": "svm",  # Classification method: svm, randomforest, gradientboosting
+    "vad_preprocessing": True,  # Voice Activity Detection preprocessing
+    "lda_dim_reduction": 0.5,  # LDA dimensionality reduction factor
+    "segment_duration": 0.5,  # Duration of each audio segment in seconds
+    "feature_extraction": "mfcc",  # Feature type: mfcc, chroma, spectral
+    "clustering_method": "kmeans"  # Clustering: kmeans, hierarchical
+}
 
 # FastAPI Configuration
 FASTAPI_CONFIG = {
@@ -177,18 +188,8 @@ WHISPER_CONFIG = {
     "no_speech_threshold": 0.6
 }
 
-# PyAnnote.Audio Configuration
-PYANNOTE_CONFIG = {
-    "pipeline": "pyannote/speaker-diarization-3.1",
-    "segmentation_model": "pyannote/segmentation-3.0", 
-    "embedding_model": "pyannote/wespeaker-voxceleb-resnet34-LM",
-    "cache_dir": str(PYANNOTE_MODEL_DIR),
-    "use_auth_token": None,  # Set if using gated models
-    "device": "cpu",  # Use "cuda" if GPU available
-    "num_speakers": None,  # Auto-detect
-    "min_speakers": 1,
-    "max_speakers": 10
-}
+# Speaker Diarization Configuration - Using PyAudioAnalysis (Free)
+# PyAnnote configuration removed - replaced by PYAUDIOANALYSIS_CONFIG above
 
 # ENHANCED: Speaker Diarization Configuration
 DIARIZATION_CONFIG = {
@@ -258,12 +259,12 @@ AUDIO_PREPROCESSING_CONFIG = {
 
 # ENHANCED: Transcription Enhancement Configuration
 TRANSCRIPTION_CONFIG = {
-    "vosk_optimization": {
+    "whisper_optimization": {
         "word_timestamps": True,  # Enable word-level timestamps
-        "partial_words": True,  # Enable partial word results
-        "max_alternatives": 3,  # Multiple recognition alternatives
-        "nlsml_output": True,  # Structured output format
-        "speaker_adaptation": False  # Speaker adaptation (if available)
+        "language": "auto",  # Automatic language detection
+        "beam_size": 5,  # Beam search width
+        "best_of": 5,  # Number of candidates when using sampling
+        "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)  # Temperature fallbacks
     },
     "post_processing": {
         "text_enhancement": True,

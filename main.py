@@ -250,7 +250,8 @@ class SimpleState:
             logger.error(f"Failed to create session: {e}")
             return False
     
-    def create_recorder_for_session(self, session_id: str, format_type: str = "wav"):
+    def create_recorder_for_session(self, session_id: str, format_type: str = "wav", 
+                                    websocket_manager=None):
         try:
             recordings_dir = FileManager.get_data_path("recordings")
             extension = "wav" if format_type == "wav" else "mp4"
@@ -259,7 +260,11 @@ class SimpleState:
                 f"recording_{int(time.time())}.{extension}"
             )
             AudioRecorderClass = get_audio_recorder()
-            recorder = AudioRecorderClass(output_file=output_file)
+            recorder = AudioRecorderClass(
+                output_file=output_file, 
+                websocket_manager=websocket_manager,
+                session_id=session_id
+            )
             
             if session_id in self.sessions:
                 self.sessions[session_id]["recorder"] = recorder
@@ -731,6 +736,27 @@ HTML_INTERFACE = """
                         this.resetState();
                         break;
                         
+                    case 'system_download_start':
+                        this.updateStatus(`${message.message || 'Downloading required components...'}`);
+                        break;
+                        
+                    case 'system_download_progress':
+                        if (message.progress) {
+                            this.updateStatus(`${message.message || 'Downloading...'} (${message.progress}%)`);
+                        } else {
+                            this.updateStatus(message.message || 'Downloading...');
+                        }
+                        break;
+                        
+                    case 'system_download_complete':
+                        this.updateStatus(`${message.message || 'Download completed'}`);
+                        setTimeout(() => {
+                            if (!this.isRecording) {
+                                this.updateStatus('Connected - Ready to record');
+                            }
+                        }, 2000);
+                        break;
+                        
                     case 'processing_complete':
                         this.handleResults(message);
                         break;
@@ -1026,7 +1052,7 @@ async def handle_websocket_message(session_id: str, data: dict):
                 format_type = message_data.get("format", "wav")
 
                 # Create recorder with correct format
-                if not app_state.create_recorder_for_session(session_id, format_type):
+                if not app_state.create_recorder_for_session(session_id, format_type, websocket_manager):
                     await websocket_manager.send_message(session_id, {
                         "type": "error",
                         "message": "Failed to create recorder"
@@ -1330,7 +1356,7 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=8000,
+        port=8001,
         log_level="info",
         access_log=False  # Disable for production
     )

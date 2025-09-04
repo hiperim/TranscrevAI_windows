@@ -1,0 +1,8 @@
+INFO:     Started server process [1436]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:50118 - "WebSocket /ws/session_1757011202794_6aqjj0751" [accepted]
+2025-09-04 16:03:32 - transcrevai - INFO - [main.py:306] - WebSocket connected: session_1757011202794_6aqjj0751
+2025-09-04 16:03:32 - transcrevai - INFO - [main.py:247] - Session created: session_1757011202794_6aqjj0751
+INFO:     connection open

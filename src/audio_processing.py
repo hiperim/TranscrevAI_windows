@@ -37,12 +37,33 @@ except ImportError:
     FFMPEG_AVAILABLE = False
     _ffmpeg_paths_added = True  # Skip path addition if not available
 
-def _ensure_ffmpeg_paths():
+def _ensure_ffmpeg_paths(websocket_manager=None, session_id=None):
     """Lazily add FFmpeg paths only when needed"""
     global _ffmpeg_paths_added
     if not _ffmpeg_paths_added and FFMPEG_AVAILABLE and static_ffmpeg is not None:
+        # Notify user about download starting
+        if websocket_manager and session_id:
+            try:
+                asyncio.create_task(websocket_manager.send_message(session_id, {
+                    "type": "system_download_start",
+                    "message": "Downloading FFmpeg components (required for audio processing)..."
+                }))
+            except:
+                pass  # Don't fail if websocket notification fails
+        
+        logger.info("Adding static_ffmpeg paths - this may trigger a download")
         static_ffmpeg.add_paths()
         _ffmpeg_paths_added = True
+        
+        # Notify user about download completion
+        if websocket_manager and session_id:
+            try:
+                asyncio.create_task(websocket_manager.send_message(session_id, {
+                    "type": "system_download_complete", 
+                    "message": "FFmpeg components ready"
+                }))
+            except:
+                pass  # Don't fail if websocket notification fails
 
 from src.logging_setup import setup_app_logging
 from src.file_manager import FileManager
@@ -259,7 +280,8 @@ class AtomicAudioFile:
 class AudioRecorder:
     """Enhanced audio recorder with proper async support and resource management"""
     
-    def __init__(self, output_file: Optional[str] = None, sample_rate: int = 16000):
+    def __init__(self, output_file: Optional[str] = None, sample_rate: int = 16000, 
+                 websocket_manager=None, session_id=None):
         self.output_file = output_file or os.path.join(
             FileManager.get_data_path("recordings"),
             f"recording_{int(time.time())}.wav"
@@ -272,6 +294,8 @@ class AudioRecorder:
         self._stream: Optional[sd.InputStream] = None
         self._frames = []
         self._recording_start_time: Optional[float] = None
+        self.websocket_manager = websocket_manager
+        self.session_id = session_id
         self.is_paused = False
         
         # Ensure output directory exists
@@ -299,7 +323,7 @@ class AudioRecorder:
         """Verify FFmpeg availability"""
         try:
             # Ensure FFmpeg paths are added before verification
-            _ensure_ffmpeg_paths()
+            _ensure_ffmpeg_paths(self.websocket_manager, self.session_id)
             
             if FFMPEG_AVAILABLE:
                 subprocess.run(
@@ -485,6 +509,10 @@ class AudioRecorder:
                 if self._frames and len(self._frames) > 0:
                     # Concatenate all audio frames
                     audio_data = np.concatenate(self._frames)
+                    
+                    # Ensure float32 dtype
+                    if audio_data.dtype != np.float32:
+                        audio_data = audio_data.astype(np.float32)
                     
                     # Check if we have meaningful audio data
                     if len(audio_data) > 0:

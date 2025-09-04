@@ -1,0 +1,54 @@
+(venv) PS C:\TranscrevAI_windows> python main.py
+INFO:     Started server process [14980]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:53265 - "WebSocket /ws/session_1757011202794_6aqjj0751" [accepted]
+2025-09-04 16:08:24 - transcrevai - INFO - [main.py:306] - WebSocket connected: session_1757011202794_6aqjj0751
+2025-09-04 16:08:24 - transcrevai - INFO - [main.py:247] - Session created: session_1757011202794_6aqjj0751
+INFO:     connection open
+2025-09-04 16:08:24 - transcrevai - INFO - [main.py:296] - Session cleaned up: session_1757011202794_6aqjj0751
+2025-09-04 16:08:24 - transcrevai - INFO - [main.py:312] - WebSocket disconnected: session_1757011202794_6aqjj0751
+INFO:     connection closed
+INFO:     127.0.0.1:63691 - "WebSocket /ws/session_1757012904510_1gnyhwwcc" [accepted]
+2025-09-04 16:08:24 - transcrevai - INFO - [main.py:306] - WebSocket connected: session_1757012904510_1gnyhwwcc
+2025-09-04 16:08:24 - transcrevai - INFO - [main.py:247] - Session created: session_1757012904510_1gnyhwwcc
+INFO:     connection open
+2025-09-04 16:08:29 - transcrevai.audio_processing - INFO - [audio_processing.py:316] - Found 8 audio input devices
+2025-09-04 16:08:29 - transcrevai.audio_processing - INFO - [audio_processing.py:54] - Adding static_ffmpeg paths - this may trigger a download
+2025-09-04 16:08:29 - transcrevai.audio_processing - INFO - [audio_processing.py:336] - FFmpeg verified via static_ffmpeg
+2025-09-04 16:08:29 - transcrevai - INFO - [main.py:271] - AudioRecorder created for session session_1757012904510_1gnyhwwcc with format wav
+2025-09-04 16:08:29 - transcrevai.audio_processing - INFO - [audio_processing.py:434] - Audio stream started with device 1
+2025-09-04 16:08:29 - transcrevai.audio_processing - INFO - [audio_processing.py:391] - Audio recording started
+2025-09-04 16:08:36 - transcrevai - INFO - [main.py:110] - Cached Whisper model: small
+2025-09-04 16:08:36 - transcrevai - INFO - [main.py:169] - Whisper model 'small' loaded and cached for pt
+2025-09-04 16:08:38 - transcrevai.audio_processing - INFO - [audio_processing.py:449] - Recording paused
+2025-09-04 16:08:40 - transcrevai.audio_processing - INFO - [audio_processing.py:524] - Saved 138240 audio samples (8.64 seconds)
+2025-09-04 16:08:40 - transcrevai.audio_processing - INFO - [audio_processing.py:493] - Recording stopped and saved: C:\TranscrevAI_windows\data\recordings\recording_1757012909.wav        
+2025-09-04 16:08:40 - transcrevai - INFO - [main.py:1213] - Processing: C:\TranscrevAI_windows\data\recordings\recording_1757012909.wav (size: 276524 bytes)
+2025-09-04 16:08:44 - transcrevai.concurrent_engine - INFO - [concurrent_engine.py:34] - Starting concurrent processing for session session_1757012904510_1gnyhwwcc
+2025-09-04 16:08:44 - transcrevai.transcription - INFO - [transcription.py:315] - Starting Whisper transcription for C:\TranscrevAI_windows\data\recordings\recording_1757012909.wav with language pt
+2025-09-04 16:08:44 - transcrevai.transcription - INFO - [transcription.py:92] - ML dependencies (OpenAI Whisper) loaded successfully
+2025-09-04 16:08:44 - transcrevai.transcription - INFO - [transcription.py:96] - Available Whisper models: ['tiny.en', 'tiny', 'base.en', 'base', 'small.en', 'small', 'medium.en', 'medium', 'large-v1', 'large-v2', 'large-v3', 'large', 'large-v3-turbo', 'turbo']
+2025-09-04 16:08:44 - transcrevai.transcription - INFO - [transcription.py:261] - Whisper device: cpu
+2025-09-04 16:08:47 - transcrevai.speaker_diarization - INFO - [speaker_diarization.py:634] - Starting PyAudioAnalysis diarization for C:\TranscrevAI_windows\data\recordings\recording_1757012909.wav
+C:\TranscrevAI_windows\venv\Lib\site-packages\sklearn\base.py:442: InconsistentVersionWarning: Trying to unpickle estimator SVC from version 0.24.2 when using version 1.7.1. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:   
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations   
+  warnings.warn(
+2025-09-04 16:08:47 - transcrevai.speaker_diarization - ERROR - [speaker_diarization.py:724] - PyAudioAnalysis diarization failed: unsupported operand type(s) for -: 'str' and 'int'       
+2025-09-04 16:08:50 - transcrevai.transcription - INFO - [transcription.py:289] - Whisper model 'small' loaded for pt
+2025-09-04 16:08:50 - transcrevai.transcription - INFO - [transcription.py:343] - Loading audio with TorchCodec support
+Stay tuned...
+2025-09-04 16:08:50 - transcrevai.transcription - INFO - [transcription.py:67] - TorchCodec dependencies loaded successfully
+2025-09-04 16:08:50 - transcrevai.transcription - WARNING - [transcription.py:152] - TorchCodec loading failed: module 'torchcodec' has no attribute 'decoders', falling back to librosa    
+2025-09-04 16:09:07 - transcrevai.transcription - INFO - [transcription.py:349] - Audio loaded: 138240 samples at 16000Hz
+2025-09-04 16:09:07 - transcrevai.transcription - INFO - [transcription.py:354] - Advanced audio preprocessing completed
+C:\TranscrevAI_windows\venv\Lib\site-packages\whisper\transcribe.py:132: UserWarning: FP16 is not supported on CPU; using FP32 instead
+  warnings.warn("FP16 is not supported on CPU; using FP32 instead")
+2025-09-04 16:09:07 - transcrevai.transcription - ERROR - [transcription.py:403] - Whisper transcription failed: expected m1 and m2 to have the same dtype, but got: float != double        
+2025-09-04 16:09:07 - transcrevai.transcription - ERROR - [transcription.py:437] - Transcription failed: Whisper error: expected m1 and m2 to have the same dtype, but got: float != double 
+2025-09-04 16:09:07 - transcrevai.concurrent_engine - ERROR - [concurrent_engine.py:136] - Transcription with progress failed: Transcription error: Whisper error: expected m1 and m2 to have the same dtype, but got: float != double
+2025-09-04 16:09:07 - transcrevai.concurrent_engine - ERROR - [concurrent_engine.py:62] - Transcription failed: Transcription error: Whisper error: expected m1 and m2 to have the same dtype, but got: float != double
+2025-09-04 16:09:07 - transcrevai.concurrent_engine - INFO - [concurrent_engine.py:95] - Concurrent processing completed for session session_1757012904510_1gnyhwwcc: 0 transcription segments, 1 diarization segments, 1 speakers, processing time: 22.68s
+2025-09-04 16:09:07 - transcrevai.subtitle_generator - ERROR - [subtitle_generator.py:151] - SRT generation failed: Missing required transcription data
+2025-09-04 16:09:07 - transcrevai - ERROR - [main.py:1308] - SRT generation failed: Subtitle creation error: Missing required transcription data

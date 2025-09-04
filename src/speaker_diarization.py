@@ -12,13 +12,17 @@ from scipy.ndimage import median_filter
 from enum import Enum
 from unittest.mock import patch
 from scipy.io import wavfile
+import warnings
 
 # Import scikit-learn components
 try:
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.decomposition import PCA
-    from sklearn.cluster import KMeans, AgglomerativeClustering
-    from sklearn.metrics import silhouette_score
+    # Suppress sklearn version warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.decomposition import PCA
+        from sklearn.cluster import KMeans, AgglomerativeClustering
+        from sklearn.metrics import silhouette_score
     SKLEARN_AVAILABLE = True
 except ImportError as e:
     SKLEARN_AVAILABLE = False
@@ -30,12 +34,15 @@ except ImportError as e:
 
 # Import pyAudioAnalysis
 try:
-    from pyAudioAnalysis import audioSegmentation as aS
-    # Fix: Handle the specific import that was causing issues
-    try:
-        from pyAudioAnalysis.MidTermFeatures import mid_feature_extraction
-    except ImportError:
-        mid_feature_extraction = None
+    # Suppress sklearn warnings from PyAudioAnalysis
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning)
+        from pyAudioAnalysis import audioSegmentation as aS
+        # Fix: Handle the specific import that was causing issues
+        try:
+            from pyAudioAnalysis.MidTermFeatures import mid_feature_extraction
+        except ImportError:
+            mid_feature_extraction = None
     PYAUDIO_ANALYSIS_AVAILABLE = True
 except ImportError as e:
     PYAUDIO_ANALYSIS_AVAILABLE = False
@@ -160,7 +167,7 @@ def load_audio_with_torchcodec(audio_file, sr=None, mono=True):
     # Fallback to librosa
     return librosa.load(audio_file, sr=sr, mono=mono)
 
-from config.app_config import PYANNOTE_CONFIG
+from config.app_config import PYAUDIOANALYSIS_CONFIG
 
 class DiarizationError(Enum):
     FILE_NOT_FOUND = 1
@@ -629,9 +636,9 @@ class SpeakerDiarization:
         return merged
 
     async def diarize_audio(self, audio_file, number_speakers=0):
-        """Neural speaker diarization using PyAnnote.Audio"""
+        """Speaker diarization using PyAudioAnalysis (free alternative to PyAnnote)"""
         try:
-            logger.info(f"Starting PyAnnote.Audio diarization for {audio_file}")
+            logger.info(f"Starting PyAudioAnalysis diarization for {audio_file}")
 
             # Validate input file
             if not os.path.exists(audio_file):
@@ -640,46 +647,88 @@ class SpeakerDiarization:
             if os.path.getsize(audio_file) == 0:
                 raise ValueError("Audio file is empty")
 
-            # Load PyAnnote pipeline
-            pipeline = await self._load_pyannote_pipeline()
+            # Check if PyAudioAnalysis is available
+            if not PYAUDIO_ANALYSIS_AVAILABLE or aS is None:
+                raise RuntimeError("PyAudioAnalysis not available")
 
-            # Configure speakers if specified
-            if number_speakers > 0:
-                pipeline.instantiate({
-                    "clustering": {
-                        "num_clusters": number_speakers
-                    }
-                })
-
-            # Run diarization
+            # Run diarization using PyAudioAnalysis
             loop = asyncio.get_event_loop()
-            diarization = await loop.run_in_executor(
+            
+            # Set number of speakers (default to 2 if not specified)
+            n_speakers = number_speakers if number_speakers > 0 else 2
+            
+            # Run speaker diarization in executor to avoid blocking
+            cls = await loop.run_in_executor(
                 None,
-                pipeline,
-                audio_file
+                aS.speaker_diarization,
+                audio_file,
+                n_speakers,
+                'svm',  # Use SVM for classification
+                True,   # Apply VAD preprocessing
+                0.5     # LDA dimensionality reduction
             )
 
-            # Convert PyAnnote format to TranscrevAI format
+            # Convert PyAudioAnalysis format to TranscrevAI format
             segments = []
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
-                segments.append({
-                    "start": float(turn.start),
-                    "end": float(turn.end),
-                    "speaker": f"Speaker_{speaker}",
-                    "confidence": 0.95, # PyAnnote typically high confidence
-                    "method": "neural_pyannote"
-                })
+            if cls is not None and len(cls) > 0:
+                # Get audio duration to calculate segment timings
+                duration = self.get_audio_duration(audio_file)
+                segment_duration = duration / len(cls)
+                
+                current_speaker = None
+                segment_start = 0.0
+                
+                for i, speaker_id in enumerate(cls):
+                    segment_time = i * segment_duration
+                    segment_end = (i + 1) * segment_duration
+                    
+                    # Group consecutive segments with same speaker
+                    if current_speaker != speaker_id:
+                        # Close previous segment
+                        if current_speaker is not None:
+                            segments.append({
+                                "start": segment_start,
+                                "end": segment_time,
+                                "speaker": f"Speaker_{current_speaker + 1}",
+                                "confidence": 0.85,
+                                "method": "pyaudioanalysis"
+                            })
+                        
+                        # Start new segment
+                        current_speaker = speaker_id
+                        segment_start = segment_time
+                
+                # Close final segment
+                if current_speaker is not None:
+                    segments.append({
+                        "start": segment_start,
+                        "end": duration,
+                        "speaker": f"Speaker_{current_speaker + 1}",
+                        "confidence": 0.85,
+                        "method": "pyaudioanalysis"
+                    })
+            
+            if not segments:
+                # Fallback to single speaker if no segments found
+                duration = self.get_audio_duration(audio_file)
+                segments = [{
+                    "start": 0.0,
+                    "end": duration,
+                    "speaker": "Speaker_1",
+                    "confidence": 0.5,
+                    "method": "fallback_single"
+                }]
 
             # Sort segments by start time
             segments.sort(key=lambda x: x["start"])
 
             unique_speakers = len(set(seg["speaker"] for seg in segments))
-            logger.info(f"PyAnnote diarization completed: {len(segments)} segments, {unique_speakers} speakers")
+            logger.info(f"PyAudioAnalysis diarization completed: {len(segments)} segments, {unique_speakers} speakers")
 
             return segments
 
         except Exception as e:
-            logger.error(f"PyAnnote diarization failed: {e}")
+            logger.error(f"PyAudioAnalysis diarization failed: {e}")
             # Fallback to simple single speaker
             try:
                 duration = self.get_audio_duration(audio_file)
