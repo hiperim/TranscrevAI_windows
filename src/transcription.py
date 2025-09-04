@@ -6,7 +6,7 @@ import os
 import tempfile
 import soundfile as sf
 import numpy as np
-import librosa  # Added missing import
+import librosa # Added missing import
 from scipy import signal
 
 # Enhanced audio preprocessing imports
@@ -21,7 +21,7 @@ try:
     NOISEREDUCE_AVAILABLE = True
 except ImportError:
     NOISEREDUCE_AVAILABLE = False
-    nr = None  # Define nr to avoid unbound variable error
+    nr = None # Define nr to avoid unbound variable error
 
 from typing import AsyncGenerator, Tuple, List, Dict, Any
 from pathlib import Path
@@ -46,17 +46,45 @@ whisper = None
 torch = None
 _ml_imports_attempted = False
 
+# TorchCodec imports for future-proofing
+TORCHCODEC_AVAILABLE = False
+torchcodec = None
+_torchcodec_imports_attempted = False
+
+def _ensure_torchcodec_imports():
+    """Lazy import of TorchCodec dependencies"""
+    global TORCHCODEC_AVAILABLE, torchcodec, _torchcodec_imports_attempted
+    
+    if _torchcodec_imports_attempted:
+        return TORCHCODEC_AVAILABLE
+    
+    _torchcodec_imports_attempted = True
+    
+    try:
+        import torchcodec as _torchcodec
+        torchcodec = _torchcodec
+        TORCHCODEC_AVAILABLE = True
+        logger.info("TorchCodec dependencies loaded successfully")
+    except ImportError as e:
+        logger.info(f"TorchCodec not available, using fallback: {e}")
+        TORCHCODEC_AVAILABLE = False
+        torchcodec = None
+    
+    return TORCHCODEC_AVAILABLE
+
 def _ensure_ml_imports():
     """Lazy import of heavy ML dependencies"""
     global WHISPER_AVAILABLE, whisper, torch, _ml_imports_attempted
-    
+
     if _ml_imports_attempted:
         return WHISPER_AVAILABLE
-    
+
     _ml_imports_attempted = True
+
     try:
         import whisper as _whisper
         import torch as _torch
+
         whisper = _whisper
         torch = _torch
         WHISPER_AVAILABLE = True
@@ -66,8 +94,138 @@ def _ensure_ml_imports():
         WHISPER_AVAILABLE = False
         whisper = None
         torch = None
-    
+
     return WHISPER_AVAILABLE
+
+def load_audio_with_torchcodec(audio_file, sr=16000, mono=True):
+    """
+    Load audio using TorchCodec when available, fallback to librosa
+    
+    Args:
+        audio_file: Path to audio file
+        sr: Target sample rate (default 16000 for Whisper)
+        mono: Convert to mono if True
+    
+    Returns:
+        tuple: (audio_data, sample_rate)
+    """
+    try:
+        # Try TorchCodec first
+        if _ensure_torchcodec_imports() and torchcodec is not None:
+            try:
+                # Use TorchCodec decoder
+                decoder = torchcodec.decoders._core.create_from_file(audio_file)
+                frames, _ = decoder.get_next_chunk()
+                
+                # Convert to numpy and handle channels
+                audio_data = frames.squeeze().numpy()
+                
+                # Get sample rate from decoder metadata
+                metadata = decoder.get_metadata()
+                original_sr = int(metadata.sample_rate)
+                
+                # Convert to mono if needed
+                if mono and len(audio_data.shape) > 1:
+                    audio_data = audio_data.mean(axis=1)
+                
+                # Resample if needed
+                if sr is not None and sr != original_sr:
+                    audio_data = librosa.resample(audio_data.astype(np.float32), 
+                                                orig_sr=original_sr, target_sr=sr)
+                    return audio_data, sr
+                
+                return audio_data.astype(np.float32), original_sr
+                
+            except Exception as e:
+                logger.warning(f"TorchCodec loading failed: {e}, falling back to librosa")
+                
+    except Exception as e:
+        logger.debug(f"TorchCodec not available: {e}")
+    
+    # Fallback to librosa
+    return librosa.load(audio_file, sr=sr, mono=mono)
+
+def preprocess_audio_advanced(audio_data, sample_rate):
+    """
+    Advanced audio preprocessing for better transcription quality
+    
+    Args:
+        audio_data: numpy array of audio samples
+        sample_rate: sample rate of audio
+        
+    Returns:
+        numpy array: preprocessed audio
+    """
+    try:
+        # Normalize audio level
+        if np.max(np.abs(audio_data)) > 0:
+            audio_data = audio_data / np.max(np.abs(audio_data)) * 0.8
+        
+        # Apply LUFS normalization if available
+        if PYLOUDNORM_AVAILABLE:
+            try:
+                meter = pyln.Meter(sample_rate)
+                loudness = meter.integrated_loudness(audio_data)
+                
+                # Target -23 LUFS for speech
+                if not np.isinf(loudness) and not np.isnan(loudness):
+                    audio_data = pyln.normalize.loudness(audio_data, loudness, -23.0)
+                    logger.debug(f"Applied LUFS normalization: {loudness:.2f} -> -23.0 LUFS")
+            except Exception as e:
+                logger.warning(f"LUFS normalization failed: {e}")
+        
+        # Apply noise reduction if available
+        if NOISEREDUCE_AVAILABLE and nr is not None:
+            try:
+                # Only apply if audio is long enough for stationary noise estimation
+                if len(audio_data) / sample_rate > 2.0:
+                    audio_data = nr.reduce_noise(y=audio_data, sr=sample_rate, stationary=True)
+                    logger.debug("Applied stationary noise reduction")
+                else:
+                    # Use non-stationary for shorter audio
+                    audio_data = nr.reduce_noise(y=audio_data, sr=sample_rate, stationary=False)
+                    logger.debug("Applied non-stationary noise reduction")
+            except Exception as e:
+                logger.warning(f"Noise reduction failed: {e}")
+        
+        # Apply high-pass filter to remove low-frequency noise
+        try:
+            # 80 Hz high-pass filter for speech
+            sos = signal.butter(5, 80, btype='highpass', fs=sample_rate, output='sos')
+            audio_data = signal.sosfilt(sos, audio_data)
+            logger.debug("Applied high-pass filter at 80Hz")
+        except Exception as e:
+            logger.warning(f"High-pass filter failed: {e}")
+        
+        # Apply gentle compression to even out dynamics
+        try:
+            # Simple soft compression
+            threshold = 0.5
+            ratio = 4.0
+            
+            # Find samples above threshold
+            above_threshold = np.abs(audio_data) > threshold
+            
+            # Apply compression
+            compressed = np.copy(audio_data)
+            compressed[above_threshold] = np.sign(audio_data[above_threshold]) * (
+                threshold + (np.abs(audio_data[above_threshold]) - threshold) / ratio
+            )
+            
+            audio_data = compressed
+            logger.debug("Applied soft compression")
+        except Exception as e:
+            logger.warning(f"Audio compression failed: {e}")
+        
+        # Final normalization
+        if np.max(np.abs(audio_data)) > 0:
+            audio_data = audio_data / np.max(np.abs(audio_data)) * 0.8
+        
+        return audio_data
+        
+    except Exception as e:
+        logger.error(f"Audio preprocessing failed: {e}")
+        return audio_data
 
 class TranscriptionError(Exception):
     pass
@@ -75,13 +233,13 @@ class TranscriptionError(Exception):
 # Model management removed - handled by main.py
 
 class WhisperTranscriptionService:
-    """Whisper-based transcription service with automatic model management"""
+    """Whisper-based transcription service with TorchCodec support and automatic model management"""
 
     def __init__(self):
         self._models = {}
         self._model_lock = asyncio.Lock()
-        self._device = None  # Lazy device detection
-        
+        self._device = None # Lazy device detection
+
     @property
     def device(self):
         """Lazy device detection only when needed"""
@@ -104,6 +262,7 @@ class WhisperTranscriptionService:
             if language_code not in self._models:
                 try:
                     model_name = WHISPER_MODELS.get(language_code, "small")
+
                     # Download model in thread pool
                     loop = asyncio.get_event_loop()
                     model = await loop.run_in_executor(
@@ -113,8 +272,10 @@ class WhisperTranscriptionService:
                         self.device,
                         str(WHISPER_MODEL_DIR)
                     )
+
                     self._models[language_code] = model
                     logger.info(f"Whisper model '{model_name}' loaded for {language_code}")
+
                 except Exception as e:
                     logger.error(f"Failed to load Whisper model for {language_code}: {e}")
                     raise TranscriptionError(f"Whisper model loading failed: {str(e)}")
@@ -130,7 +291,7 @@ async def transcribe_audio_with_progress(
     language_code: str,
     sample_rate: int = 16000
 ) -> AsyncGenerator[Tuple[int, List[Dict]], None]:
-    """Whisper-based transcription with progress tracking"""
+    """Whisper-based transcription with TorchCodec support and progress tracking"""
     try:
         logger.info(f"Starting Whisper transcription for {wav_file} with language {language_code}")
 
@@ -158,25 +319,23 @@ async def transcribe_audio_with_progress(
 
         def transcribe_with_whisper():
             try:
-                # Load and preprocess audio
-                audio_data, sr = librosa.load(wav_file, sr=16000, mono=True)
+                # Load and preprocess audio using TorchCodec when available
+                logger.info("Loading audio with TorchCodec support")
+                audio_data, sr = load_audio_with_torchcodec(wav_file, sr=16000, mono=True)
+                
                 if len(audio_data) == 0:
                     raise ValueError("No audio data loaded")
 
-                # Apply audio preprocessing for better Whisper performance
-                if NOISEREDUCE_AVAILABLE and nr is not None:  # Fixed unbound variable check
-                    try:
-                        audio_data = nr.reduce_noise(y=audio_data, sr=sr)
-                        logger.info("Applied noise reduction")
-                    except Exception as e:
-                        logger.warning(f"Noise reduction failed: {e}")
+                logger.info(f"Audio loaded: {len(audio_data)} samples at {sr}Hz")
 
-                # Normalize audio
-                if np.max(np.abs(audio_data)) > 0:
-                    audio_data = audio_data / np.max(np.abs(audio_data)) * 0.8
+                # Apply advanced preprocessing
+                audio_data = preprocess_audio_advanced(audio_data, sr)
+                
+                logger.info("Advanced audio preprocessing completed")
 
                 # Transcribe with Whisper
-                language = language_code if language_code in ['en'] else None  # Use None for auto-detect
+                language = language_code if language_code in ['en'] else None # Use None for auto-detect
+
                 result = model.transcribe(
                     audio_data,
                     language=language,
@@ -189,6 +348,7 @@ async def transcribe_audio_with_progress(
 
                 # Convert Whisper result to TranscrevAI format
                 transcription_data = []
+
                 if "segments" in result:
                     for segment in result["segments"]:
                         # Extract word-level timestamps if available
@@ -240,7 +400,7 @@ async def transcribe_audio_with_progress(
             processed = []
             for segment in segments:
                 text = segment.get('text', '').strip()
-                if text and len(text) > 1:  # Filter very short segments
+                if text and len(text) > 1: # Filter very short segments
                     processed.append(segment)
 
             return processed
@@ -256,3 +416,87 @@ async def transcribe_audio_with_progress(
     except Exception as e:
         logger.error(f"Transcription failed: {e}")
         raise TranscriptionError(f"Transcription error: {str(e)}")
+
+# Additional utility functions for TorchCodec migration
+
+def get_audio_info_with_torchcodec(audio_file):
+    """
+    Get audio file information using TorchCodec when available
+    
+    Args:
+        audio_file: Path to audio file
+        
+    Returns:
+        dict: Audio file information (duration, sample_rate, channels)
+    """
+    try:
+        # Try TorchCodec first
+        if _ensure_torchcodec_imports() and torchcodec is not None:
+            try:
+                decoder = torchcodec.decoders._core.create_from_file(audio_file)
+                metadata = decoder.get_metadata()
+                
+                return {
+                    "duration": float(metadata.duration_seconds),
+                    "sample_rate": int(metadata.sample_rate),
+                    "channels": int(metadata.num_channels),
+                    "method": "torchcodec"
+                }
+            except Exception as e:
+                logger.warning(f"TorchCodec info extraction failed: {e}, falling back to soundfile")
+        
+        # Fallback to soundfile
+        info = sf.info(audio_file)
+        return {
+            "duration": float(info.duration),
+            "sample_rate": int(info.samplerate),
+            "channels": int(info.channels),
+            "method": "soundfile"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get audio info: {e}")
+        return {
+            "duration": 0.0,
+            "sample_rate": 16000,
+            "channels": 1,
+            "method": "fallback"
+        }
+
+def convert_audio_format_with_torchcodec(input_file, output_file, target_sr=16000, mono=True):
+    """
+    Convert audio format using TorchCodec when available
+    
+    Args:
+        input_file: Input audio file path
+        output_file: Output audio file path
+        target_sr: Target sample rate
+        mono: Convert to mono
+        
+    Returns:
+        bool: Success status
+    """
+    try:
+        # Load audio using TorchCodec support
+        audio_data, sr = load_audio_with_torchcodec(input_file, sr=target_sr, mono=mono)
+        
+        # Save using soundfile
+        sf.write(output_file, audio_data, target_sr)
+        
+        logger.info(f"Audio conversion successful: {input_file} -> {output_file}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Audio conversion failed: {e}")
+        return False
+
+# Maintain backward compatibility with existing functions
+def load_audio_librosa_fallback(audio_file, sr=16000, mono=True):
+    """
+    Fallback audio loading using librosa (for backward compatibility)
+    
+    This function is kept for backward compatibility but internally
+    uses the new TorchCodec-enabled loader
+    """
+    logger.warning("Using deprecated load_audio_librosa_fallback, consider using load_audio_with_torchcodec")
+    return load_audio_with_torchcodec(audio_file, sr=sr, mono=mono)
