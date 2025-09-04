@@ -12,13 +12,35 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
-from src.audio_processing import AudioRecorder
-from src.transcription import transcribe_audio_with_progress
-from src.speaker_diarization import SpeakerDiarization
+# Lazy import functions for heavy dependencies
+def get_audio_recorder():
+    """Lazy import AudioRecorder"""
+    from src.audio_processing import AudioRecorder
+    return AudioRecorder
+
+def get_transcription_func():
+    """Lazy import transcription function"""
+    from src.transcription import transcribe_audio_with_progress
+    return transcribe_audio_with_progress
+
+def get_speaker_diarization():
+    """Lazy import SpeakerDiarization"""
+    from src.speaker_diarization import SpeakerDiarization
+    return SpeakerDiarization
+
+def get_model_config():
+    """Lazy import model configuration"""
+    from config.app_config import WHISPER_MODEL_DIR, WHISPER_MODELS, WHISPER_CONFIG
+    return WHISPER_MODEL_DIR, WHISPER_MODELS, WHISPER_CONFIG
+
+def get_concurrent_processor():
+    """Lazy import concurrent processor"""
+    from src.concurrent_engine import concurrent_processor
+    return concurrent_processor
+
+# Keep essential imports
 from src.subtitle_generator import generate_srt
 from src.file_manager import FileManager
-from config.app_config import WHISPER_MODEL_DIR, WHISPER_MODELS, WHISPER_CONFIG
-from src.concurrent_engine import concurrent_processor
 from src.logging_setup import setup_app_logging
 
 logger = setup_app_logging()
@@ -43,12 +65,22 @@ class WhisperModelManager:
     
     _model_cache = {}
     _loading_locks = {}
-    _cache_ttl = 3600  # 1 hour cache TTL
+    _cache_ttl = 86400  # 24 hour cache TTL (24 * 60 * 60)
     _cache_timestamps = {}
+    
+    @staticmethod
+    def _get_whisper():
+        """Lazy import of whisper module"""
+        global _whisper_module
+        if '_whisper_module' not in globals():
+            import whisper
+            globals()['_whisper_module'] = whisper
+        return globals()['_whisper_module']
     
     @staticmethod
     def get_model_name(language: str) -> str:
         """Get Whisper model name for language"""
+        _, WHISPER_MODELS, _ = get_model_config()
         return WHISPER_MODELS.get(language, "small")
     
     @classmethod
@@ -81,7 +113,7 @@ class WhisperModelManager:
     async def ensure_whisper_model(cls, language: str, websocket_manager=None, session_id=None) -> bool:
         """Ensure Whisper model is available, download if necessary"""
         try:
-            import whisper
+            whisper = cls._get_whisper()
             
             model_name = cls.get_model_name(language)
             
@@ -122,6 +154,7 @@ class WhisperModelManager:
             
                 # Try to load and cache model  
                 try:
+                    WHISPER_MODEL_DIR, _, _ = get_model_config()
                     model = await loop.run_in_executor(
                         None,
                         whisper.load_model,
@@ -150,6 +183,7 @@ class WhisperModelManager:
                     logger.info(f"Model '{model_name}' not available, downloading: {e}")
                     
                     # Download and cache model
+                    WHISPER_MODEL_DIR, _, _ = get_model_config()
                     model = await loop.run_in_executor(
                         None,
                         whisper.load_model,
@@ -224,7 +258,8 @@ class SimpleState:
                 recordings_dir, 
                 f"recording_{int(time.time())}.{extension}"
             )
-            recorder = AudioRecorder(output_file=output_file)
+            AudioRecorderClass = get_audio_recorder()
+            recorder = AudioRecorderClass(output_file=output_file)
             
             if session_id in self.sessions:
                 self.sessions[session_id]["recorder"] = recorder
@@ -1218,7 +1253,8 @@ async def process_audio_concurrent(session_id: str, language: str = "en", _forma
         
         # Use concurrent processing engine
         try:
-            result = await concurrent_processor.process_audio_concurrent(
+            concurrent_processor_instance = get_concurrent_processor()
+            result = await concurrent_processor_instance.process_audio_concurrent(
                 session_id, wav_file_for_processing, language, websocket_manager
             )
             
