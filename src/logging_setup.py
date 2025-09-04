@@ -37,8 +37,9 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
     
     # Create file handler for persistent logging
     try:
-        # Use fixed path for consistency with other files
-        log_dir = Path(r"c:\\TranscrevAI_windows\\data\\logs")
+        # Import config to get cross-platform base directory
+        from config.app_config import DATA_DIR
+        log_dir = DATA_DIR / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         
         log_file = log_dir / "transcrevai.log"

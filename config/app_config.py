@@ -1,12 +1,33 @@
-# TranscrevAI Configuration - Fixed Version
+# TranscrevAI Configuration - Cross-Platform Version
 import os
+import sys
 from pathlib import Path
 
 # Application package name
 APP_PACKAGE_NAME = "TranscrevAI"
 
-# Base directory (project root) - Fixed path
-BASE_DIR = Path(r"c:\\TranscrevAI_windows")
+# Cross-platform base directory detection
+def get_base_directory():
+    """Get the application base directory based on platform and environment"""
+    # Check if running from source directory
+    current_dir = Path(__file__).parent.parent
+    if (current_dir / "src").exists() and (current_dir.name.startswith("TranscrevAI")):
+        return current_dir
+    
+    # Platform-specific application data directories
+    if sys.platform == "win32":
+        # Windows: Use AppData/Local
+        base = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))) / APP_PACKAGE_NAME
+    elif sys.platform == "darwin":
+        # macOS: Use ~/Library/Application Support
+        base = Path.home() / "Library" / "Application Support" / APP_PACKAGE_NAME
+    else:
+        # Linux and other Unix-like: Use ~/.local/share
+        base = Path.home() / ".local" / "share" / APP_PACKAGE_NAME
+    
+    return base
+
+BASE_DIR = get_base_directory()
 
 # Data directories
 DATA_DIR = BASE_DIR / "data"
