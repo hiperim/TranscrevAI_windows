@@ -16,7 +16,7 @@ from config.app_config import APP_PACKAGE_NAME
 logger = setup_app_logging(logger_name="transcrevai.file_manager")
 
 def sanitize_path(user_input, base_dir):
-    """Securely sanitize user input paths"""
+    # Securely sanitize user input paths
     try:
         base_path = Path(base_dir).resolve()
         resolved_path = base_path.joinpath(user_input).resolve()
@@ -34,23 +34,21 @@ def sanitize_path(user_input, base_dir):
         raise SecurityError(f"Invalid path operation: {str(e)}")
 
 class SecurityError(RuntimeError):
-    """Custom security exception with proper logging"""
+    # Custom security exception with proper logging
     def __init__(self, message):
         logger.error(f"SECURITY VIOLATION: {message}")
         super().__init__(message)
 
-class FileManager:
-    """Enhanced file manager with robust security and error handling"""
-    
+class FileManager:    
     @staticmethod
     def get_base_directory(subdir=""):
-        """Get base application directory"""
+        # Get base application directory
         base = Path(__file__).resolve().parent.parent.parent
         return str(base / subdir) if subdir else str(base)
     
     @staticmethod
     def get_data_path(subdir="") -> str:
-        """Get data directory path with validation"""
+        # Get data directory path with validation
         # Use the fixed base directory path
         base = Path(r"c:\\TranscrevAI_windows\\data")
         full_path = base / subdir

@@ -23,6 +23,8 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
     Returns:
         str: Path to the generated SRT file
     """
+    temp_path = None  # Initialize to avoid "possibly unbound" error
+    
     try:
         if not transcription_data or not isinstance(transcription_data, list):
             raise ValueError("Missing required transcription data")
@@ -63,7 +65,6 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
                 raise RuntimeError(f"Cannot determine output path: {e}") from e
 
         combined_segments = []
-        temp_path = None
 
         # Use aiofiles.tempfile for async temp file handling
         async with aiofiles.tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as tmp:

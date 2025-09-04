@@ -54,6 +54,9 @@ class WhisperModelManager:
             
             model_name = WhisperModelManager.get_model_name(language)
             
+            # Use running event loop for executor tasks (ensure 'loop' is always bound)
+            loop = asyncio.get_running_loop()
+            
             # Send download start notification
             if websocket_manager and session_id:
                 await websocket_manager.send_message(session_id, {
@@ -66,7 +69,6 @@ class WhisperModelManager:
             # Check if model is already cached
             try:
                 # Try to load model to check if it's available
-                loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
                     None,
                     whisper.load_model,
@@ -1209,12 +1211,11 @@ async def process_audio_concurrent(session_id: str, language: str = "en", _forma
         
         # Clean up temporary WAV file if it was created
         try:
+            # Use locals().get to avoid referencing variables that may not have been set
+            wav_file_for_processing = locals().get("wav_file_for_processing")
+            audio_file = locals().get("audio_file")
             if (
-                "wav_file_for_processing" in locals()
-                and "audio_file" in locals()
-                and wav_file_for_processing is not None
-                and audio_file is not None
-                and isinstance(wav_file_for_processing, str)
+                isinstance(wav_file_for_processing, str)
                 and isinstance(audio_file, str)
                 and wav_file_for_processing != audio_file
                 and os.path.exists(wav_file_for_processing)
