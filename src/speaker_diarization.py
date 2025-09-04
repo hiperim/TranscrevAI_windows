@@ -55,6 +55,32 @@ VoiceActivityDetection = None
 torch = None
 _pyannote_imports_attempted = False
 
+# TorchCodec imports for future-proofing
+TORCHCODEC_AVAILABLE = False
+torchcodec = None
+_torchcodec_imports_attempted = False
+
+def _ensure_torchcodec_imports():
+    """Lazy import of TorchCodec dependencies"""
+    global TORCHCODEC_AVAILABLE, torchcodec, _torchcodec_imports_attempted
+    
+    if _torchcodec_imports_attempted:
+        return TORCHCODEC_AVAILABLE
+    
+    _torchcodec_imports_attempted = True
+    
+    try:
+        import torchcodec as _torchcodec
+        torchcodec = _torchcodec
+        TORCHCODEC_AVAILABLE = True
+        logger.info("TorchCodec dependencies loaded successfully")
+    except ImportError as e:
+        logger.info(f"TorchCodec not available, using fallback: {e}")
+        TORCHCODEC_AVAILABLE = False
+        torchcodec = None
+    
+    return TORCHCODEC_AVAILABLE
+
 def _ensure_pyannote_imports():
     """Lazy import of PyAnnote.Audio dependencies"""
     global PYANNOTE_AVAILABLE, Pipeline, VoiceActivityDetection, torch, _pyannote_imports_attempted
@@ -63,6 +89,7 @@ def _ensure_pyannote_imports():
         return PYANNOTE_AVAILABLE
     
     _pyannote_imports_attempted = True
+    
     try:
         from pyannote.audio import Pipeline as _Pipeline
         from pyannote.audio.pipelines import VoiceActivityDetection as _VAD
@@ -82,6 +109,57 @@ def _ensure_pyannote_imports():
     
     return PYANNOTE_AVAILABLE
 
+def load_audio_with_torchcodec(audio_file, sr=None, mono=True):
+    """
+    Load audio using TorchCodec when available, fallback to librosa
+    
+    Args:
+        audio_file: Path to audio file
+        sr: Target sample rate (None to keep original)
+        mono: Convert to mono if True
+    
+    Returns:
+        tuple: (audio_data, sample_rate)
+    """
+    try:
+        # Try TorchCodec first
+        if _ensure_torchcodec_imports() and torchcodec is not None:
+            try:
+                # Use TorchCodec decoder - check if decoders module exists
+                if hasattr(torchcodec, 'decoders') and hasattr(torchcodec.decoders, '_core'):  # type: ignore
+                    decoder = torchcodec.decoders._core.create_from_file(audio_file)  # type: ignore
+                else:
+                    raise Exception("TorchCodec decoders._core not available")
+                frames, _ = decoder.get_next_chunk()
+                
+                # Convert to numpy and handle channels
+                audio_data = frames.squeeze().numpy()
+                
+                # Get sample rate from decoder metadata
+                metadata = decoder.get_metadata()
+                original_sr = int(metadata.sample_rate)
+                
+                # Convert to mono if needed
+                if mono and len(audio_data.shape) > 1:
+                    audio_data = audio_data.mean(axis=1)
+                
+                # Resample if needed
+                if sr is not None and sr != original_sr:
+                    audio_data = librosa.resample(audio_data.astype(np.float32), 
+                                                orig_sr=original_sr, target_sr=sr)
+                    return audio_data, sr
+                
+                return audio_data.astype(np.float32), original_sr
+                
+            except Exception as e:
+                logger.warning(f"TorchCodec loading failed: {e}, falling back to librosa")
+                
+    except Exception as e:
+        logger.debug(f"TorchCodec not available: {e}")
+    
+    # Fallback to librosa
+    return librosa.load(audio_file, sr=sr, mono=mono)
+
 from config.app_config import PYANNOTE_CONFIG
 
 class DiarizationError(Enum):
@@ -91,14 +169,14 @@ class DiarizationError(Enum):
     INSUFFICIENT_DATA = 4
 
 class SpeakerDiarization:
-    """PyAnnote.Audio neural speaker diarization"""
+    """PyAnnote.Audio neural speaker diarization with TorchCodec support"""
 
     def __init__(self):
         self.pipeline = None
-        self._device = None  # Lazy device detection
-        self._ffmpeg_path = None  # Lazy FFmpeg setup
+        self._device = None # Lazy device detection
+        self._ffmpeg_path = None # Lazy FFmpeg setup
 
-    @property 
+    @property
     def device(self):
         """Lazy device detection only when needed"""
         if self._device is None:
@@ -108,7 +186,7 @@ class SpeakerDiarization:
             else:
                 self._device = "cpu"
         return self._device
-    
+
     @property
     def ffmpeg_path(self):
         """Lazy FFmpeg path detection"""
@@ -138,17 +216,23 @@ class SpeakerDiarization:
 
         try:
             loop = asyncio.get_event_loop()
+            
             # Fix: Handle the case where Pipeline.from_pretrained might not have these parameters
+            if Pipeline is None:
+                raise RuntimeError("Pipeline not available - PyAnnote.Audio not properly imported")
+                
             try:
                 self.pipeline = await loop.run_in_executor(
                     None,
                     Pipeline.from_pretrained,
                     PYANNOTE_CONFIG["pipeline"],
-                    PYANNOTE_CONFIG["cache_dir"],  # Fix: Remove parameter name
-                    PYANNOTE_CONFIG.get("use_auth_token")  # Fix: Remove parameter name
+                    PYANNOTE_CONFIG["cache_dir"], # Fix: Remove parameter name
+                    PYANNOTE_CONFIG.get("use_auth_token") # Fix: Remove parameter name
                 )
             except TypeError:
                 # Fallback if parameters don't exist
+                if Pipeline is None:
+                    raise RuntimeError("Pipeline not available - PyAnnote.Audio not properly imported")
                 self.pipeline = await loop.run_in_executor(
                     None,
                     Pipeline.from_pretrained,
@@ -156,7 +240,7 @@ class SpeakerDiarization:
                 )
 
             # Configure pipeline
-            if hasattr(self.pipeline, "to") and self.device and torch is not None:  # Fix: Add torch None check
+            if hasattr(self.pipeline, "to") and self.device and torch is not None: # Fix: Add torch None check
                 self.pipeline = self.pipeline.to(torch.device(self.device))
 
             logger.info(f"PyAnnote pipeline loaded: {PYANNOTE_CONFIG['pipeline']}")
@@ -202,7 +286,7 @@ class SpeakerDiarization:
                 return [(0.0, min(1.0, len(x) / Fs))]
 
             # Ensure minimum duration for VAD
-            min_duration = 0.5  # 500ms minimum
+            min_duration = 0.5 # 500ms minimum
             if len(x) / Fs < min_duration:
                 logger.warning(f"Audio too short for VAD: {len(x)/Fs:.2f}s, returning full duration")
                 return [(0.0, len(x) / Fs)]
@@ -212,10 +296,10 @@ class SpeakerDiarization:
                 if aS is not None:
                     vad_segments = aS.silence_removal(
                         x, Fs,
-                        st_win=0.1,  # Smaller window for short audio
+                        st_win=0.1, # Smaller window for short audio
                         st_step=0.05,
                         smooth_window=0.2,
-                        weight=0.3  # Lower threshold for detection
+                        weight=0.3 # Lower threshold for detection
                     )
                 else:
                     # Fallback if aS is not available
@@ -230,7 +314,7 @@ class SpeakerDiarization:
                 # Filter out very short segments
                 valid_segments = []
                 for start, end in vad_segments:
-                    if end - start >= 0.1:  # Minimum 100ms segments
+                    if end - start >= 0.1: # Minimum 100ms segments
                         valid_segments.append((start, end))
 
                 if not valid_segments:
@@ -250,15 +334,17 @@ class SpeakerDiarization:
     def _extract_frequency_features(self, audio_segment, sample_rate):
         """
         Extract frequency-based features for speaker identification
+
         Args:
             audio_segment: numpy array of audio samples
             sample_rate: sample rate of the audio
+
         Returns:
             list: [mean_f0, freq_ratio, mean_centroid, formant_f1, formant_f2]
         """
         try:
             # Ensure audio has minimum length
-            if len(audio_segment) < sample_rate * 0.1:  # 100ms minimum
+            if len(audio_segment) < sample_rate * 0.1: # 100ms minimum
                 logger.warning("Audio segment too short for frequency analysis")
                 return [0, 0, 0, 0, 0]
 
@@ -276,26 +362,31 @@ class SpeakerDiarization:
                 logger.debug(f"Mean F0: {mean_f0:.2f} Hz")
             except Exception as e:
                 logger.warning(f"F0 extraction failed: {e}")
-                mean_f0 = 150  # Default middle value
+                mean_f0 = 150 # Default middle value
 
             # 2. Spectral analysis
             try:
                 # Short-time Fourier Transform
                 stft = librosa.stft(audio_segment, n_fft=2048, hop_length=512)
                 magnitude = np.abs(stft)
+
                 # Frequency bins
                 freqs = librosa.fft_frequencies(sr=sample_rate, n_fft=2048)
+
                 # Low/High frequency energy ratio (key differentiator)
-                low_freq_mask = freqs < 1000  # Below 1kHz
-                high_freq_mask = freqs > 1000  # Above 1kHz
+                low_freq_mask = freqs < 1000 # Below 1kHz
+                high_freq_mask = freqs > 1000 # Above 1kHz
+
                 low_energy = np.sum(magnitude[low_freq_mask])
                 high_energy = np.sum(magnitude[high_freq_mask])
+
                 # Frequency ratio (higher for male voices, lower for female)
                 freq_ratio = low_energy / (high_energy + 1e-8)
                 logger.debug(f"Frequency ratio (low/high): {freq_ratio:.3f}")
+
             except Exception as e:
                 logger.warning(f"Spectral analysis failed: {e}")
-                freq_ratio = 1.0  # Default neutral ratio
+                freq_ratio = 1.0 # Default neutral ratio
 
             # 3. Spectral centroid (brightness of sound)
             try:
@@ -304,26 +395,30 @@ class SpeakerDiarization:
                 logger.debug(f"Mean spectral centroid: {mean_centroid:.2f} Hz")
             except Exception as e:
                 logger.warning(f"Spectral centroid calculation failed: {e}")
-                mean_centroid = 2000  # Default value
+                mean_centroid = 2000 # Default value
 
             # 4. Formant analysis (F1 and F2)
             try:
                 # Use LPC (Linear Predictive Coding) for formant estimation
                 # Get power spectral density
                 freqs_psd, psd = signal.welch(audio_segment, fs=sample_rate, nperseg=1024)
+
                 # Find peaks in the spectrum (formants)
                 peaks, _ = signal.find_peaks(psd, height=np.max(psd) * 0.1, distance=20)
+
                 if len(peaks) >= 2:
-                    formant_f1 = freqs_psd[peaks[0]]  # First formant
-                    formant_f2 = freqs_psd[peaks[1]]  # Second formant
+                    formant_f1 = freqs_psd[peaks[0]] # First formant
+                    formant_f2 = freqs_psd[peaks[1]] # Second formant
                 else:
                     # Default formant values
-                    formant_f1 = 500  # Typical F1 for /a/ vowel
-                    formant_f2 = 1500  # Typical F2 for /a/ vowel
+                    formant_f1 = 500 # Typical F1 for /a/ vowel
+                    formant_f2 = 1500 # Typical F2 for /a/ vowel
+
                 logger.debug(f"Formants - F1: {formant_f1:.2f} Hz, F2: {formant_f2:.2f} Hz")
+
             except Exception as e:
                 logger.warning(f"Formant analysis failed: {e}")
-                formant_f1, formant_f2 = 500, 1500  # Default values
+                formant_f1, formant_f2 = 500, 1500 # Default values
 
             features = [mean_f0, freq_ratio, mean_centroid, formant_f1, formant_f2]
             logger.debug(f"Extracted features: {features}")
@@ -331,30 +426,32 @@ class SpeakerDiarization:
 
         except Exception as e:
             logger.error(f"Feature extraction failed: {e}")
-            return [150, 1.0, 2000, 500, 1500]  # Default feature values
+            return [150, 1.0, 2000, 500, 1500] # Default feature values
 
     def _frequency_based_diarization(self, audio_file, min_speakers=2, max_speakers=5):
         """
         Speaker diarization based on frequency characteristics
+
         Args:
             audio_file: path to audio file
             min_speakers: minimum number of speakers to detect
             max_speakers: maximum number of speakers to detect
+
         Returns:
             list: diarization segments with speaker labels
         """
         try:
             logger.info(f"Starting frequency-based diarization with {min_speakers}-{max_speakers} speakers")
 
-            # Read audio file
+            # Read audio file using TorchCodec if available
             try:
-                audio_data, sample_rate = librosa.load(audio_file, sr=None, mono=True)
+                audio_data, sample_rate = load_audio_with_torchcodec(audio_file, sr=None, mono=True)
                 logger.info(f"Audio loaded: {len(audio_data)} samples at {sample_rate}Hz")
             except Exception as e:
                 logger.error(f"Failed to load audio: {e}")
                 return []
 
-            if len(audio_data) < sample_rate * 0.5:  # Less than 500ms
+            if len(audio_data) < sample_rate * 0.5: # Less than 500ms
                 logger.warning("Audio too short for reliable diarization")
                 return [{
                     "start": 0.0,
@@ -363,8 +460,8 @@ class SpeakerDiarization:
                 }]
 
             # Segment audio into analysis windows
-            window_duration = 1.0  # 1 second windows
-            hop_duration = 0.5  # 500ms hop (50% overlap)
+            window_duration = 1.0 # 1 second windows
+            hop_duration = 0.5 # 500ms hop (50% overlap)
             window_samples = int(window_duration * sample_rate)
             hop_samples = int(hop_duration * sample_rate)
 
@@ -436,13 +533,13 @@ class SpeakerDiarization:
                     if KMeans is None:
                         logger.warning("KMeans not available, skipping clustering")
                         break
-                        
+
                     # K-means clustering
                     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
                     labels = kmeans.fit_predict(features_pca)
 
                     # Calculate silhouette score for cluster quality
-                    if len(set(labels)) > 1 and silhouette_score is not None:  # Fix: Check if silhouette_score is not None
+                    if len(set(labels)) > 1 and silhouette_score is not None: # Fix: Check if silhouette_score is not None
                         score = silhouette_score(features_pca, labels)
                         logger.debug(f"K-means with {n_clusters} clusters: silhouette score = {score:.3f}")
 
@@ -450,6 +547,7 @@ class SpeakerDiarization:
                             best_score = score
                             best_labels = labels
                             best_n_clusters = n_clusters
+
                 except Exception as e:
                     logger.warning(f"Clustering with {n_clusters} clusters failed: {e}")
                     continue
@@ -472,7 +570,7 @@ class SpeakerDiarization:
                     "start": segment["start"],
                     "end": segment["end"],
                     "speaker": speaker_label,
-                    "confidence": 0.8,  # Fixed confidence for frequency-based method
+                    "confidence": 0.8, # Fixed confidence for frequency-based method
                     "method": "frequency_analysis"
                 }
 
@@ -482,7 +580,6 @@ class SpeakerDiarization:
             merged_segments = self._merge_consecutive_segments(diarization_segments)
 
             logger.info(f"Frequency-based diarization complete: {len(merged_segments)} segments, {len(set(smoothed_labels))} unique speakers")
-
             return merged_segments
 
         except Exception as e:
@@ -506,6 +603,7 @@ class SpeakerDiarization:
             smoothed = median_filter(smoothed.astype(float), size=3).astype(int)
 
             return smoothed
+
         except Exception as e:
             logger.warning(f"Temporal smoothing failed: {e}")
             return labels
@@ -527,8 +625,7 @@ class SpeakerDiarization:
                 merged.append(current)
                 current = next_segment.copy()
 
-        merged.append(current)  # Don't forget the last segment
-
+        merged.append(current) # Don't forget the last segment
         return merged
 
     async def diarize_audio(self, audio_file, number_speakers=0):
@@ -569,7 +666,7 @@ class SpeakerDiarization:
                     "start": float(turn.start),
                     "end": float(turn.end),
                     "speaker": f"Speaker_{speaker}",
-                    "confidence": 0.95,  # PyAnnote typically high confidence
+                    "confidence": 0.95, # PyAnnote typically high confidence
                     "method": "neural_pyannote"
                 })
 
@@ -577,7 +674,6 @@ class SpeakerDiarization:
             segments.sort(key=lambda x: x["start"])
 
             unique_speakers = len(set(seg["speaker"] for seg in segments))
-
             logger.info(f"PyAnnote diarization completed: {len(segments)} segments, {unique_speakers} speakers")
 
             return segments
@@ -608,7 +704,7 @@ class SpeakerDiarization:
         # Fix: Initialize variables at the start to avoid unbound issues
         x = None
         Fs = None
-        
+
         try:
             logger.info(f"Processing diarization on {audio_file}")
 
@@ -651,7 +747,7 @@ class SpeakerDiarization:
             x_filt = np.concatenate(speech_samples)
 
             # Ensure minimum length
-            min_samples = int(Fs * 0.5)  # 500ms minimum
+            min_samples = int(Fs * 0.5) # 500ms minimum
             if len(x_filt) < min_samples:
                 logger.warning(f"Audio too short: {len(x_filt)/Fs:.2f}s, padding to minimum")
                 x_filt = np.pad(x_filt, (0, min_samples - len(x_filt)), mode='constant')
@@ -682,7 +778,7 @@ class SpeakerDiarization:
             # Extract features with safe FFT and better validation
             try:
                 # Ensure we have sufficient audio length for feature extraction
-                min_audio_length = 2.0  # 2 seconds minimum
+                min_audio_length = 2.0 # 2 seconds minimum
                 if len(x_filt) / Fs < min_audio_length:
                     logger.warning(f"Audio too short for proper diarization: {len(x_filt)/Fs:.2f}s")
                     # Return single speaker for short audio
@@ -697,7 +793,7 @@ class SpeakerDiarization:
                         features = mid_feature_extraction(
                             signal=x_filt,
                             sampling_rate=Fs,
-                            mid_window=min(1.0, len(x_filt) / Fs / 4),  # Adaptive window
+                            mid_window=min(1.0, len(x_filt) / Fs / 4), # Adaptive window
                             mid_step=0.5,
                             short_window=0.05,
                             short_step=0.05
@@ -780,6 +876,7 @@ class SpeakerDiarization:
                                 except Exception as cleanup_error:
                                     logger.warning(f"Failed to clean up temporary file: {cleanup_error}")
                             return energy_segments
+
                     except Exception as energy_error:
                         logger.error(f"All diarization methods failed: {energy_error}")
 
@@ -832,7 +929,7 @@ class SpeakerDiarization:
 
             current_speaker = int(flags[0])
             start_time = 0.0
-            min_duration = 0.3  # Minimum segment duration
+            min_duration = 0.3 # Minimum segment duration
 
             for i in range(1, len(flags)):
                 if flags[i] != current_speaker:
@@ -883,7 +980,7 @@ class SpeakerDiarization:
             return len(x) / Fs
         except Exception as e:
             logger.warning(f"Could not determine audio duration: {e}")
-            return 1.0  # Default duration
+            return 1.0 # Default duration
 
     def _alternative_diarization_sklearn(self, audio_file, n_speakers=2):
         """Alternative diarization using scikit-learn and spectral features"""
@@ -909,8 +1006,8 @@ class SpeakerDiarization:
 
             # Extract MFCC-like features using librosa
             duration = len(x) / Fs
-            window_size = 2.0  # 2 second windows
-            hop_size = 0.5  # 0.5 second hop
+            window_size = 2.0 # 2 second windows
+            hop_size = 0.5 # 0.5 second hop
 
             features = []
             timestamps = []
@@ -950,7 +1047,7 @@ class SpeakerDiarization:
             # Determine optimal number of speakers
             if n_speakers <= 0:
                 # Use simple heuristic: try 2-4 speakers and pick based on duration
-                n_speakers = min(4, max(2, int(duration / 30)))  # 1 speaker per 30 seconds
+                n_speakers = min(4, max(2, int(duration / 30))) # 1 speaker per 30 seconds
 
             n_speakers = min(n_speakers, len(features))
 
@@ -962,6 +1059,7 @@ class SpeakerDiarization:
                     labels = kmeans.fit_predict(features_scaled)
                 else:
                     raise Exception("KMeans not available")
+
             except Exception as e:
                 logger.warning(f"KMeans failed: {e}, trying AgglomerativeClustering")
                 try:
@@ -970,6 +1068,7 @@ class SpeakerDiarization:
                         labels = clustering.fit_predict(features_scaled)
                     else:
                         raise Exception("AgglomerativeClustering not available")
+
                 except Exception as e2:
                     logger.warning(f"AgglomerativeClustering failed: {e2}, using simple energy-based diarization")
                     return self._simple_energy_diarization(audio_file, n_speakers)
@@ -1002,7 +1101,6 @@ class SpeakerDiarization:
             segments = self._merge_short_segments(segments, min_duration=1.0)
 
             logger.info(f"Alternative diarization completed: {len(segments)} segments, {len(set(s['speaker'] for s in segments))} speakers")
-
             return segments
 
         except Exception as e:
@@ -1045,7 +1143,7 @@ class SpeakerDiarization:
             # Combine features
             features = np.concatenate([
                 [spectral_centroid, spectral_rolloff, spectral_flux, zcr, rms_energy],
-                mfcc_features[:12]  # First 12 MFCC coefficients
+                mfcc_features[:12] # First 12 MFCC coefficients
             ])
 
             return features
@@ -1058,7 +1156,7 @@ class SpeakerDiarization:
                 np.std(audio_segment),
                 np.max(audio_segment),
                 np.min(audio_segment),
-                np.sqrt(np.mean(audio_segment**2))  # RMS
+                np.sqrt(np.mean(audio_segment**2)) # RMS
             ])
 
     def _create_mel_filterbank(self, sample_rate, n_fft_bins, n_filters=13):
@@ -1117,7 +1215,7 @@ class SpeakerDiarization:
                 x = x.mean(axis=1)
 
             duration = len(x) / Fs
-            window_size = 1.0  # 1 second windows
+            window_size = 1.0 # 1 second windows
             window_samples = int(window_size * Fs)
 
             # Calculate energy for each window
@@ -1170,7 +1268,6 @@ class SpeakerDiarization:
                 }]
 
             logger.info(f"Simple energy diarization completed: {len(segments)} segments")
-
             return segments
 
         except Exception as e:
@@ -1201,11 +1298,11 @@ class SpeakerDiarization:
                 merged_segment = {
                     "start": current["start"],
                     "end": next_segment["end"],
-                    "speaker": current["speaker"]  # Keep first speaker
+                    "speaker": current["speaker"] # Keep first speaker
                 }
 
                 merged.append(merged_segment)
-                i += 2  # Skip next segment as it's been merged
+                i += 2 # Skip next segment as it's been merged
             else:
                 merged.append(current)
                 i += 1

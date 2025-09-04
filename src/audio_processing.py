@@ -16,9 +16,9 @@ from typing import Optional
 
 # Import Windows-specific modules only if available
 try:
-    import win32file
-    import win32con
-    import pywintypes
+    import win32file  # type: ignore
+    import win32con  # type: ignore
+    import pywintypes  # type: ignore
     from ctypes import windll
     WINDOWS_AVAILABLE = True
 except ImportError:
