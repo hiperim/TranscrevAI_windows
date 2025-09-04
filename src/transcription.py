@@ -82,15 +82,27 @@ def _ensure_ml_imports():
     _ml_imports_attempted = True
 
     try:
+        # Try openai-whisper package first (which should be available)
         import whisper as _whisper
         import torch as _torch
 
         whisper = _whisper
         torch = _torch
         WHISPER_AVAILABLE = True
-        logger.info("ML dependencies loaded successfully")
+        logger.info("ML dependencies (OpenAI Whisper) loaded successfully")
+        
+        # Test that whisper is working properly
+        _ = whisper.available_models()
+        logger.info(f"Available Whisper models: {whisper.available_models()}")
+        
     except ImportError as e:
-        logger.warning(f"ML dependencies not available: {e}")
+        logger.error(f"ML dependencies not available - Whisper import failed: {e}")
+        logger.error("Please ensure 'openai-whisper' is properly installed: pip install openai-whisper")
+        WHISPER_AVAILABLE = False
+        whisper = None
+        torch = None
+    except Exception as e:
+        logger.error(f"ML dependencies loaded but Whisper test failed: {e}")
         WHISPER_AVAILABLE = False
         whisper = None
         torch = None
@@ -142,8 +154,9 @@ def load_audio_with_torchcodec(audio_file, sr=16000, mono=True):
     except Exception as e:
         logger.debug(f"TorchCodec not available: {e}")
     
-    # Fallback to librosa
-    return librosa.load(audio_file, sr=sr, mono=mono)
+    # Fallback to librosa - ensure float32 consistency
+    audio_data, sample_rate = librosa.load(audio_file, sr=sr, mono=mono, dtype=np.float32)
+    return audio_data, sample_rate
 
 def preprocess_audio_advanced(audio_data, sample_rate):
     """
@@ -221,7 +234,8 @@ def preprocess_audio_advanced(audio_data, sample_rate):
         if np.max(np.abs(audio_data)) > 0:
             audio_data = audio_data / np.max(np.abs(audio_data)) * 0.8
         
-        return audio_data
+        # Ensure float32 consistency for Whisper
+        return audio_data.astype(np.float32)
         
     except Exception as e:
         logger.error(f"Audio preprocessing failed: {e}")
@@ -282,8 +296,15 @@ class WhisperTranscriptionService:
 
         return self._models[language_code]
 
-# Global service instance
-transcription_service = WhisperTranscriptionService()
+# Global service instance - lazy initialization
+transcription_service = None
+
+def get_transcription_service():
+    """Get or create transcription service instance"""
+    global transcription_service
+    if transcription_service is None:
+        transcription_service = WhisperTranscriptionService()
+    return transcription_service
 
 async def transcribe_audio_with_progress(
     wav_file: str,
@@ -295,14 +316,15 @@ async def transcribe_audio_with_progress(
     try:
         logger.info(f"Starting Whisper transcription for {wav_file} with language {language_code}")
 
-        # Check if Whisper is available
-        if not WHISPER_AVAILABLE:
-            logger.error("Whisper not available")
+        # Check if Whisper is available - ensure ML imports are attempted first
+        if not _ensure_ml_imports():
+            logger.error("Whisper not available - ML dependencies failed to load")
             yield 100, [{"start": 0.0, "end": 1.0, "text": "Whisper not available"}]
             return
 
         # Load Whisper model
-        model = await transcription_service.load_whisper_model(language_code)
+        service = get_transcription_service()
+        model = await service.load_whisper_model(language_code)
 
         # Validate audio file
         if not os.path.exists(wav_file):
