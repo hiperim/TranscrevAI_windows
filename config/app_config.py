@@ -37,9 +37,27 @@ RECORDINGS_DIR = DATA_DIR / "recordings"
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 PROCESSED_DIR = DATA_DIR / "processed"
 
-# Ensure directories exist
-for directory in [DATA_DIR, MODEL_DIR, TEMP_DIR, RECORDINGS_DIR, TRANSCRIPTS_DIR, PROCESSED_DIR]:
-    directory.mkdir(parents=True, exist_ok=True)
+# Lazy directory creation function
+def ensure_directories():
+    """Create required directories only when needed"""
+    directories = [DATA_DIR, MODEL_DIR, TEMP_DIR, RECORDINGS_DIR, TRANSCRIPTS_DIR, PROCESSED_DIR]
+    for directory in directories:
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to create directory {directory}: {e}")
+
+# Auto-create directories on first access
+_directories_created = False
+
+def _ensure_directories_created():
+    """Ensure directories are created on first access"""
+    global _directories_created
+    if not _directories_created:
+        ensure_directories()
+        _directories_created = True
 
 # Audio settings
 DEFAULT_SAMPLE_RATE = 16000

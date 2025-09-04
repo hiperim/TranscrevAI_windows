@@ -40,16 +40,34 @@ if not PYLOUDNORM_AVAILABLE:
 if not NOISEREDUCE_AVAILABLE:
     logger.warning("noisereduce not available - noise reduction disabled")
 
-# Import Whisper with graceful fallback
-try:
-    import whisper
-    import torch
-    WHISPER_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Whisper not available: {e}")
-    WHISPER_AVAILABLE = False
-    whisper = None
-    torch = None
+# Lazy import for heavy ML dependencies
+WHISPER_AVAILABLE = False
+whisper = None
+torch = None
+_ml_imports_attempted = False
+
+def _ensure_ml_imports():
+    """Lazy import of heavy ML dependencies"""
+    global WHISPER_AVAILABLE, whisper, torch, _ml_imports_attempted
+    
+    if _ml_imports_attempted:
+        return WHISPER_AVAILABLE
+    
+    _ml_imports_attempted = True
+    try:
+        import whisper as _whisper
+        import torch as _torch
+        whisper = _whisper
+        torch = _torch
+        WHISPER_AVAILABLE = True
+        logger.info("ML dependencies loaded successfully")
+    except ImportError as e:
+        logger.warning(f"ML dependencies not available: {e}")
+        WHISPER_AVAILABLE = False
+        whisper = None
+        torch = None
+    
+    return WHISPER_AVAILABLE
 
 class TranscriptionError(Exception):
     pass
@@ -62,12 +80,23 @@ class WhisperTranscriptionService:
     def __init__(self):
         self._models = {}
         self._model_lock = asyncio.Lock()
-        self.device = "cuda" if torch and torch.cuda.is_available() else "cpu"
-        logger.info(f"Whisper device: {self.device}")
+        self._device = None  # Lazy device detection
+        
+    @property
+    def device(self):
+        """Lazy device detection only when needed"""
+        if self._device is None:
+            if _ensure_ml_imports() and torch:
+                self._device = "cuda" if torch.cuda.is_available() else "cpu"
+                logger.info(f"Whisper device: {self._device}")
+            else:
+                self._device = "cpu"
+        return self._device
 
     async def load_whisper_model(self, language_code: str) -> Any:
         """Load and cache Whisper model"""
-        if not WHISPER_AVAILABLE or whisper is None:  # Fixed None check
+        # Ensure ML dependencies are loaded
+        if not _ensure_ml_imports():
             logger.error("Whisper not available")
             raise TranscriptionError("Whisper dependencies not installed")
 

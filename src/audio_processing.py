@@ -30,10 +30,19 @@ except ImportError:
 
 try:
     import static_ffmpeg
-    static_ffmpeg.add_paths()
     FFMPEG_AVAILABLE = True
+    _ffmpeg_paths_added = False
 except ImportError:
+    static_ffmpeg = None
     FFMPEG_AVAILABLE = False
+    _ffmpeg_paths_added = True  # Skip path addition if not available
+
+def _ensure_ffmpeg_paths():
+    """Lazily add FFmpeg paths only when needed"""
+    global _ffmpeg_paths_added
+    if not _ffmpeg_paths_added and FFMPEG_AVAILABLE and static_ffmpeg is not None:
+        static_ffmpeg.add_paths()
+        _ffmpeg_paths_added = True
 
 from src.logging_setup import setup_app_logging
 from src.file_manager import FileManager
@@ -289,6 +298,9 @@ class AudioRecorder:
     def _verify_ffmpeg(self):
         """Verify FFmpeg availability"""
         try:
+            # Ensure FFmpeg paths are added before verification
+            _ensure_ffmpeg_paths()
+            
             if FFMPEG_AVAILABLE:
                 subprocess.run(
                     ["ffmpeg", "-version"],
