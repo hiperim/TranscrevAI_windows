@@ -302,8 +302,26 @@ async def transcribe_audio_with_progress(
                 
                 logger.info("Advanced audio preprocessing completed")
 
-                # Transcribe with Whisper
-                language = language_code if language_code in ['en'] else None # Use None for auto-detect
+                # Transcribe with Whisper - Fix: Allow all configured languages
+                from config.app_config import WHISPER_MODELS
+                language = language_code if language_code in WHISPER_MODELS else None
+                logger.info(f"Using Whisper with language: {language} (requested: {language_code})")
+
+                # Get language-specific initial prompt
+                initial_prompts = WHISPER_CONFIG.get("initial_prompt", {})
+                initial_prompt = None
+                if isinstance(initial_prompts, dict) and language_code in initial_prompts:
+                    initial_prompt = initial_prompts[language_code]
+                elif isinstance(initial_prompts, str):
+                    initial_prompt = initial_prompts
+
+                # Enhanced diagnostic logging
+                logger.info(f"Whisper transcription parameters:")
+                logger.info(f"  - Language: {language}")
+                logger.info(f"  - Model: {WHISPER_MODELS.get(language_code, 'auto')}")
+                logger.info(f"  - Temperature: {WHISPER_CONFIG['temperature']}")
+                logger.info(f"  - Best of: {WHISPER_CONFIG['best_of']}")
+                logger.info(f"  - Initial prompt: {initial_prompt}")
 
                 result = model.transcribe(
                     audio_data,
@@ -313,8 +331,11 @@ async def transcribe_audio_with_progress(
                     temperature=WHISPER_CONFIG["temperature"],
                     best_of=WHISPER_CONFIG["best_of"],
                     beam_size=WHISPER_CONFIG["beam_size"],
+                    initial_prompt=initial_prompt,
                     fp16=False  # Force FP32 to avoid CPU warnings
                 )
+                
+                logger.info(f"Whisper detected language: {result.get('language', 'unknown')}")
 
                 # Convert Whisper result to TranscrevAI format
                 transcription_data = []
