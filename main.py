@@ -44,14 +44,6 @@ from src.file_manager import FileManager
 from src.logging_setup import setup_app_logging
 
 logger = setup_app_logging()
-if logger is None:
-    logger = logging.getLogger("TranscrevAI")
-    logger.setLevel(logging.INFO)
-    if not logger.hasHandlers():
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
 
 # FastAPI setup
 app = FastAPI(
@@ -288,8 +280,8 @@ class SimpleState:
             if session.get("recorder"):
                 try:
                     await session["recorder"].cleanup_resources()
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup recorder for session {session_id}: {e}")
             if session.get("task"):
                 session["task"].cancel()
             del self.sessions[session_id]
@@ -312,12 +304,16 @@ class SimpleWebSocketManager:
             logger.info(f"WebSocket disconnected: {session_id}")
     
     async def send_message(self, session_id: str, message: dict):
-        if session_id in self.connections:
+        # Thread-safe retrieval to prevent race condition
+        websocket = self.connections.get(session_id)
+        if websocket is not None:
             try:
-                await self.connections[session_id].send_json(message)
+                await websocket.send_json(message)
             except Exception as e:
-                logger.error(f"Send message failed: {e}")
-                await self.disconnect(session_id)
+                logger.error(f"Send message failed for session {session_id}: {e}")
+                # Only disconnect if the connection still exists in our dict
+                if session_id in self.connections:
+                    await self.disconnect(session_id)
 
 # Global instances
 app_state = SimpleState()
@@ -1353,10 +1349,14 @@ async def process_audio_concurrent(session_id: str, language: str = "en", _forma
 
 # Production startup
 if __name__ == "__main__":
+    # Configure port from environment variable with fallback
+    port = int(os.getenv("TRANSCREVAI_PORT", "8001"))
+    host = os.getenv("TRANSCREVAI_HOST", "0.0.0.0")
+    
     uvicorn.run(
         app,
-        host="0.0.0.0",
-        port=8001,
+        host=host,
+        port=port,
         log_level="info",
         access_log=False  # Disable for production
     )

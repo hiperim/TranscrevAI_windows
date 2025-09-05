@@ -253,7 +253,6 @@ def get_transcription_service():
 
 async def transcribe_audio_with_progress(
     wav_file: str,
-    model_path: str,
     language_code: str,
     sample_rate: int = 16000
 ) -> AsyncGenerator[Tuple[int, List[Dict]], None]:
