@@ -167,20 +167,24 @@ AUDIO_CONFIG = {
     "format": "wav"
 }
 
-# Whisper Configuration
+# Whisper Configuration - Optimized for Portuguese
 WHISPER_CONFIG = {
     "device": "cpu",  # Use "cuda" if GPU available
     "compute_type": "int8",  # Quantization for performance
     "download_root": str(WHISPER_MODEL_DIR),
     "language_detection": True,
     "word_timestamps": True,
-    "temperature": 0.0,  # Deterministic output
-    "best_of": 1,  # Single decode for speed
+    "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),  # Temperature fallbacks for better accuracy
+    "best_of": 5,  # Multiple candidates for better accuracy
     "beam_size": 5,
     "patience": 1.0,
     "length_penalty": 1.0,
     "suppress_tokens": "-1",
-    "initial_prompt": None,
+    "initial_prompt": {
+        "pt": "Olá, este é um áudio em português brasileiro.",
+        "es": "Hola, este es un audio en español.",
+        "en": "Hello, this is an English audio recording."
+    },  # Language-specific initial prompts
     "condition_on_previous_text": True,
     "fp16": False,  # Avoid GPU dependency
     "compression_ratio_threshold": 2.4,

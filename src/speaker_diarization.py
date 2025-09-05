@@ -655,7 +655,8 @@ class SpeakerDiarization:
             loop = asyncio.get_event_loop()
             
             # Set number of speakers (default to 2 if not specified)
-            n_speakers = number_speakers if number_speakers > 0 else 2
+            # Fix: Ensure number_speakers is always a scalar value to avoid numpy array ambiguity
+            n_speakers = int(number_speakers) if int(number_speakers) > 0 else 2
             
             # Run speaker diarization in executor to avoid blocking
             # Fix: Create a wrapper function to handle the async call properly
