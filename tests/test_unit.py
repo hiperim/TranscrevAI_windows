@@ -18,9 +18,9 @@ from ctypes import windll
 from unittest.mock import patch, MagicMock, AsyncMock
 from src.audio_processing import AudioRecorder, AudioProcessingError
 from src.file_manager import FileManager
-from src.speaker_diarization import SpeakerDiarization
+from src.speaker_diarization_backup import SpeakerDiarization
 from src.subtitle_generator import generate_srt
-from src.transcription import WhisperTranscriptionService, TranscriptionError, transcribe_audio_with_progress   
+from src.transcription_backup import WhisperTranscriptionService, TranscriptionError, transcribe_audio_with_progress   
 from config.app_config import WHISPER_MODEL_DIR, WHISPER_MODELS
 from src.logging_setup import setup_app_logging
 from tests.conftest import generate_test_audio

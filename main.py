@@ -848,7 +848,7 @@ HTML_INTERFACE = """
                         
                         if (combinedText) {
                             const duration = speakerData.lastTime - speakerData.firstTime;
-                            const timeInfo = duration > 0 ? ` (${speakerData.firstTime.toFixed(1)}s - ${speakerData.lastTime.toFixed(1)}s)` : '';
+                            const timeInfo = duration > 0 ? ` (${speakerData.firstTime.toFixed(1)}s -> ${speakerData.lastTime.toFixed(1)}s)` : '';
                             
                             resultsHTML += `<div style="margin: 10px 0; padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #007bff;">
                                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">

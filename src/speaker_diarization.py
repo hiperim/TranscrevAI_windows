@@ -1,18 +1,26 @@
 import asyncio
-import logging
 import os
-import static_ffmpeg
 import numpy as np
-import librosa
 import shutil
 import time
-from scipy.fftpack import fft
-from scipy import signal
-from scipy.ndimage import median_filter
+import warnings
 from enum import Enum
 from unittest.mock import patch
-from scipy.io import wavfile
-import warnings
+
+# Suppress sklearn version compatibility warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
+# Specifically suppress InconsistentVersionWarning from sklearn
+try:
+    from sklearn.exceptions import InconsistentVersionWarning  # type: ignore
+    warnings.filterwarnings('ignore', category=InconsistentVersionWarning)
+except (ImportError, AttributeError):
+    # Older sklearn versions don't have this warning, or it might be in a different module
+    try:
+        # Try alternative import location
+        from sklearn.utils import InconsistentVersionWarning  # type: ignore
+        warnings.filterwarnings('ignore', category=InconsistentVersionWarning)
+    except (ImportError, AttributeError):
+        pass  # Warning class not available in this sklearn version
 
 # Import scikit-learn components
 try:
@@ -55,41 +63,120 @@ from src.logging_setup import setup_app_logging
 # Use proper logging setup first
 logger = setup_app_logging(logger_name="transcrevai.speaker_diarization")
 
-# Lazy import for PyAnnote.Audio neural diarization
-PYANNOTE_AVAILABLE = False
-Pipeline = None
-VoiceActivityDetection = None
-torch = None
-_pyannote_imports_attempted = False
+# Lazy import globals for heavy dependencies
+from typing import Any, Optional
+_scipy_imports = {}
+_scipy_fft: Optional[Any] = None
+_scipy_signal: Optional[Any] = None
+_scipy_median_filter: Optional[Any] = None
+_scipy_wavfile: Optional[Any] = None
+_librosa: Optional[Any] = None
+_static_ffmpeg: Optional[Any] = None
+_scipy_imports_attempted = False
+_librosa_imports_attempted = False
+_static_ffmpeg_attempted = False
 
-
-def _ensure_pyannote_imports():
-    """Lazy import of PyAnnote.Audio dependencies"""
-    global PYANNOTE_AVAILABLE, Pipeline, VoiceActivityDetection, torch, _pyannote_imports_attempted
+def _ensure_scipy_imports():
+    """Lazy import of scipy dependencies"""
+    global _scipy_fft, _scipy_signal, _scipy_median_filter, _scipy_wavfile, _scipy_imports_attempted
     
-    if _pyannote_imports_attempted:
-        return PYANNOTE_AVAILABLE
+    if _scipy_imports_attempted:
+        return all(v is not None for v in [_scipy_fft, _scipy_signal, _scipy_median_filter, _scipy_wavfile])
     
-    _pyannote_imports_attempted = True
+    _scipy_imports_attempted = True
     
     try:
-        from pyannote.audio import Pipeline as _Pipeline
-        from pyannote.audio.pipelines import VoiceActivityDetection as _VAD
-        import torch as _torch
+        from scipy.fftpack import fft
+        from scipy import signal
+        from scipy.ndimage import median_filter
+        from scipy.io import wavfile
         
-        Pipeline = _Pipeline
-        VoiceActivityDetection = _VAD
-        torch = _torch
-        PYANNOTE_AVAILABLE = True
-        logger.info("PyAnnote.Audio dependencies loaded successfully")
+        _scipy_fft = fft
+        _scipy_signal = signal
+        _scipy_median_filter = median_filter
+        _scipy_wavfile = wavfile
+        
+        # Store in global dict for legacy compatibility
+        _scipy_imports['wavfile'] = wavfile
+        _scipy_imports['signal'] = signal
+        _scipy_imports['median_filter'] = median_filter
+        
+        logger.info("Scipy dependencies loaded successfully")
+        return True
     except ImportError as e:
-        logger.warning(f"PyAnnote.Audio not available: {e}")
-        PYANNOTE_AVAILABLE = False
-        Pipeline = None
-        VoiceActivityDetection = None
-        torch = None
+        logger.warning(f"Scipy dependencies not available: {e}")
+        return False
+
+def _ensure_librosa_imports():
+    """Lazy import of librosa"""
+    global _librosa, _librosa_imports_attempted
     
-    return PYANNOTE_AVAILABLE
+    if _librosa_imports_attempted:
+        return _librosa is not None
+    
+    _librosa_imports_attempted = True
+    
+    try:
+        import librosa as _lib
+        _librosa = _lib
+        logger.info("Librosa loaded successfully")
+        return True
+    except ImportError as e:
+        logger.warning(f"Librosa not available: {e}")
+        return False
+
+def _ensure_static_ffmpeg():
+    """Lazy import of static_ffmpeg"""
+    global _static_ffmpeg, _static_ffmpeg_attempted
+    
+    if _static_ffmpeg_attempted:
+        return _static_ffmpeg is not None
+    
+    _static_ffmpeg_attempted = True
+    
+    try:
+        import static_ffmpeg as _sf
+        _static_ffmpeg = _sf
+        logger.info("Static FFmpeg loaded successfully")
+        return True
+    except ImportError as e:
+        logger.warning(f"Static FFmpeg not available: {e}")
+        return False
+
+def safe_speaker_id_conversion(speaker_id):
+    """
+    CRITICAL FIX: Safely convert speaker ID to integer for arithmetic operations
+    
+    This function handles all the edge cases where PyAudioAnalysis or other libraries
+    return speaker IDs as strings, floats, or other types that cause arithmetic errors.
+    
+    Args:
+        speaker_id: Speaker ID (can be string, int, float, numpy types, etc.)
+        
+    Returns:
+        int: Speaker ID as integer, defaults to 0 if conversion fails
+    """
+    try:
+        if speaker_id is None:
+            return 0
+        elif isinstance(speaker_id, str):
+            # Handle common string patterns like "Speaker_1", "1", "speaker_0", etc.
+            if speaker_id.lower().startswith("speaker_"):
+                # Extract number from "Speaker_1" format
+                return int(speaker_id.split("_")[-1])
+            else:
+                # Try direct conversion
+                return int(float(speaker_id))  # float first handles "1.0" strings
+        elif isinstance(speaker_id, (int, np.integer)):
+            return int(speaker_id)
+        elif isinstance(speaker_id, (float, np.floating)):
+            return int(round(speaker_id))
+        else:
+            logger.warning(f"Unexpected speaker_id type: {type(speaker_id)}, value: {speaker_id}")
+            return int(speaker_id)  # Last resort conversion
+    except (ValueError, TypeError, AttributeError) as e:
+        logger.warning(f"Failed to convert speaker_id '{speaker_id}' to int: {e}, using default 0")
+        return 0
 
 def load_audio_librosa(audio_file, sr=None, mono=True):
     """
@@ -103,9 +190,9 @@ def load_audio_librosa(audio_file, sr=None, mono=True):
     Returns:
         tuple: (audio_data, sample_rate)
     """
-    return librosa.load(audio_file, sr=sr, mono=mono)
-
-from config.app_config import PYAUDIOANALYSIS_CONFIG
+    if not _ensure_librosa_imports() or _librosa is None:
+        raise RuntimeError("Librosa not available for audio loading")
+    return _librosa.load(audio_file, sr=sr, mono=mono)
 
 class DiarizationError(Enum):
     FILE_NOT_FOUND = 1
@@ -114,10 +201,9 @@ class DiarizationError(Enum):
     INSUFFICIENT_DATA = 4
 
 class SpeakerDiarization:
-    """PyAnnote.Audio neural speaker diarization with TorchCodec support"""
+    """PyAudioAnalysis-based speaker diarization with comprehensive type safety"""
 
     def __init__(self):
-        self.pipeline = None
         self._device = None # Lazy device detection
         self._ffmpeg_path = None # Lazy FFmpeg setup
 
@@ -125,11 +211,8 @@ class SpeakerDiarization:
     def device(self):
         """Lazy device detection only when needed"""
         if self._device is None:
-            if _ensure_pyannote_imports() and torch:
-                self._device = "cuda" if torch.cuda.is_available() else "cpu"
-                logger.info(f"PyAnnote device: {self._device}")
-            else:
-                self._device = "cpu"
+            self._device = "cpu"  # Default to CPU since we're not using PyAnnote
+            logger.info(f"Diarization device: {self._device}")
         return self._device
 
     @property
@@ -150,51 +233,6 @@ class SpeakerDiarization:
                 self._ffmpeg_path = None
         return self._ffmpeg_path
 
-    async def _load_pyannote_pipeline(self):
-        """Load PyAnnote.Audio pipeline"""
-        if self.pipeline is not None:
-            return self.pipeline
-
-        # Ensure PyAnnote dependencies are loaded
-        if not _ensure_pyannote_imports():
-            raise RuntimeError("PyAnnote.Audio not available")
-
-        try:
-            loop = asyncio.get_event_loop()
-            
-            # Fix: Handle the case where Pipeline.from_pretrained might not have these parameters
-            if Pipeline is None:
-                raise RuntimeError("Pipeline not available - PyAnnote.Audio not properly imported")
-                
-            try:
-                self.pipeline = await loop.run_in_executor(
-                    None,
-                    Pipeline.from_pretrained,
-                    PYANNOTE_CONFIG["pipeline"],
-                    PYANNOTE_CONFIG["cache_dir"], # Fix: Remove parameter name
-                    PYANNOTE_CONFIG.get("use_auth_token") # Fix: Remove parameter name
-                )
-            except TypeError:
-                # Fallback if parameters don't exist
-                if Pipeline is None:
-                    raise RuntimeError("Pipeline not available - PyAnnote.Audio not properly imported")
-                self.pipeline = await loop.run_in_executor(
-                    None,
-                    Pipeline.from_pretrained,
-                    PYANNOTE_CONFIG["pipeline"]
-                )
-
-            # Configure pipeline
-            if hasattr(self.pipeline, "to") and self.device and torch is not None: # Fix: Add torch None check
-                self.pipeline = self.pipeline.to(torch.device(self.device))
-
-            logger.info(f"PyAnnote pipeline loaded: {PYANNOTE_CONFIG['pipeline']}")
-            return self.pipeline
-
-        except Exception as e:
-            logger.error(f"Failed to load PyAnnote pipeline: {e}")
-            raise RuntimeError(f"PyAnnote pipeline loading failed: {str(e)}")
-
     @staticmethod
     def safe_fft(x, n=None):
         """Enhanced FFT wrapper with comprehensive empty data handling"""
@@ -208,7 +246,9 @@ class SpeakerDiarization:
             x = np.pad(x, (0, max(0, 2 - len(x))), mode='constant')
 
         try:
-            return fft(x, n=n)
+            if not _ensure_scipy_imports() or _scipy_fft is None:
+                raise RuntimeError("Scipy FFT not available")
+            return _scipy_fft(x, n=n)
         except Exception as e:
             logger.error(f"FFT operation failed: {e}")
             return np.zeros(n if n and n > 0 else len(x), dtype=complex)
@@ -217,7 +257,11 @@ class SpeakerDiarization:
         """Enhanced Voice Activity Detection with better error handling"""
         try:
             # Read audio file
-            Fs, x = wavfile.read(audio_file)
+            if not _ensure_scipy_imports():
+                raise RuntimeError("Scipy wavfile not available")
+            if _scipy_wavfile is None:
+                raise RuntimeError("Scipy wavfile not available")
+            Fs, x = _scipy_wavfile.read(audio_file)
             if len(x) == 0:
                 raise ValueError("Empty audio file")
 
@@ -300,7 +344,9 @@ class SpeakerDiarization:
             # 1. Fundamental Frequency (F0) extraction
             try:
                 # Use librosa.yin for pitch detection
-                f0 = librosa.yin(audio_segment, fmin=50, fmax=500, sr=sample_rate)
+                if not _ensure_librosa_imports() or _librosa is None:
+                    raise RuntimeError("Librosa not available for pitch detection")
+                f0 = _librosa.yin(audio_segment, fmin=50, fmax=500, sr=sample_rate)
                 # Filter out unvoiced segments (f0 = 0)
                 voiced_f0 = f0[f0 > 0]
                 mean_f0 = np.mean(voiced_f0) if len(voiced_f0) > 0 else 150
@@ -312,11 +358,13 @@ class SpeakerDiarization:
             # 2. Spectral analysis
             try:
                 # Short-time Fourier Transform
-                stft = librosa.stft(audio_segment, n_fft=2048, hop_length=512)
+                if not _ensure_librosa_imports() or _librosa is None:
+                    raise RuntimeError("Librosa not available for spectral analysis")
+                stft = _librosa.stft(audio_segment, n_fft=2048, hop_length=512)
                 magnitude = np.abs(stft)
 
                 # Frequency bins
-                freqs = librosa.fft_frequencies(sr=sample_rate, n_fft=2048)
+                freqs = _librosa.fft_frequencies(sr=sample_rate, n_fft=2048)
 
                 # Low/High frequency energy ratio (key differentiator)
                 low_freq_mask = freqs < 1000 # Below 1kHz
@@ -335,7 +383,9 @@ class SpeakerDiarization:
 
             # 3. Spectral centroid (brightness of sound)
             try:
-                centroid = librosa.feature.spectral_centroid(y=audio_segment, sr=sample_rate)[0]
+                if not _ensure_librosa_imports() or _librosa is None:
+                    raise RuntimeError("Librosa not available for spectral centroid")
+                centroid = _librosa.feature.spectral_centroid(y=audio_segment, sr=sample_rate)[0]
                 mean_centroid = np.mean(centroid)
                 logger.debug(f"Mean spectral centroid: {mean_centroid:.2f} Hz")
             except Exception as e:
@@ -346,10 +396,14 @@ class SpeakerDiarization:
             try:
                 # Use LPC (Linear Predictive Coding) for formant estimation
                 # Get power spectral density
-                freqs_psd, psd = signal.welch(audio_segment, fs=sample_rate, nperseg=1024)
+                if not _ensure_scipy_imports():
+                    raise RuntimeError("Scipy signal not available for formant analysis")
+                if _scipy_signal is None:
+                    raise RuntimeError("Scipy signal not available for formant analysis")
+                freqs_psd, psd = _scipy_signal.welch(audio_segment, fs=sample_rate, nperseg=1024)
 
                 # Find peaks in the spectrum (formants)
-                peaks, _ = signal.find_peaks(psd, height=np.max(psd) * 0.1, distance=20)
+                peaks, _ = _scipy_signal.find_peaks(psd, height=np.max(psd) * 0.1, distance=20)
 
                 if len(peaks) >= 2:
                     formant_f1 = freqs_psd[peaks[0]] # First formant
@@ -507,10 +561,12 @@ class SpeakerDiarization:
             # Apply temporal smoothing to reduce rapid speaker changes
             smoothed_labels = self._temporal_smoothing(best_labels, segments)
 
-            # Convert segments to diarization format
+            # Convert segments to diarization format WITH SAFE TYPE CONVERSION
             diarization_segments = []
-            for i, (segment, speaker_id) in enumerate(zip(segments, smoothed_labels)):
-                speaker_label = f"Speaker_{speaker_id + 1}"
+            for segment, speaker_id in zip(segments, smoothed_labels):
+                # CRITICAL FIX: Safe speaker ID conversion
+                speaker_num = safe_speaker_id_conversion(speaker_id)
+                speaker_label = f"Speaker_{speaker_num + 1}"
                 diarization_segment = {
                     "start": segment["start"],
                     "end": segment["end"],
@@ -545,7 +601,13 @@ class SpeakerDiarization:
                         smoothed[i] = labels[i-1]
 
             # Apply median filter for additional smoothing
-            smoothed = median_filter(smoothed.astype(float), size=3).astype(int)
+            if not _ensure_scipy_imports():
+                logger.warning("Scipy median_filter not available, skipping smoothing")
+                return smoothed
+            if _scipy_median_filter is None:
+                logger.warning("Scipy median_filter not available, skipping smoothing")
+                return smoothed
+            smoothed = _scipy_median_filter(smoothed.astype(float), size=3).astype(int)
 
             return smoothed
 
@@ -574,7 +636,7 @@ class SpeakerDiarization:
         return merged
 
     async def diarize_audio(self, audio_file, number_speakers=0):
-        """Speaker diarization using PyAudioAnalysis (free alternative to PyAnnote)"""
+        """Speaker diarization using PyAudioAnalysis with COMPREHENSIVE TYPE SAFETY"""
         try:
             logger.info(f"Starting PyAudioAnalysis diarization for {audio_file}")
 
@@ -596,17 +658,22 @@ class SpeakerDiarization:
             n_speakers = number_speakers if number_speakers > 0 else 2
             
             # Run speaker diarization in executor to avoid blocking
+            # Fix: Create a wrapper function to handle the async call properly
+            def run_speaker_diarization():
+                if aS is not None:
+                    return aS.speaker_diarization(
+                        audio_file,
+                        n_speakers
+                    )
+                else:
+                    return None
+            
             cls = await loop.run_in_executor(
                 None,
-                aS.speaker_diarization,
-                audio_file,
-                n_speakers,
-                'svm',  # Use SVM for classification
-                True,   # Apply VAD preprocessing
-                0.5     # LDA dimensionality reduction
+                run_speaker_diarization
             )
 
-            # Convert PyAudioAnalysis format to TranscrevAI format
+            # Convert PyAudioAnalysis format to TranscrevAI format WITH CRITICAL TYPE SAFETY
             segments = []
             if cls is not None and len(cls) > 0:
                 # Get audio duration to calculate segment timings
@@ -618,16 +685,17 @@ class SpeakerDiarization:
                 
                 for i, speaker_id in enumerate(cls):
                     segment_time = i * segment_duration
-                    segment_end = (i + 1) * segment_duration
                     
                     # Group consecutive segments with same speaker
                     if current_speaker != speaker_id:
                         # Close previous segment
                         if current_speaker is not None:
+                            # CRITICAL FIX: Safe speaker ID conversion
+                            speaker_num = safe_speaker_id_conversion(current_speaker)
                             segments.append({
                                 "start": segment_start,
                                 "end": segment_time,
-                                "speaker": f"Speaker_{current_speaker + 1}",
+                                "speaker": f"Speaker_{speaker_num + 1}",
                                 "confidence": 0.85,
                                 "method": "pyaudioanalysis"
                             })
@@ -638,10 +706,12 @@ class SpeakerDiarization:
                 
                 # Close final segment
                 if current_speaker is not None:
+                    # CRITICAL FIX: Safe speaker ID conversion
+                    speaker_num = safe_speaker_id_conversion(current_speaker)
                     segments.append({
                         "start": segment_start,
                         "end": duration,
-                        "speaker": f"Speaker_{current_speaker + 1}",
+                        "speaker": f"Speaker_{speaker_num + 1}",
                         "confidence": 0.85,
                         "method": "pyaudioanalysis"
                     })
@@ -687,7 +757,7 @@ class SpeakerDiarization:
                 }]
 
     def diarize(self, audio_file, number_speakers=0, vad_segments=None):
-        """Enhanced internal diarization with FFT error fixes"""
+        """Enhanced internal diarization with comprehensive type safety"""
         # Fix: Initialize variables at the start to avoid unbound issues
         x = None
         Fs = None
@@ -697,7 +767,11 @@ class SpeakerDiarization:
 
             # Read and validate audio
             try:
-                Fs, x = wavfile.read(audio_file)
+                if not _ensure_scipy_imports():
+                    raise RuntimeError("Scipy wavfile not available")
+                if _scipy_wavfile is None:
+                    raise RuntimeError("Scipy wavfile not available")
+                Fs, x = _scipy_wavfile.read(audio_file)
                 if len(x) == 0:
                     raise ValueError("Empty audio data")
             except Exception as e:
@@ -741,7 +815,9 @@ class SpeakerDiarization:
 
             # Resample if necessary
             if Fs != 16000:
-                x_filt = librosa.resample(x_filt.astype(np.float32), orig_sr=Fs, target_sr=16000)
+                if not _ensure_librosa_imports() or _librosa is None:
+                    raise RuntimeError("Librosa not available for resampling")
+                x_filt = _librosa.resample(x_filt.astype(np.float32), orig_sr=Fs, target_sr=16000)
                 Fs = 16000
 
             # Normalize
@@ -760,7 +836,11 @@ class SpeakerDiarization:
             processed_dir = FileManager.get_data_path("processed")
             unique_filename = f"vad_processed_{int(time.time()*1000)}_{os.getpid()}.wav"
             vad_proc_wav = os.path.join(processed_dir, unique_filename)
-            wavfile.write(vad_proc_wav, Fs, (x_filt * 32768).astype(np.int16))
+            if not _ensure_scipy_imports():
+                raise RuntimeError("Scipy wavfile not available for writing")
+            if _scipy_wavfile is None:
+                raise RuntimeError("Scipy wavfile not available for writing")
+            _scipy_wavfile.write(vad_proc_wav, Fs, (x_filt * 32768).astype(np.int16))
 
             # Extract features with safe FFT and better validation
             try:
@@ -822,7 +902,7 @@ class SpeakerDiarization:
                 if not isinstance(result, tuple) or len(result) < 3:
                     raise ValueError("Invalid diarization result")
 
-                flags, classes, _ = result
+                flags, _, _ = result  # classes unused
 
                 if not isinstance(flags, np.ndarray) or len(flags) < 1:
                     raise ValueError("Invalid speaker flags")
@@ -882,7 +962,7 @@ class SpeakerDiarization:
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to clean up temporary file: {cleanup_error}")
 
-            # Convert results to segments
+            # Convert results to segments WITH SAFE TYPE CONVERSION
             return self._convert_flags_to_segments(flags, len(x_filt) / Fs)
 
         except Exception as e:
@@ -904,7 +984,7 @@ class SpeakerDiarization:
             }]
 
     def _convert_flags_to_segments(self, flags, total_duration):
-        """Convert speaker flags to time segments with validation"""
+        """Convert speaker flags to time segments with COMPREHENSIVE TYPE SAFETY"""
         try:
             segments = []
             if len(flags) == 0:
@@ -914,12 +994,16 @@ class SpeakerDiarization:
                     "speaker": "Speaker_1"
                 }]
 
-            current_speaker = int(flags[0])
+            # CRITICAL FIX: Safe conversion of first flag
+            current_speaker = safe_speaker_id_conversion(flags[0])
             start_time = 0.0
             min_duration = 0.3 # Minimum segment duration
 
             for i in range(1, len(flags)):
-                if flags[i] != current_speaker:
+                # CRITICAL FIX: Safe conversion before comparison
+                flag_speaker = safe_speaker_id_conversion(flags[i])
+                
+                if flag_speaker != current_speaker:
                     end_time = (i / len(flags)) * total_duration
                     duration = end_time - start_time
 
@@ -927,11 +1011,11 @@ class SpeakerDiarization:
                         segments.append({
                             "start": float(start_time),
                             "end": float(end_time),
-                            "speaker": f"Speaker_{current_speaker + 1}"
+                            "speaker": f"Speaker_{current_speaker + 1}"  # Safe arithmetic
                         })
 
                     start_time = end_time
-                    current_speaker = int(flags[i])
+                    current_speaker = flag_speaker
 
             # Add final segment
             final_duration = total_duration - start_time
@@ -939,7 +1023,7 @@ class SpeakerDiarization:
                 segments.append({
                     "start": float(start_time),
                     "end": float(total_duration),
-                    "speaker": f"Speaker_{current_speaker + 1}"
+                    "speaker": f"Speaker_{current_speaker + 1}"  # Safe arithmetic
                 })
 
             # Ensure at least one segment exists
@@ -963,14 +1047,18 @@ class SpeakerDiarization:
     def get_audio_duration(self, file_path):
         """Get audio file duration with error handling"""
         try:
-            Fs, x = wavfile.read(file_path)
+            if not _ensure_scipy_imports():
+                raise RuntimeError("Scipy wavfile not available")
+            if _scipy_wavfile is None:
+                raise RuntimeError("Scipy wavfile not available")
+            Fs, x = _scipy_wavfile.read(file_path)
             return len(x) / Fs
         except Exception as e:
             logger.warning(f"Could not determine audio duration: {e}")
             return 1.0 # Default duration
 
     def _alternative_diarization_sklearn(self, audio_file, n_speakers=2):
-        """Alternative diarization using scikit-learn and spectral features"""
+        """Alternative diarization using scikit-learn with SAFE TYPE HANDLING"""
         try:
             logger.info(f"Starting alternative diarization with scikit-learn for {audio_file}")
 
@@ -979,7 +1067,11 @@ class SpeakerDiarization:
                 return self._simple_energy_diarization(audio_file, n_speakers)
 
             # Read audio
-            Fs, x = wavfile.read(audio_file)
+            if not _ensure_scipy_imports():
+                raise RuntimeError("Scipy wavfile not available")
+            if _scipy_wavfile is None:
+                raise RuntimeError("Scipy wavfile not available")
+            Fs, x = _scipy_wavfile.read(audio_file)
             if len(x) == 0:
                 raise ValueError("Empty audio data")
 
@@ -1060,28 +1152,30 @@ class SpeakerDiarization:
                     logger.warning(f"AgglomerativeClustering failed: {e2}, using simple energy-based diarization")
                     return self._simple_energy_diarization(audio_file, n_speakers)
 
-            # Convert labels to segments
+            # Convert labels to segments WITH SAFE TYPE HANDLING
             segments = []
-            current_speaker = labels[0]
+            current_speaker = safe_speaker_id_conversion(labels[0])
             start_time = timestamps[0]
 
             for i in range(1, len(labels)):
-                if labels[i] != current_speaker or i == len(labels) - 1:
+                label_speaker = safe_speaker_id_conversion(labels[i])
+                
+                if label_speaker != current_speaker or i == len(labels) - 1:
                     end_time = timestamps[i] if i < len(timestamps) else duration
                     segments.append({
                         "start": float(start_time),
                         "end": float(end_time),
-                        "speaker": f"Speaker_{current_speaker + 1}"
+                        "speaker": f"Speaker_{current_speaker + 1}"  # Safe arithmetic
                     })
                     start_time = timestamps[i] if i < len(timestamps) else duration
-                    current_speaker = labels[i]
+                    current_speaker = label_speaker
 
             # Add final segment if needed
             if segments and segments[-1]["end"] < duration:
                 segments.append({
                     "start": float(segments[-1]["end"]),
                     "end": float(duration),
-                    "speaker": f"Speaker_{current_speaker + 1}"
+                    "speaker": f"Speaker_{current_speaker + 1}"  # Safe arithmetic
                 })
 
             # Merge short segments
@@ -1187,13 +1281,19 @@ class SpeakerDiarization:
             # Return identity-like matrix as fallback
             return np.eye(min(n_filters, n_fft_bins))[:n_filters]
 
-    def _simple_energy_diarization(self, audio_file, n_speakers=2):
-        """Simple energy-based diarization as final fallback"""
+    def _simple_energy_diarization(self, audio_file, n_speakers=2):  # n_speakers unused - simple binary approach
+        """Simple energy-based diarization with SAFE TYPE HANDLING"""
         try:
             logger.info(f"Using simple energy-based diarization for {audio_file}")
+            # Note: n_speakers parameter is unused in this simple implementation
+            # which uses a binary energy threshold approach (2 speakers max)
 
             # Read audio
-            Fs, x = wavfile.read(audio_file)
+            if not _ensure_scipy_imports():
+                raise RuntimeError("Scipy wavfile not available")
+            if _scipy_wavfile is None:
+                raise RuntimeError("Scipy wavfile not available")
+            Fs, x = _scipy_wavfile.read(audio_file)
             if len(x) == 0:
                 raise ValueError("Empty audio data")
 
@@ -1229,7 +1329,7 @@ class SpeakerDiarization:
 
             # Detect speaker changes based on energy variations
             segments = []
-            current_speaker = 0
+            current_speaker = 0  # Initialize as integer
             start_time = 0.0
 
             for i, timestamp in enumerate(timestamps):
@@ -1238,10 +1338,12 @@ class SpeakerDiarization:
 
                 if speaker != current_speaker or i == len(timestamps) - 1:
                     end_time = timestamp if i < len(timestamps) - 1 else duration
+                    # CRITICAL FIX: Safe speaker ID handling
+                    speaker_num = safe_speaker_id_conversion(current_speaker)
                     segments.append({
                         "start": float(start_time),
                         "end": float(end_time),
-                        "speaker": f"Speaker_{current_speaker + 1}"
+                        "speaker": f"Speaker_{speaker_num + 1}"
                     })
                     start_time = timestamp
                     current_speaker = speaker
