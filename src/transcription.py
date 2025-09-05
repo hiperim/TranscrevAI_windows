@@ -121,10 +121,14 @@ def preprocess_audio_advanced(audio_data, sample_rate):
                 meter = pyln.Meter(sample_rate)
                 loudness = meter.integrated_loudness(audio_data)
                 
-                # Target -23 LUFS for speech
+                # Target -23 LUFS for speech with clipping protection  
                 if not np.isinf(loudness) and not np.isnan(loudness):
-                    audio_data = pyln.normalize.loudness(audio_data, loudness, -23.0)
-                    logger.debug(f"Applied LUFS normalization: {loudness:.2f} -> -23.0 LUFS")
+                    # Only normalize if current loudness is significantly different
+                    if abs(loudness - (-23.0)) > 3.0:  # 3 dB threshold
+                        audio_data = pyln.normalize.loudness(audio_data, loudness, -23.0)
+                        # Apply soft limiter to prevent clipping
+                        audio_data = np.clip(audio_data, -0.95, 0.95)
+                        logger.debug(f"Applied LUFS normalization with limiter: {loudness:.2f} -> -23.0 LUFS")
             except Exception as e:
                 logger.warning(f"LUFS normalization failed: {e}")
         
@@ -188,7 +192,7 @@ class TranscriptionError(Exception):
 # Model management removed - handled by main.py
 
 class WhisperTranscriptionService:
-    """Whisper-based transcription service with TorchCodec support and automatic model management"""
+    """Whisper-based transcription service with automatic model management"""
 
     def __init__(self):
         self._models = {}
@@ -253,7 +257,7 @@ async def transcribe_audio_with_progress(
     language_code: str,
     sample_rate: int = 16000
 ) -> AsyncGenerator[Tuple[int, List[Dict]], None]:
-    """Whisper-based transcription with TorchCodec support and progress tracking"""
+    """Whisper-based transcription with progress tracking"""
     try:
         logger.info(f"Starting Whisper transcription for {wav_file} with language {language_code}")
 
@@ -286,6 +290,9 @@ async def transcribe_audio_with_progress(
                 logger.info("Loading audio with librosa")
                 audio_data, sr = load_audio_librosa(wav_file, sr=16000, mono=True)
                 
+                # Ensure consistent dtype for Whisper (fix dtype mismatch)
+                audio_data = audio_data.astype(np.float32)
+                
                 if len(audio_data) == 0:
                     raise ValueError("No audio data loaded")
 
@@ -306,7 +313,8 @@ async def transcribe_audio_with_progress(
                     condition_on_previous_text=WHISPER_CONFIG["condition_on_previous_text"],
                     temperature=WHISPER_CONFIG["temperature"],
                     best_of=WHISPER_CONFIG["best_of"],
-                    beam_size=WHISPER_CONFIG["beam_size"]
+                    beam_size=WHISPER_CONFIG["beam_size"],
+                    fp16=False  # Force FP32 to avoid CPU warnings
                 )
 
                 # Convert Whisper result to TranscrevAI format
