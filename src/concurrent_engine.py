@@ -113,7 +113,7 @@ class ConcurrentProcessor:
             transcription_data = []
             
             async for progress, data in transcribe_audio_with_progress(
-                audio_file, "", language, 16000  # model_path not used in Whisper
+                audio_file, language, 16000
             ):
                 # Update session progress
                 if session_id in self.active_sessions:
