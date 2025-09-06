@@ -247,17 +247,18 @@ class AtomicAudioFile:
         """Async cleanup - no new event loops needed"""
         try:
             if self._committed and self.final_path:
-                await self._async_commit()
-            else:
-                await CrossPlatformFileHandler.safe_delete(self.temp_path)
-        except Exception as e:
-            logger.error(f"Error in AtomicAudioFile cleanup: {e}")
-            # Ensure temp file is cleaned up even if commit fails
+                # Only commit if no exception occurred
+                if exc_type is None:
+                    await self._async_commit()
+                else:
+                    logger.warning(f"Exception occurred, skipping commit: {exc_val}")
+            
+            # Always clean up temp file if it exists
             if os.path.exists(self.temp_path):
-                try:
-                    await CrossPlatformFileHandler.safe_delete(self.temp_path)
-                except Exception as cleanup_error:
-                    logger.error(f"Failed to cleanup temp file: {cleanup_error}")
+                await CrossPlatformFileHandler.safe_delete(self.temp_path)
+                
+        except Exception as cleanup_error:
+            logger.error(f"Error in AtomicAudioFile cleanup: {cleanup_error}")
     
     def commit(self, final_path: str):
         """Mark file for preservation with atomic replacement"""
