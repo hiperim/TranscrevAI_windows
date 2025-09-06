@@ -9,6 +9,10 @@ from unittest.mock import patch
 
 # Suppress sklearn version compatibility warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
+# Suppress PyAudioAnalysis runtime warnings (divide by zero in audioSegmentation)
+warnings.filterwarnings('ignore', category=RuntimeWarning, module='pyAudioAnalysis')
+warnings.filterwarnings('ignore', message='invalid value encountered in divide')
+warnings.filterwarnings('ignore', message='divide by zero encountered')
 # Specifically suppress InconsistentVersionWarning from sklearn
 try:
     from sklearn.exceptions import InconsistentVersionWarning  # type: ignore
@@ -942,13 +946,41 @@ class SpeakerDiarization:
                 }]
             
             # Run speaker diarization in executor to avoid blocking
-            # Fix: Create a wrapper function to handle the async call properly
+            # Fix: Create a wrapper function to handle the async call properly with error handling
             def run_speaker_diarization():
                 if aS is not None:
-                    return aS.speaker_diarization(
-                        audio_file,
-                        n_speakers
-                    )
+                    try:
+                        # Add validation for audio data before diarization
+                        import soundfile as sf
+                        import numpy as np
+                        
+                        # Check if audio file has sufficient variance for diarization
+                        try:
+                            audio_data, sr = sf.read(audio_file)
+                            if len(audio_data.shape) > 1:  # Convert stereo to mono if needed
+                                audio_data = np.mean(audio_data, axis=1)
+                            
+                            # Check for sufficient variance in the audio signal
+                            audio_variance = np.var(audio_data)
+                            if audio_variance < 1e-10:  # Very low variance
+                                logger.warning("Audio has very low variance, using fallback single speaker")
+                                return None
+                                
+                            # Check for NaN or infinite values
+                            if np.any(np.isnan(audio_data)) or np.any(np.isinf(audio_data)):
+                                logger.warning("Audio contains NaN or infinite values, using fallback")
+                                return None
+                                
+                        except Exception as audio_check_error:
+                            logger.warning(f"Audio validation failed: {audio_check_error}, proceeding with caution")
+                        
+                        return aS.speaker_diarization(
+                            audio_file,
+                            n_speakers
+                        )
+                    except Exception as e:
+                        logger.warning(f"PyAudioAnalysis diarization failed with error: {e}")
+                        return None
                 else:
                     return None
             

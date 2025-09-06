@@ -410,7 +410,7 @@ async def transcribe_audio_with_progress(
         # Process audio with Whisper
         loop = asyncio.get_event_loop()
 
-        def transcribe_with_whisper():
+        async def transcribe_with_whisper():
             try:
                 # Load and preprocess audio using librosa
                 logger.info("Loading audio with librosa")
@@ -425,7 +425,7 @@ async def transcribe_audio_with_progress(
                 logger.info(f"Audio loaded: {len(audio_data)} samples at {sr}Hz")
 
                 # Apply advanced preprocessing
-                audio_data = preprocess_audio_advanced(audio_data, sr)
+                audio_data = await preprocess_audio_advanced(audio_data, sr)
                 
                 logger.info("Advanced audio preprocessing completed")
 
@@ -537,7 +537,7 @@ async def transcribe_audio_with_progress(
         yield 50, []
 
         # Execute transcription
-        transcription_data = await loop.run_in_executor(None, transcribe_with_whisper)
+        transcription_data = await transcribe_with_whisper()
 
         yield 90, transcription_data
 
