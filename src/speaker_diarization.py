@@ -271,12 +271,13 @@ class SpeakerDiarization:
             logger.error(f"FFT operation failed: {e}")
             return np.zeros(n if n and n > 0 else len(x), dtype=complex)
 
-    def analyze_audio_for_speaker_count(self, audio_file):
+    def analyze_audio_for_speaker_count(self, audio_file, transcription_data=None):
         """
         Analyze audio to intelligently determine the likely number of speakers
         
         Args:
             audio_file: Path to audio file
+            transcription_data: Optional transcription data for hint analysis
             
         Returns:
             int: Estimated number of speakers (1 if mono-speaker detected, 2+ otherwise)
@@ -284,13 +285,18 @@ class SpeakerDiarization:
         try:
             logger.info(f"Analyzing audio characteristics to estimate speaker count: {audio_file}")
             
+            # Check transcription hints first (fast path)
+            hint_result = self.analyze_with_transcription_hints(audio_file, transcription_data)
+            if hint_result > 0:
+                return hint_result
+            
             # Read audio file
             if not _ensure_scipy_imports():
-                logger.warning("Scipy not available, defaulting to 2 speakers")
-                return 2
+                logger.warning("Scipy not available, defaulting to 1 speaker")
+                return 1
             if _scipy_wavfile is None:
-                logger.warning("Scipy wavfile not available, defaulting to 2 speakers")
-                return 2
+                logger.warning("Scipy wavfile not available, defaulting to 1 speaker")
+                return 1
                 
             Fs, x = _scipy_wavfile.read(audio_file)
             if len(x) == 0:
@@ -311,9 +317,9 @@ class SpeakerDiarization:
             duration = len(x) / Fs
             logger.info(f"Audio duration: {duration:.2f} seconds")
             
-            # Short audio is likely single speaker
-            if duration < 5.0:  # Less than 5 seconds
-                logger.info("Short audio detected (<5s), likely single speaker")
+            # Short audio is likely single speaker  
+            if duration < 10.0:  # Less than 10 seconds
+                logger.info("Short audio detected (<10s), likely single speaker")
                 return 1
             
             # Analyze audio in segments to detect speaker changes
@@ -354,9 +360,9 @@ class SpeakerDiarization:
             
             logger.info(f"Average feature variation: {avg_variation:.3f}")
             
-            # Thresholds for speaker detection
-            SINGLE_SPEAKER_THRESHOLD = 0.15  # Below this = likely single speaker
-            CLEAR_MULTI_SPEAKER_THRESHOLD = 0.4  # Above this = likely multiple speakers
+            # Thresholds for speaker detection  
+            SINGLE_SPEAKER_THRESHOLD = 0.4   # Below this = likely single speaker
+            CLEAR_MULTI_SPEAKER_THRESHOLD = 0.6  # Above this = likely multiple speakers
             
             if avg_variation < SINGLE_SPEAKER_THRESHOLD:
                 logger.info(f"Low variation ({avg_variation:.3f}) detected - likely single speaker")
@@ -371,8 +377,31 @@ class SpeakerDiarization:
                 return 2
                 
         except Exception as e:
-            logger.error(f"Audio analysis failed: {e}, defaulting to 2 speakers")
-            return 2
+            logger.error(f"Audio analysis failed: {e}, defaulting to 1 speaker")
+            return 1
+
+    def analyze_with_transcription_hints(self, audio_file, transcription_data=None):
+        """Use transcription data to inform speaker detection"""
+        try:
+            if transcription_data:
+                # Count sentences/phrases
+                total_text = " ".join([seg.get('text', '') for seg in transcription_data])
+                sentence_count = len([s for s in total_text.split('.') if s.strip()])
+                
+                if sentence_count <= 2:  # Very brief speech
+                    logger.info("Brief transcription detected, likely single speaker")
+                    return 1
+                    
+                # Check for conversation markers
+                conversation_markers = ['hello', 'hi', 'yes', 'no', 'okay', 'right', 'sure', 'well']
+                if not any(marker in total_text.lower() for marker in conversation_markers):
+                    logger.info("No conversation markers, likely monologue")
+                    return 1
+            
+            return 0  # Continue with normal analysis
+        except Exception as e:
+            logger.warning(f"Transcription hint analysis failed: {e}")
+            return 0
     
     def _calculate_segment_features(self, segment, sample_rate):
         """Calculate acoustic features for a segment to help detect speaker changes"""
