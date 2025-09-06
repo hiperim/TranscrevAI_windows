@@ -315,9 +315,236 @@ class SimpleWebSocketManager:
                 if session_id in self.connections:
                     await self.disconnect(session_id)
 
+class OptimizedWebSocketManager(SimpleWebSocketManager):
+    """Optimized WebSocket manager with better progress tracking and performance monitoring"""
+    
+    def __init__(self):
+        super().__init__()
+        # Enhanced progress tracking
+        self.progress_cache = {}  # Cache to avoid duplicate messages
+        self.message_count = {}   # Track message frequency per session
+        self.last_progress_time = {}  # Throttle progress updates
+        
+        # Performance tracking
+        from src.performance_monitor import get_performance_monitor
+        self.performance_monitor = get_performance_monitor()
+        
+        logger.info("OptimizedWebSocketManager initialized with enhanced progress tracking")
+    
+    async def send_chunked_progress(self, session_id: str, chunk_progress: dict):
+        """Send fine-grained progress for better UX"""
+        try:
+            current_time = time.time()
+            
+            # Throttle progress updates (max 10 updates per second)
+            last_update = self.last_progress_time.get(session_id, 0)
+            if current_time - last_update < 0.1:  # 100ms minimum interval
+                return
+            
+            self.last_progress_time[session_id] = current_time
+            
+            # Enhanced progress message with more detail
+            progress_message = {
+                "type": "detailed_progress",
+                "timestamp": current_time,
+                "transcription_progress": chunk_progress.get("transcription", 0),
+                "diarization_progress": chunk_progress.get("diarization", 0), 
+                "current_chunk": chunk_progress.get("chunk_number", 0),
+                "total_chunks": chunk_progress.get("total_chunks", 1),
+                "processing_stage": chunk_progress.get("stage", "processing"),
+                "estimated_completion": chunk_progress.get("estimated_completion"),
+                "real_time_ratio": chunk_progress.get("real_time_ratio")
+            }
+            
+            # Add chunk-specific details if available
+            if "chunk_details" in chunk_progress:
+                progress_message["chunk_details"] = chunk_progress["chunk_details"]
+            
+            await self.send_message(session_id, progress_message)
+            
+        except Exception as e:
+            logger.error(f"Failed to send chunked progress for {session_id}: {e}")
+    
+    async def send_model_download_progress(self, session_id: str, progress: dict):
+        """Send enhanced model download progress with detailed information"""
+        try:
+            download_message = {
+                "type": "model_download_progress",
+                "timestamp": time.time(),
+                "language": progress.get("language"),
+                "model_name": progress.get("model_name"),
+                "progress_percent": progress.get("progress", 0),
+                "download_speed_mbps": progress.get("download_speed", 0),
+                "estimated_time_remaining": progress.get("eta_seconds"),
+                "downloaded_mb": progress.get("downloaded_mb", 0),
+                "total_size_mb": progress.get("total_mb", 0),
+                "stage": progress.get("stage", "downloading")  # downloading, extracting, loading
+            }
+            
+            await self.send_message(session_id, download_message)
+            
+        except Exception as e:
+            logger.error(f"Failed to send model download progress for {session_id}: {e}")
+    
+    async def send_performance_update(self, session_id: str, performance_data: dict):
+        """Send performance metrics to client for monitoring"""
+        try:
+            # Only send if client supports performance updates
+            if not performance_data.get("real_time", True):
+                return
+            
+            performance_message = {
+                "type": "performance_update", 
+                "timestamp": time.time(),
+                "real_time_ratio": performance_data.get("real_time_ratio", 1.0),
+                "memory_usage_mb": performance_data.get("memory_mb", 0),
+                "processing_speed": performance_data.get("processing_speed", "normal"),
+                "quality_level": performance_data.get("quality", "standard"),
+                "latency_ms": performance_data.get("latency_ms", 0)
+            }
+            
+            await self.send_message(session_id, performance_message)
+            
+        except Exception as e:
+            logger.debug(f"Performance update failed for {session_id}: {e}")  # Debug level - not critical
+    
+    async def send_audio_analysis_progress(self, session_id: str, analysis_data: dict):
+        """Send audio analysis progress (VAD, chunking, preprocessing)"""
+        try:
+            analysis_message = {
+                "type": "audio_analysis_progress",
+                "timestamp": time.time(),
+                "stage": analysis_data.get("stage", "analyzing"),  # analyzing, chunking, preprocessing
+                "progress": analysis_data.get("progress", 0),
+                "audio_duration": analysis_data.get("duration", 0),
+                "chunks_created": analysis_data.get("chunks", 0),
+                "voice_activity_detected": analysis_data.get("vad_segments", 0),
+                "preprocessing_applied": analysis_data.get("preprocessing", [])
+            }
+            
+            await self.send_message(session_id, analysis_message)
+            
+        except Exception as e:
+            logger.error(f"Failed to send audio analysis progress for {session_id}: {e}")
+    
+    async def send_error_with_context(self, session_id: str, error: str, context: dict = None):
+        """Send enhanced error messages with context for better debugging"""
+        try:
+            error_message = {
+                "type": "error",
+                "timestamp": time.time(),
+                "message": error,
+                "severity": context.get("severity", "error") if context else "error",
+                "recovery_suggestions": context.get("recovery", []) if context else [],
+                "error_code": context.get("code") if context else None,
+                "technical_details": context.get("details") if context else None
+            }
+            
+            await self.send_message(session_id, error_message)
+            
+        except Exception as e:
+            logger.error(f"Failed to send enhanced error for {session_id}: {e}")
+    
+    async def send_completion_summary(self, session_id: str, results: dict):
+        """Send completion with comprehensive summary and file information"""
+        try:
+            # Get session performance data if available
+            performance_data = {}
+            try:
+                # Get performance stats from monitor
+                monitor_report = await self.performance_monitor.get_performance_report()
+                if monitor_report:
+                    current_status = monitor_report.get("current_status", {})
+                    performance_data = {
+                        "real_time_ratio": current_status.get("average_real_time_ratio", 0),
+                        "memory_usage": current_status.get("current_memory_mb", 0),
+                        "processing_efficiency": "excellent" if current_status.get("average_real_time_ratio", 1) < 0.8 else "good"
+                    }
+            except Exception:
+                pass  # Performance data is optional
+            
+            completion_message = {
+                "type": "processing_complete",
+                "timestamp": time.time(),
+                "results": {
+                    "transcription_data": results.get("transcription_data", []),
+                    "diarization_segments": results.get("diarization_segments", []),
+                    "speakers_detected": results.get("speakers_detected", 0),
+                    "duration": results.get("duration", 0),
+                    "language_detected": results.get("language", "unknown")
+                },
+                "files": {
+                    "audio_file": results.get("audio_file"),
+                    "srt_file": results.get("srt_file"),
+                    "transcript_file": results.get("transcript_file")
+                },
+                "quality_metrics": {
+                    "confidence_average": results.get("confidence_avg", 0),
+                    "segments_processed": len(results.get("transcription_data", [])),
+                    "processing_method": results.get("method", "whisper_pyaudioanalysis")
+                },
+                "performance": performance_data
+            }
+            
+            await self.send_message(session_id, completion_message)
+            
+        except Exception as e:
+            logger.error(f"Failed to send completion summary for {session_id}: {e}")
+    
+    async def connect(self, websocket: WebSocket, session_id: str):
+        """Enhanced connection with performance monitoring integration"""
+        await super().connect(websocket, session_id)
+        
+        # Initialize session tracking
+        self.progress_cache[session_id] = {}
+        self.message_count[session_id] = 0
+        self.last_progress_time[session_id] = 0
+        
+        # Send initial connection confirmation with capabilities
+        await self.send_message(session_id, {
+            "type": "connection_established",
+            "session_id": session_id,
+            "timestamp": time.time(),
+            "capabilities": {
+                "detailed_progress": True,
+                "performance_monitoring": True,
+                "audio_analysis": True,
+                "enhanced_error_reporting": True
+            },
+            "server_info": {
+                "version": "2.0.0",
+                "optimizations": "enabled"
+            }
+        })
+    
+    async def disconnect(self, session_id: str):
+        """Enhanced disconnection with cleanup"""
+        # Clean up session data
+        self.progress_cache.pop(session_id, None)
+        self.message_count.pop(session_id, None) 
+        self.last_progress_time.pop(session_id, None)
+        
+        await super().disconnect(session_id)
+    
+    async def send_message(self, session_id: str, message: dict):
+        """Enhanced message sending with monitoring and throttling"""
+        try:
+            # Count messages per session
+            self.message_count[session_id] = self.message_count.get(session_id, 0) + 1
+            
+            # Add message ID for tracking
+            message["message_id"] = self.message_count[session_id]
+            
+            # Call parent implementation
+            await super().send_message(session_id, message)
+            
+        except Exception as e:
+            logger.error(f"Enhanced message sending failed for {session_id}: {e}")
+            raise
+
 # Global instances
 app_state = SimpleState()
-websocket_manager = SimpleWebSocketManager()
+websocket_manager = OptimizedWebSocketManager()
 
 # Responsive HTML interface w/ file path notifications - FIXED VERSION
 HTML_INTERFACE = """

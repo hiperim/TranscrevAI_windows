@@ -47,4 +47,4 @@ preferences.txt
 *.prefs
 config/local_*
 .env.local
-problems.txt
+fixes.txt
