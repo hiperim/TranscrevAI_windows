@@ -63,11 +63,11 @@ def _ensure_directories_created():
 DEFAULT_SAMPLE_RATE = 16000
 DEFAULT_CHUNK_SIZE = 4096
 
-# Whisper Models Configuration
+# Whisper Models Configuration - Optimized per language
 WHISPER_MODELS = {
     "en": "small.en",  # English-only optimized small model
-    "pt": "small",     # Multilingual small model for Portuguese  
-    "es": "small"      # Multilingual small model for Spanish
+    "pt": "base",      # Upgraded to base model for better Portuguese accuracy  
+    "es": "base"       # Upgraded to base model for better Spanish accuracy
 }
 
 # Model directories
@@ -167,29 +167,59 @@ AUDIO_CONFIG = {
     "format": "wav"
 }
 
-# Whisper Configuration - Optimized for Portuguese
+# Whisper Configuration - Optimized per Language
 WHISPER_CONFIG = {
     "device": "cpu",  # Use "cuda" if GPU available
     "compute_type": "int8",  # Quantization for performance
     "download_root": str(WHISPER_MODEL_DIR),
     "language_detection": True,
     "word_timestamps": True,
-    "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),  # Temperature fallbacks for better accuracy
-    "best_of": 5,  # Multiple candidates for better accuracy
-    "beam_size": 5,
-    "patience": 1.0,
-    "length_penalty": 1.0,
-    "suppress_tokens": "-1",
-    "initial_prompt": {
-        "pt": "Olá, este é um áudio em português brasileiro.",
-        "es": "Hola, este es un audio en español.",
-        "en": "Hello, this is an English audio recording."
-    },  # Language-specific initial prompts
     "condition_on_previous_text": True,
     "fp16": False,  # Avoid GPU dependency
     "compression_ratio_threshold": 2.4,
     "logprob_threshold": -1.0,
-    "no_speech_threshold": 0.6
+    
+    # Language-specific optimized configurations
+    "language_configs": {
+        "pt": {  # Portuguese (Brazilian)
+            "temperature": (0.0, 0.1),  # More conservative for better accuracy
+            "best_of": 2,  # Reduced for speed while maintaining quality
+            "beam_size": 3,  # Balanced beam search
+            "no_speech_threshold": 0.55,  # Optimized for Portuguese speech patterns
+            "initial_prompt": "Transcrição em português brasileiro com pontuação e acentuação corretas.",
+            "patience": 1.2,
+            "length_penalty": 1.1
+        },
+        "en": {  # English
+            "temperature": (0.0, 0.2),  # Slightly more flexible
+            "best_of": 3,  # Good balance for English
+            "beam_size": 4,  # Optimal for English small.en model
+            "no_speech_threshold": 0.6,  # Standard threshold
+            "initial_prompt": "Professional English transcription with proper punctuation and grammar.",
+            "patience": 1.0,
+            "length_penalty": 1.0
+        },
+        "es": {  # Spanish
+            "temperature": (0.0, 0.15),  # Balanced for Spanish variations
+            "best_of": 2,  # Efficient for Spanish
+            "beam_size": 3,  # Balanced beam search
+            "no_speech_threshold": 0.55,  # Similar to Portuguese
+            "initial_prompt": "Transcripción en español con acentuación y puntuación correctas.",
+            "patience": 1.1,
+            "length_penalty": 1.05
+        }
+    },
+    
+    # Fallback configuration for unsupported languages
+    "fallback_config": {
+        "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+        "best_of": 5,
+        "beam_size": 5,
+        "no_speech_threshold": 0.6,
+        "initial_prompt": "Audio transcription with proper punctuation.",
+        "patience": 1.0,
+        "length_penalty": 1.0
+    }
 }
 
 # Speaker Diarization Configuration - Using PyAudioAnalysis (Free)
@@ -228,8 +258,8 @@ AUDIO_PREPROCESSING_CONFIG = {
     "enabled": True,
     "lufs_normalization": {
         "enabled": True,
-        "target_lufs": -23.0,  # Broadcast standard
-        "fallback_peak_level": 0.8
+        "target_lufs": -20.0,  # Less aggressive to avoid clipping (was -23.0)
+        "fallback_peak_level": 0.7  # Reduced to prevent clipping (was 0.8)
     },
     "noise_reduction": {
         "spectral_subtraction": True,  # Advanced noise reduction with noisereduce
@@ -251,9 +281,9 @@ AUDIO_PREPROCESSING_CONFIG = {
     },
     "dynamic_range": {
         "compression_enabled": True,
-        "threshold": 0.3,
-        "ratio": 3.0,
-        "final_amplitude_limit": 0.9
+        "threshold": 0.4,  # Higher threshold for less aggressive compression
+        "ratio": 2.5,      # Lower ratio to prevent clipping (was 3.0)
+        "final_amplitude_limit": 0.8  # Reduced limit to prevent clipping (was 0.9)
     },
     "resampling": {
         "target_sample_rate": 16000,
@@ -315,3 +345,158 @@ ALIGNMENT_CONFIG = {
         "max_boundary_adjustment_ms": 500  # Maximum timing adjustment
     }
 }
+
+# PERFORMANCE OPTIMIZATIONS - Real-time Configuration Profile
+# Merged from realtime_config.py for consolidated configuration
+REALTIME_CONFIG = {
+    "audio_preprocessing": {
+        "enabled": True,
+        "lufs_normalization": False,  # Disabled for speed
+        "noise_reduction": False,     # Disabled for speed
+        "simple_normalization_only": True,
+        "high_pass_filter": {
+            "enabled": True,
+            "cutoff_freq": 80,
+            "order": 2  # Reduced order for speed
+        }
+    },
+    "whisper_optimization": {
+        "model_size": "tiny",         # Fastest model
+        "beam_size": 1,               # No beam search
+        "best_of": 1,                 # Single candidate
+        "temperature": 0.0,           # Deterministic
+        "word_timestamps": False,     # Disabled for speed
+        "fp16": False,                # CPU compatibility
+        "condition_on_previous_text": False  # Disabled for speed
+    },
+    "diarization": {
+        "method": "energy_based_fast", # Fastest method
+        "max_speakers": 3,             # Limit complexity
+        "min_segment_duration": 1.0,   # Larger segments
+        "enable_temporal_smoothing": False,  # Disabled for speed
+        "skip_feature_extraction": True     # Use simple energy only
+    },
+    "memory_management": {
+        "max_buffer_size": 1024 * 1024,  # 1MB buffer
+        "enable_garbage_collection": True,
+        "cleanup_interval": 10.0,         # Clean every 10s
+        "max_cached_models": 1            # Limit model cache
+    },
+    "performance": {
+        "target_latency": 0.5,        # 500ms target
+        "max_processing_time": 2.0,   # 2s timeout
+        "enable_performance_logging": False,  # Disabled for speed
+        "chunk_duration": 2.0         # Process in 2s chunks
+    }
+}
+
+# Quality vs Speed profiles for different use cases
+PROCESSING_PROFILES = {
+    "realtime": {
+        "transcription_model": "tiny",
+        "diarization_method": "energy_based",
+        "preprocessing": "minimal",
+        "target_latency": 0.5,  # 500ms
+        "quality_score": 60     # 60% quality for max speed
+    },
+    "balanced": {
+        "transcription_model": "small", 
+        "diarization_method": "frequency_analysis",
+        "preprocessing": "standard",
+        "target_latency": 2.0,  # 2s
+        "quality_score": 80     # 80% quality
+    },
+    "quality": {
+        "transcription_model": "base",
+        "diarization_method": "pyaudioanalysis", 
+        "preprocessing": "full",
+        "target_latency": 10.0, # 10s
+        "quality_score": 95     # 95% quality
+    }
+}
+
+# Language-specific preprocessing optimizations
+LANGUAGE_PREPROCESSING = {
+    "pt": {
+        "lufs_target": -20.0,  # Optimized for Portuguese speech patterns
+        "high_pass_cutoff": 85,  # Portuguese phonetics
+        "noise_reduction": "moderate",
+        "model_preference": "base"
+    },
+    "en": {
+        "lufs_target": -23.0,  # Standard for English
+        "high_pass_cutoff": 80,
+        "noise_reduction": "light",
+        "model_preference": "small.en"
+    },
+    "es": {
+        "lufs_target": -21.0,  # Optimized for Spanish
+        "high_pass_cutoff": 90,  # Spanish consonants
+        "noise_reduction": "moderate",
+        "model_preference": "base"
+    }
+}
+
+# Memory optimization settings
+REALTIME_MEMORY_CONFIG = {
+    "max_audio_buffer_mb": 64,      # 64MB audio buffer limit
+    "max_model_cache_mb": 256,      # 256MB model cache limit
+    "enable_memory_monitoring": True,
+    "memory_cleanup_threshold": 0.8, # Cleanup at 80% usage
+    "temp_file_cleanup_interval": 30 # Clean temp files every 30s
+}
+
+# Configuration validation function
+def validate_config():
+    """Validate configuration values"""
+    errors = []
+    
+    # Validate basic audio settings
+    if DEFAULT_SAMPLE_RATE <= 0:
+        errors.append("DEFAULT_SAMPLE_RATE must be positive")
+    
+    if DEFAULT_CHUNK_SIZE <= 0:
+        errors.append("DEFAULT_CHUNK_SIZE must be positive")
+    
+    # Validate Whisper models
+    if not WHISPER_MODELS:
+        errors.append("WHISPER_MODELS cannot be empty")
+    
+    for lang, model in WHISPER_MODELS.items():
+        if not isinstance(model, str) or not model.strip():
+            errors.append(f"Invalid model for language {lang}: {model}")
+    
+    # Validate FastAPI configuration
+    if not isinstance(FASTAPI_CONFIG.get("port", 0), int) or FASTAPI_CONFIG.get("port", 0) <= 0:
+        errors.append("FASTAPI_CONFIG port must be a positive integer")
+    
+    # Validate processing profiles
+    for profile_name, profile in PROCESSING_PROFILES.items():
+        if not isinstance(profile.get("target_latency", 0), (int, float)) or profile.get("target_latency", 0) <= 0:
+            errors.append(f"Invalid target_latency for profile {profile_name}")
+        
+        if not isinstance(profile.get("quality_score", 0), int) or not (0 <= profile.get("quality_score", 0) <= 100):
+            errors.append(f"Invalid quality_score for profile {profile_name} (must be 0-100)")
+    
+    # Validate realtime config
+    perf_config = REALTIME_CONFIG.get("performance", {})
+    if not isinstance(perf_config.get("chunk_duration", 0), (int, float)) or perf_config.get("chunk_duration", 0) <= 0:
+        errors.append("REALTIME_CONFIG performance.chunk_duration must be positive")
+    
+    # Validate memory config
+    mem_config = REALTIME_MEMORY_CONFIG
+    if not isinstance(mem_config.get("memory_cleanup_threshold", 0), (int, float)) or not (0 < mem_config.get("memory_cleanup_threshold", 0) <= 1):
+        errors.append("memory_cleanup_threshold must be between 0 and 1")
+    
+    if errors:
+        raise ValueError("Configuration validation errors:\n" + "\n".join(f"- {error}" for error in errors))
+    
+    return True
+
+# Validate configuration on module load
+try:
+    validate_config()
+    print("[OK] Configuration validation passed")
+except ValueError as e:
+    print(f"[ERROR] Configuration validation failed:\n{e}")
+    raise

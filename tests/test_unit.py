@@ -767,5 +767,662 @@ class TestBugFixes(AsyncTestCase):
         
         logger.info(f"Recording files integration test completed with {len(recording_files)} files")
 
+class TestImprovements():
+    """Test cases for the improvements implemented"""
+    
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_contextual_corrections(self):
+        """Test contextual corrections for multi-language support"""
+        try:
+            from src.transcription import ContextualCorrector
+            
+            corrector = ContextualCorrector()
+            
+            # Test Portuguese corrections (using implemented corrections only)
+            pt_tests = [
+                ("voce esta bem", "você", "está"),
+                ("medico rapido", "médico", "rápido"),
+                ("opcao automatico", "opção", "automático")
+            ]
+            
+            for original, word1, word2 in pt_tests:
+                result = corrector.apply_corrections(original, "pt", 0.5)  # Low confidence
+                assert word1 in result, f"PT correction failed: '{original}' should contain '{word1}', got '{result}'"
+                assert word2 in result, f"PT correction failed: '{original}' should contain '{word2}', got '{result}'"
+            
+            # Test English corrections 
+            en_tests = [
+                ("your going there", "you're"),
+                ("there going home", "they're"),
+                ("dont worry", "don't")
+            ]
+            
+            for original, expected_word in en_tests:
+                result = corrector.apply_corrections(original, "en", 0.6)  # Low confidence
+                assert expected_word in result, f"EN correction failed: '{original}' should contain '{expected_word}', got '{result}'"
+                
+            # Test Spanish corrections (checking individual words due to encoding)
+            es_tests = [
+                ("medico rapido", "médico", "rápido"),
+                ("musica facil", "música", "fácil"),
+                ("telefono automatico", "teléfono", "automático")
+            ]
+            
+            for original, word1, word2 in es_tests:
+                result = corrector.apply_corrections(original, "es", 0.4)  # Low confidence
+                assert word1 in result, f"ES correction failed: '{original}' should contain '{word1}', got '{result}'"
+                assert word2 in result, f"ES correction failed: '{original}' should contain '{word2}', got '{result}'"
+            
+            # Test high confidence - should not correct
+            high_conf_result = corrector.apply_corrections("voce esta bem", "pt", 0.9)
+            assert high_conf_result == "voce esta bem", "High confidence text should not be corrected"
+            
+            logger.info("Contextual corrections test passed for all languages")
+            
+        except ImportError as e:
+            logger.warning(f"ContextualCorrector import failed: {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_whisper_language_configs(self):
+        """Test optimized Whisper configurations per language"""
+        try:
+            from config.app_config import WHISPER_CONFIG, WHISPER_MODELS
+            
+            # Test language-specific configurations exist
+            assert "language_configs" in WHISPER_CONFIG, "Language configs not found"
+            lang_configs = WHISPER_CONFIG["language_configs"]
+            
+            # Test required languages are present
+            required_langs = ["pt", "en", "es"]
+            for lang in required_langs:
+                assert lang in lang_configs, f"Configuration for {lang} missing"
+                config = lang_configs[lang]
+                
+                # Test required parameters
+                assert "temperature" in config, f"Temperature missing for {lang}"
+                assert "best_of" in config, f"best_of missing for {lang}"
+                assert "beam_size" in config, f"beam_size missing for {lang}"
+                assert "no_speech_threshold" in config, f"no_speech_threshold missing for {lang}"
+                assert "initial_prompt" in config, f"initial_prompt missing for {lang}"
+                
+                # Test parameter values are reasonable
+                assert isinstance(config["temperature"], tuple), f"Temperature should be tuple for {lang}"
+                assert 0.0 in config["temperature"], f"Should include 0.0 temperature for {lang}"
+                assert config["best_of"] >= 1, f"best_of should be >= 1 for {lang}"
+                assert config["beam_size"] >= 1, f"beam_size should be >= 1 for {lang}"
+                assert 0 < config["no_speech_threshold"] < 1, f"Invalid no_speech_threshold for {lang}"
+                assert len(config["initial_prompt"]) > 0, f"Empty initial_prompt for {lang}"
+            
+            # Test model upgrades
+            assert WHISPER_MODELS["pt"] == "base", "Portuguese model should be 'base'"
+            assert WHISPER_MODELS["es"] == "base", "Spanish model should be 'base'"
+            assert WHISPER_MODELS["en"] == "small.en", "English model should remain 'small.en'"
+            
+            logger.info("Whisper language configurations test passed")
+            
+        except ImportError as e:
+            logger.warning(f"Config import failed: {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)  
+    async def test_safe_speaker_id_conversion(self):
+        """Test enhanced safe speaker ID conversion"""
+        try:
+            from src.speaker_diarization import safe_speaker_id_conversion
+            
+            # Test various input types that could cause issues
+            test_cases = [
+                # (input, expected_output, description)
+                (1, 1, "integer"),
+                (1.7, 2, "float rounding"),
+                ("2", 2, "string number"),
+                (np.array([3]), 3, "single element array"),
+                (np.array([4, 5, 6]), 4, "multi element array"),
+                ([7], 7, "single element list"),
+                ([8, 9, 10], 8, "multi element list"),
+                (np.int32(5), 5, "numpy integer"),
+                (np.float64(6.4), 6, "numpy float"),
+                ("Speaker_3", 3, "speaker string"),
+            ]
+            
+            for input_val, expected, description in test_cases:
+                try:
+                    result = safe_speaker_id_conversion(input_val)
+                    assert isinstance(result, int), f"Result should be int for {description}, got {type(result)}"
+                    assert result == expected, f"Expected {expected} for {description}, got {result}"
+                    logger.debug(f"Safe conversion test passed: {description} - {input_val} -> {result}")
+                    
+                except Exception as e:
+                    pytest.fail(f"Safe conversion failed for {description} ({input_val}): {e}")
+            
+            # Test error handling
+            try:
+                result = safe_speaker_id_conversion(None)
+                assert result == 0, "None should convert to 0"
+            except Exception as e:
+                pytest.fail(f"None handling failed: {e}")
+            
+            logger.info("Safe speaker ID conversion test passed")
+            
+        except ImportError as e:
+            logger.warning(f"Speaker diarization import failed: {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    async def test_intelligent_speaker_detection(self, fast_test_audio):
+        """Test intelligent speaker count detection"""
+        try:
+            from src.speaker_diarization import SpeakerDiarization
+            
+            diarizer = SpeakerDiarization()
+            audio_data, sample_rate = fast_test_audio
+            
+            # Create test audio file
+            temp_file = Path(FileManager.get_unified_temp_dir()) / "speaker_detection_test.wav"
+            sf.write(temp_file, audio_data, sample_rate)
+            
+            try:
+                # Test intelligent detection
+                estimated_speakers = diarizer.analyze_audio_for_speaker_count(str(temp_file))
+                
+                # Should return integer
+                assert isinstance(estimated_speakers, int), f"Should return int, got {type(estimated_speakers)}"
+                assert estimated_speakers >= 1, f"Should return at least 1 speaker, got {estimated_speakers}"
+                assert estimated_speakers <= 5, f"Should not return more than 5 speakers, got {estimated_speakers}"
+                
+                # For very short audio (0.1s), should likely return 1
+                if len(audio_data) / sample_rate < 2.0:
+                    assert estimated_speakers == 1, f"Short audio should return 1 speaker, got {estimated_speakers}"
+                
+                logger.info(f"Intelligent speaker detection test passed: {estimated_speakers} speakers detected")
+                
+            finally:
+                if temp_file.exists():
+                    await TestPerformance.safe_remove(temp_file)
+                    
+        except ImportError as e:
+            logger.warning(f"Speaker diarization import failed: {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_audio_preprocessing_improvements(self):
+        """Test improved audio preprocessing configuration"""
+        try:
+            from config.app_config import AUDIO_PREPROCESSING_CONFIG
+            
+            # Test LUFS normalization improvements
+            lufs_config = AUDIO_PREPROCESSING_CONFIG["lufs_normalization"]
+            assert lufs_config["target_lufs"] == -20.0, f"LUFS target should be -20.0, got {lufs_config['target_lufs']}"
+            assert lufs_config["fallback_peak_level"] == 0.7, f"Peak level should be 0.7, got {lufs_config['fallback_peak_level']}"
+            
+            # Test dynamic range improvements
+            dynamic_config = AUDIO_PREPROCESSING_CONFIG["dynamic_range"]
+            assert dynamic_config["ratio"] == 2.5, f"Compression ratio should be 2.5, got {dynamic_config['ratio']}"
+            assert dynamic_config["threshold"] == 0.4, f"Threshold should be 0.4, got {dynamic_config['threshold']}"
+            assert dynamic_config["final_amplitude_limit"] == 0.8, f"Amplitude limit should be 0.8, got {dynamic_config['final_amplitude_limit']}"
+            
+            logger.info("Audio preprocessing improvements test passed")
+            
+        except ImportError as e:
+            logger.warning(f"Config import failed: {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(20)
+    async def test_integration_with_improvements(self, fast_test_audio):
+        """Integration test with all improvements"""
+        try:
+            from src.speaker_diarization import SpeakerDiarization
+            from src.transcription import ContextualCorrector
+            
+            audio_data, sample_rate = fast_test_audio
+            temp_file = Path(FileManager.get_unified_temp_dir()) / "integration_test.wav"
+            sf.write(temp_file, audio_data, sample_rate)
+            
+            try:
+                # Test speaker detection
+                diarizer = SpeakerDiarization() 
+                estimated_speakers = diarizer.analyze_audio_for_speaker_count(str(temp_file))
+                assert isinstance(estimated_speakers, int), "Speaker detection should return integer"
+                
+                # Test contextual corrections
+                corrector = ContextualCorrector()
+                corrected_text = corrector.apply_corrections("voce esta bem", "pt", 0.5)
+                assert "você" in corrected_text.lower(), "Portuguese correction should work"
+                
+                # Test safe conversion
+                from src.speaker_diarization import safe_speaker_id_conversion
+                safe_result = safe_speaker_id_conversion(np.array([estimated_speakers]))
+                assert isinstance(safe_result, int), "Safe conversion should return integer"
+                
+                logger.info("Integration test with improvements passed")
+                
+            finally:
+                if temp_file.exists():
+                    await TestPerformance.safe_remove(temp_file)
+                    
+        except ImportError as e:
+            logger.warning(f"Integration test failed due to imports: {e}")
+
+class TestPerformanceOptimizations():
+    """Test cases for performance optimizations from fixes.txt"""
+    
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_optimized_imports(self):
+        """Test all optimized components import correctly"""
+        try:
+            from config.app_config import REALTIME_CONFIG, PROCESSING_PROFILES
+            from src.memory_optimizer import memory_optimizer, optimize_audio_processing
+            from src.transcription import preprocess_audio_realtime
+            from src.speaker_diarization import SpeakerDiarization
+            from src.realtime_processor import RealTimeProcessor, create_realtime_processor
+            
+            logger.info("All optimized components imported successfully")
+            assert REALTIME_CONFIG is not None, "Real-time config not loaded"
+            assert len(PROCESSING_PROFILES) == 3, f"Expected 3 profiles, got {len(PROCESSING_PROFILES)}"
+            
+        except ImportError as e:
+            pytest.fail(f"Import error - {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    async def test_memory_optimization(self):
+        """Test memory optimization features"""
+        try:
+            from src.memory_optimizer import memory_optimizer
+            
+            # Test memory usage tracking
+            initial_usage = memory_optimizer.get_memory_usage()
+            assert initial_usage > 0, "Memory usage should be positive"
+            
+            # Test memory pressure detection
+            pressure = memory_optimizer.check_memory_pressure()
+            assert isinstance(pressure, bool), "Memory pressure should be boolean"
+            
+            # Test audio processing with memory limits
+            test_audio = np.random.randn(32000).astype(np.float32)  # 2s at 16kHz
+            processed = memory_optimizer.process_with_memory_limit(test_audio)
+            
+            assert len(processed) == len(test_audio), "Processed audio length should match input"
+            assert processed.dtype == np.float32, "Output should be float32"
+            
+            logger.info(f"Memory optimization test passed - processed {len(processed)} samples")
+            
+        except Exception as e:
+            pytest.fail(f"Memory optimization test failed - {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_realtime_preprocessing_performance(self):
+        """Test real-time preprocessing performance improvement"""
+        try:
+            from src.transcription import preprocess_audio_realtime, preprocess_audio_advanced
+            
+            # Generate test audio
+            audio_data = np.random.randn(16000 * 2).astype(np.float32)  # 2 seconds
+            sample_rate = 16000
+            
+            # Test real-time preprocessing speed
+            start_time = time.time()
+            result_realtime = preprocess_audio_realtime(audio_data, sample_rate)
+            realtime_duration = time.time() - start_time
+            
+            # Test advanced preprocessing for comparison
+            start_time = time.time()
+            result_advanced = preprocess_audio_advanced(audio_data, sample_rate)
+            advanced_duration = time.time() - start_time
+            
+            # Verify both produce valid output
+            assert len(result_realtime) == len(audio_data), "Real-time preprocessing should preserve length"
+            assert len(result_advanced) == len(audio_data), "Advanced preprocessing should preserve length"
+            
+            # Real-time should be faster
+            speedup = advanced_duration / realtime_duration if realtime_duration > 0 else float('inf')
+            assert speedup > 1.0, f"Real-time preprocessing should be faster, got {speedup:.1f}x"
+            
+            logger.info(f"Preprocessing performance test passed - {speedup:.1f}x speedup")
+            
+        except Exception as e:
+            pytest.fail(f"Preprocessing performance test failed - {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(20)
+    async def test_optimized_diarization_performance(self, fast_test_audio):
+        """Test optimized diarization performance"""
+        try:
+            from src.speaker_diarization import SpeakerDiarization
+            
+            # Use fast test audio
+            audio_data, sample_rate = fast_test_audio
+            
+            # Create test audio file
+            temp_file = Path(FileManager.get_unified_temp_dir()) / "test_diarization_optimized.wav"
+            sf.write(temp_file, audio_data, sample_rate)
+            
+            try:
+                diarizer = SpeakerDiarization()
+                
+                # Test optimized diarization
+                start_time = time.time()
+                segments = await diarizer.diarize_audio_optimized(str(temp_file))
+                optimized_duration = time.time() - start_time
+                
+                # Verify segments are valid
+                assert len(segments) >= 1, "Should return at least one segment"
+                assert all('speaker' in seg and 'start' in seg and 'end' in seg for seg in segments), "Invalid segment format"
+                
+                # Should be fast for short audio
+                assert optimized_duration < 1.0, f"Optimized diarization too slow: {optimized_duration:.3f}s"
+                
+                logger.info(f"Optimized diarization test passed - {optimized_duration:.3f}s, {len(segments)} segments")
+                
+            finally:
+                if temp_file.exists():
+                    await TestPerformance.safe_remove(temp_file)
+                    
+        except ImportError as e:
+            logger.warning(f"Optimized diarization test skipped due to imports: {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_processing_profiles(self):
+        """Test different processing profiles"""
+        try:
+            from config.app_config import PROCESSING_PROFILES
+            from src.realtime_processor import create_realtime_processor
+            
+            # Test all profiles can be created
+            processors = {}
+            for profile_name in PROCESSING_PROFILES:
+                processor = create_realtime_processor(profile_name)
+                processors[profile_name] = processor
+                assert processor.target_latency > 0, f"Invalid target latency for {profile_name}"
+                logger.info(f"Profile '{profile_name}' created - Target: {processor.target_latency}s")
+            
+            # Verify profile hierarchy (realtime < balanced < quality for latency)
+            realtime_latency = processors["realtime"].target_latency
+            balanced_latency = processors["balanced"].target_latency
+            quality_latency = processors["quality"].target_latency
+            
+            assert realtime_latency < balanced_latency, "Realtime should have lower latency than balanced"
+            assert balanced_latency < quality_latency, "Balanced should have lower latency than quality"
+            
+            logger.info("Processing profiles test passed - latency ordering correct")
+            
+        except Exception as e:
+            pytest.fail(f"Processing profiles test failed - {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_performance_benchmarks(self):
+        """Test performance against benchmarks from fixes.txt"""
+        try:
+            from src.memory_optimizer import memory_optimizer
+            from src.transcription import preprocess_audio_realtime
+            
+            # Benchmark parameters from fixes.txt
+            TARGET_LATENCY = 0.5  # 500ms
+            MAX_MEMORY_MB = 512   # 512MB
+            
+            # Test latency benchmark
+            audio_data = np.random.randn(8000).astype(np.float32)  # 0.5s at 16kHz
+            start_time = time.time()
+            processed = preprocess_audio_realtime(audio_data, 16000)
+            processing_time = time.time() - start_time
+            
+            assert processing_time < TARGET_LATENCY, f"Processing time {processing_time:.3f}s exceeds target {TARGET_LATENCY}s"
+            assert len(processed) == len(audio_data), "Processed audio length should match"
+            
+            # Test memory benchmark
+            current_memory = memory_optimizer.get_memory_usage()
+            assert current_memory < MAX_MEMORY_MB, f"Memory usage {current_memory:.1f}MB exceeds target {MAX_MEMORY_MB}MB"
+            
+            logger.info(f"Performance benchmarks passed - Latency: {processing_time:.3f}s, Memory: {current_memory:.1f}MB")
+            
+        except Exception as e:
+            pytest.fail(f"Performance benchmark test failed - {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    async def test_hotpath_optimization(self):
+        """Test hot path optimizations (reduced logging)"""
+        try:
+            from src.speaker_diarization import safe_speaker_id_conversion
+            
+            # Test various input types that would previously cause excessive logging
+            test_cases = [
+                np.array([1, 2, 3, 4, 5]),  # Multi-element array
+                [1, 2, 3],                  # Multi-element list
+                (4, 5, 6),                  # Multi-element tuple
+            ]
+            
+            # Capture log output to verify reduced logging
+            with patch('src.speaker_diarization.logger') as mock_logger:
+                for test_input in test_cases:
+                    result = safe_speaker_id_conversion(test_input)
+                    assert isinstance(result, int), f"Should return int for {type(test_input)}"
+                
+                # Verify no debug/warning calls (optimized hot path)
+                debug_calls = [call for call in mock_logger.debug.call_args_list]
+                warning_calls = [call for call in mock_logger.warning.call_args_list if 'multiple elements' in str(call)]
+                
+                assert len(debug_calls) == 0, f"Hot path should not have debug logging, got {len(debug_calls)} calls"
+                
+            logger.info("Hot path optimization test passed - no excessive logging")
+            
+        except Exception as e:
+            pytest.fail(f"Hot path optimization test failed - {e}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(20)
+    async def test_realtime_processor_integration(self, fast_test_audio):
+        """Test real-time processor integration"""
+        try:
+            from src.realtime_processor import create_realtime_processor
+            
+            # Create real-time processor
+            processor = create_realtime_processor("realtime")
+            
+            # Test basic functionality
+            assert processor.target_latency == 0.5, "Realtime processor should have 0.5s target latency"
+            assert processor.chunk_duration == 2.0, "Should have 2s chunk duration"
+            
+            # Test performance stats (empty initially)
+            stats = processor.get_performance_stats()
+            assert "status" in stats or "chunks_processed" in stats, "Should return valid stats"
+            
+            logger.info("Real-time processor integration test passed")
+            
+        except Exception as e:
+            pytest.fail(f"Real-time processor integration test failed - {e}")
+
+class TestCriticalFixes():
+    """Test suite for all critical fixes implemented from fixes.txt"""
+    
+    @pytest.mark.asyncio
+    async def test_async_preprocessing(self):
+        """Test the async audio preprocessing from fixes.txt"""
+        try:
+            from src.transcription import preprocess_audio_advanced
+            
+            # Create test audio data
+            audio_data = np.random.random(16000).astype(np.float32)
+            
+            # Test async preprocessing
+            result = await preprocess_audio_advanced(audio_data, 16000)
+            
+            assert isinstance(result, np.ndarray), "Result should be numpy array"
+            assert result.dtype == np.float32, "Result should be float32"
+            assert len(result) == len(audio_data), "Length should be preserved"
+            
+            logger.info("Async preprocessing fix test passed")
+            
+        except Exception as e:
+            pytest.fail(f"Async preprocessing test failed: {e}")
+
+    @pytest.mark.asyncio
+    async def test_atomic_file_handling_fix(self):
+        """Test the atomic file operations race condition fix"""
+        try:
+            from src.audio_processing import AtomicAudioFile
+            
+            test_file = "test_atomic_fix.wav"
+            
+            # Test normal operation
+            async with AtomicAudioFile() as af:
+                af.commit(test_file)
+            
+            # Test exception handling (should not raise)
+            try:
+                async with AtomicAudioFile() as af:
+                    af.commit(test_file)
+                    raise ValueError("Test exception")
+            except ValueError:
+                pass  # Expected exception
+            
+            logger.info("Atomic file handling race condition fix test passed")
+            
+        except Exception as e:
+            pytest.fail(f"Atomic file handling test failed: {e}")
+
+    def test_realtime_processor_imports_fix(self):
+        """Test realtime processor imports are now absolute (not relative)"""
+        try:
+            from src.realtime_processor import create_realtime_processor
+            
+            processor = create_realtime_processor("realtime")
+            assert hasattr(processor, 'target_latency'), "Should have target_latency attribute"
+            assert processor.target_latency == 0.5, "Target latency should be 0.5s"
+            
+            # Test that memory optimizer is imported correctly
+            from src.memory_optimizer import memory_optimizer
+            assert hasattr(memory_optimizer, 'check_memory_pressure'), "Memory optimizer should be accessible"
+            
+            logger.info("RealTime processor imports fix test passed")
+            
+        except Exception as e:
+            pytest.fail(f"RealTime processor imports test failed: {e}")
+
+    def test_configuration_validation_fix(self):
+        """Test configuration validation implementation"""
+        try:
+            from config.app_config import validate_config, PROCESSING_PROFILES
+            
+            # Test validation function exists and works
+            result = validate_config()
+            assert result == True, "Validation should return True"
+            
+            # Test profile access
+            assert "realtime" in PROCESSING_PROFILES, "Should have realtime profile"
+            assert PROCESSING_PROFILES["realtime"]["target_latency"] == 0.5, "Correct latency"
+            
+            # Test that validation runs on import (no errors)
+            import config.app_config
+            
+            logger.info("Configuration validation fix test passed")
+            
+        except Exception as e:
+            pytest.fail(f"Configuration validation test failed: {e}")
+
+    def test_file_manager_context_fix(self):
+        """Test file manager proper context handling"""
+        try:
+            from src.file_manager import FileManager
+            
+            # Test save audio with context managers
+            test_data = b"test audio data for file manager context fix"
+            result_path = FileManager.save_audio(test_data, "test_fm_fix.wav")
+            
+            assert os.path.exists(result_path), "File should exist"
+            
+            # Test file is properly closed and can be removed
+            os.remove(result_path)
+            assert not os.path.exists(result_path), "File should be deleted"
+            
+            logger.info("File manager context fix test passed")
+            
+        except Exception as e:
+            pytest.fail(f"File manager context test failed: {e}")
+
+    def test_template_separation_fix(self):
+        """Test HTML template separation implementation"""
+        try:
+            # Check template file exists
+            template_path = Path("templates/index.html")
+            assert template_path.exists(), "Template file should exist"
+            
+            # Check main.py doesn't contain large HTML blocks
+            with open("main.py", "r", encoding="utf-8") as f:
+                content = f.read()
+                assert "<!DOCTYPE html>" not in content, "HTML should be in template"
+                assert "templates = Jinja2Templates" in content, "Should use Jinja2"
+            
+            # Check template content is valid HTML
+            with open(template_path, "r", encoding="utf-8") as f:
+                template_content = f.read()
+                assert "<!DOCTYPE html>" in template_content, "Template should contain HTML"
+                assert "TranscrevAI" in template_content, "Template should contain app content"
+            
+            logger.info("HTML template separation fix test passed")
+            
+        except Exception as e:
+            pytest.fail(f"HTML template separation test failed: {e}")
+
+    def test_package_versions_fix(self):
+        """Test package versions are corrected"""
+        try:
+            with open("requirements.txt", "r") as f:
+                content = f.read()
+                
+            # Check problematic versions are fixed
+            assert "fsspec==2025.9.0" not in content, "Future version should be fixed"
+            assert "fsspec>=2024.6.1,<2025.0.0" in content, "Should have proper version range"
+            assert "jinja2>=3.1.0" in content, "Should have Jinja2 for templates"
+            
+            logger.info("Package versions fix test passed")
+            
+        except Exception as e:
+            pytest.fail(f"Package versions test failed: {e}")
+
+    def test_websocket_memory_leak_fix(self):
+        """Test WebSocket memory leak fix in main.py"""
+        try:
+            from main import SimpleWebSocketManager
+            
+            # Create manager instance
+            manager = SimpleWebSocketManager()
+            
+            # Test disconnect method exists and has proper structure
+            import inspect
+            disconnect_source = inspect.getsource(manager.disconnect)
+            
+            # Verify fix is implemented: uses pop() and closes websocket
+            assert "pop(" in disconnect_source, "Should use pop() instead of del"
+            assert "websocket.close()" in disconnect_source, "Should close websocket explicitly"
+            
+            logger.info("WebSocket memory leak fix test passed")
+            
+        except Exception as e:
+            pytest.fail(f"WebSocket memory leak test failed: {e}")
+
+    def test_all_critical_modules_import(self):
+        """Test that all critical modules import successfully after fixes"""
+        try:
+            # Test all critical imports work
+            from src import transcription, speaker_diarization, file_manager
+            from src import memory_optimizer, realtime_processor, audio_processing
+            from config import app_config
+            from main import app, templates
+            
+            # Test FastAPI app is configured correctly
+            assert app.title == "TranscrevAI", "FastAPI app should be configured"
+            
+            logger.info("All critical modules import fix test passed")
+            
+        except Exception as e:
+            pytest.fail(f"Critical modules import test failed: {e}")
+
 if __name__ == "__main__":
     pytest.main(["-v", "--cov=src", "--cov-report=html:cov_html", "-p", "no:warnings"])

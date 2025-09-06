@@ -29,6 +29,7 @@ from pathlib import Path
 from src.file_manager import FileManager
 from config.app_config import WHISPER_MODEL_DIR, WHISPER_MODELS, WHISPER_CONFIG
 from src.logging_setup import setup_app_logging
+import re
 
 # Use proper logging setup first
 logger = setup_app_logging(logger_name="transcrevai.transcription")
@@ -84,6 +85,102 @@ def _ensure_ml_imports():
 
     return WHISPER_AVAILABLE
 
+class ContextualCorrector:
+    """Lightweight contextual corrections for common transcription errors"""
+    
+    def __init__(self):
+        self.corrections = {
+            "pt": {
+                # Portuguese (Brazilian) common corrections
+                r'\bvoce\b': 'você',
+                r'\besta\b': 'está',  
+                r'\bmedico\b': 'médico',
+                r'\btelefone\b': 'telefone',
+                r'\bopcao\b': 'opção',
+                r'\binformacao\b': 'informação',
+                r'\boperacao\b': 'operação',
+                r'\bcomunicacao\b': 'comunicação',
+                r'\beducacao\b': 'educação',
+                r'\bsituacao\b': 'situação',
+                r'\brapido\b': 'rápido',
+                r'\bbasico\b': 'básico',
+                r'\bpratico\b': 'prático',
+                r'\bautomatico\b': 'automático'
+            },
+            "en": {
+                # English common corrections
+                r'\bthere going\b': "they're going",
+                r'\byour going\b': "you're going",
+                r'\bits going\b': "it's going",
+                r'\bthats\b': "that's",
+                r'\bdont\b': "don't",
+                r'\bcant\b': "can't",
+                r'\bwont\b': "won't",
+                r'\byour\b(?=\s+(are|going|looking|taking))': "you're",
+                r'\btheir\b(?=\s+(going|looking|taking))': "they're",
+                r'\bits\b(?=\s+(going|going|looking|taking))': "it's"
+            },
+            "es": {
+                # Spanish common corrections
+                r'\bmedico\b': 'médico',
+                r'\btelefono\b': 'teléfono',
+                r'\brapido\b': 'rápido',
+                r'\bmusica\b': 'música',
+                r'\bingles\b': 'inglés',
+                r'\bfacil\b': 'fácil',
+                r'\butil\b': 'útil',
+                r'\binformacion\b': 'información',
+                r'\boperacion\b': 'operación',
+                r'\bcomunicacion\b': 'comunicación',
+                r'\beducacion\b': 'educación',
+                r'\bsituacion\b': 'situación',
+                r'\bautomatico\b': 'automático',
+                r'\bpractico\b': 'práctico'
+            }
+        }
+        
+        # Compile regex patterns for better performance
+        self.compiled_patterns = {}
+        for language, patterns in self.corrections.items():
+            self.compiled_patterns[language] = {
+                re.compile(pattern, re.IGNORECASE): replacement
+                for pattern, replacement in patterns.items()
+            }
+    
+    def apply_corrections(self, text: str, language: str, confidence: float = 1.0) -> str:
+        """
+        Apply language-specific corrections to text
+        
+        Args:
+            text: Text to correct
+            language: Language code (pt, en, es)
+            confidence: Confidence score (apply corrections only to low confidence words)
+        
+        Returns:
+            Corrected text
+        """
+        try:
+            # Only apply corrections to low-confidence transcriptions
+            if confidence > 0.7:
+                return text
+            
+            if language not in self.compiled_patterns:
+                return text
+            
+            corrected_text = text
+            for pattern, replacement in self.compiled_patterns[language].items():
+                corrected_text = pattern.sub(replacement, corrected_text)
+            
+            # Log corrections if any were made
+            if corrected_text != text:
+                logger.debug(f"Contextual correction applied [{language}]: '{text}' -> '{corrected_text}'")
+                
+            return corrected_text
+            
+        except Exception as e:
+            logger.warning(f"Contextual correction failed: {e}")
+            return text
+
 def load_audio_librosa(audio_file, sr=16000, mono=True):
     """
     Load audio using librosa
@@ -99,9 +196,35 @@ def load_audio_librosa(audio_file, sr=16000, mono=True):
     audio_data, sample_rate = librosa.load(audio_file, sr=sr, mono=mono, dtype=np.float32)
     return audio_data, sample_rate
 
-def preprocess_audio_advanced(audio_data, sample_rate):
+def preprocess_audio_realtime(audio_data, sample_rate):
     """
-    Advanced audio preprocessing for better transcription quality
+    Lightweight preprocessing optimized for real-time performance
+    Replaces heavy pipeline with minimal, fast operations
+    """
+    try:
+        # Simple normalization only (fastest)
+        if np.max(np.abs(audio_data)) > 0:
+            audio_data = audio_data / np.max(np.abs(audio_data)) * 0.8
+        
+        # Optional: Simple high-pass filter only for real-time
+        if sample_rate >= 16000:
+            from scipy import signal
+            # Lightweight 2nd order filter instead of complex pipeline
+            b, a = signal.butter(2, 80, btype='highpass', fs=sample_rate)
+            audio_data = signal.filtfilt(b, a, audio_data)
+        
+        return audio_data.astype(np.float32)
+        
+    except Exception as e:
+        logger.warning(f"Real-time preprocessing failed: {e}, using simple normalization")
+        # Fallback to simple normalization
+        if np.max(np.abs(audio_data)) > 0:
+            return (audio_data / np.max(np.abs(audio_data)) * 0.8).astype(np.float32)
+        return audio_data.astype(np.float32)
+
+async def preprocess_audio_advanced(audio_data, sample_rate):
+    """
+    Advanced audio preprocessing for better transcription quality - now properly async
     
     Args:
         audio_data: numpy array of audio samples
@@ -111,76 +234,80 @@ def preprocess_audio_advanced(audio_data, sample_rate):
         numpy array: preprocessed audio
     """
     try:
-        # Normalize audio level
-        if np.max(np.abs(audio_data)) > 0:
-            audio_data = audio_data / np.max(np.abs(audio_data)) * 0.8
+        # Run CPU-intensive operations in thread pool
+        loop = asyncio.get_event_loop()
         
-        # Apply LUFS normalization if available
-        if PYLOUDNORM_AVAILABLE:
+        def _cpu_intensive_processing():
+            processed_data = audio_data.copy()
+            
+            # Normalize audio level
+            if np.max(np.abs(processed_data)) > 0:
+                processed_data = processed_data / np.max(np.abs(processed_data)) * 0.8
+            
+            # Apply LUFS normalization if available
+            if PYLOUDNORM_AVAILABLE:
+                try:
+                    meter = pyln.Meter(sample_rate)
+                    loudness = meter.integrated_loudness(processed_data)
+                    
+                    # Target -23 LUFS for speech with clipping protection  
+                    if not np.isinf(loudness) and not np.isnan(loudness):
+                        # Only normalize if current loudness is significantly different
+                        if abs(loudness - (-23.0)) > 3.0:  # 3 dB threshold
+                            processed_data = pyln.normalize.loudness(processed_data, loudness, -23.0)
+                            # Apply soft limiter to prevent clipping
+                            processed_data = np.clip(processed_data, -0.95, 0.95)
+                except Exception as e:
+                    logger.warning(f"LUFS normalization failed: {e}")
+            
+            # Apply noise reduction if available
+            if NOISEREDUCE_AVAILABLE and nr is not None:
+                try:
+                    # Only apply if audio is long enough for stationary noise estimation
+                    if len(processed_data) / sample_rate > 2.0:
+                        processed_data = nr.reduce_noise(y=processed_data, sr=sample_rate, stationary=True)
+                    else:
+                        # Use non-stationary for shorter audio
+                        processed_data = nr.reduce_noise(y=processed_data, sr=sample_rate, stationary=False)
+                except Exception as e:
+                    logger.warning(f"Noise reduction failed: {e}")
+            
+            # Apply high-pass filter to remove low-frequency noise
             try:
-                meter = pyln.Meter(sample_rate)
-                loudness = meter.integrated_loudness(audio_data)
+                # 80 Hz high-pass filter for speech
+                sos = signal.butter(5, 80, btype='highpass', fs=sample_rate, output='sos')
+                processed_data = signal.sosfilt(sos, processed_data)
+            except Exception as e:
+                logger.warning(f"High-pass filter failed: {e}")
+            
+            # Apply gentle compression to even out dynamics
+            try:
+                # Simple soft compression
+                threshold = 0.5
+                ratio = 4.0
                 
-                # Target -23 LUFS for speech with clipping protection  
-                if not np.isinf(loudness) and not np.isnan(loudness):
-                    # Only normalize if current loudness is significantly different
-                    if abs(loudness - (-23.0)) > 3.0:  # 3 dB threshold
-                        audio_data = pyln.normalize.loudness(audio_data, loudness, -23.0)
-                        # Apply soft limiter to prevent clipping
-                        audio_data = np.clip(audio_data, -0.95, 0.95)
-                        logger.debug(f"Applied LUFS normalization with limiter: {loudness:.2f} -> -23.0 LUFS")
+                # Find samples above threshold
+                above_threshold = np.abs(processed_data) > threshold
+                
+                # Apply compression
+                compressed = np.copy(processed_data)
+                compressed[above_threshold] = np.sign(processed_data[above_threshold]) * (
+                    threshold + (np.abs(processed_data[above_threshold]) - threshold) / ratio
+                )
+                
+                processed_data = compressed
             except Exception as e:
-                logger.warning(f"LUFS normalization failed: {e}")
-        
-        # Apply noise reduction if available
-        if NOISEREDUCE_AVAILABLE and nr is not None:
-            try:
-                # Only apply if audio is long enough for stationary noise estimation
-                if len(audio_data) / sample_rate > 2.0:
-                    audio_data = nr.reduce_noise(y=audio_data, sr=sample_rate, stationary=True)
-                    logger.debug("Applied stationary noise reduction")
-                else:
-                    # Use non-stationary for shorter audio
-                    audio_data = nr.reduce_noise(y=audio_data, sr=sample_rate, stationary=False)
-                    logger.debug("Applied non-stationary noise reduction")
-            except Exception as e:
-                logger.warning(f"Noise reduction failed: {e}")
-        
-        # Apply high-pass filter to remove low-frequency noise
-        try:
-            # 80 Hz high-pass filter for speech
-            sos = signal.butter(5, 80, btype='highpass', fs=sample_rate, output='sos')
-            audio_data = signal.sosfilt(sos, audio_data)
-            logger.debug("Applied high-pass filter at 80Hz")
-        except Exception as e:
-            logger.warning(f"High-pass filter failed: {e}")
-        
-        # Apply gentle compression to even out dynamics
-        try:
-            # Simple soft compression
-            threshold = 0.5
-            ratio = 4.0
+                logger.warning(f"Audio compression failed: {e}")
             
-            # Find samples above threshold
-            above_threshold = np.abs(audio_data) > threshold
+            # Final normalization
+            if np.max(np.abs(processed_data)) > 0:
+                processed_data = processed_data / np.max(np.abs(processed_data)) * 0.8
             
-            # Apply compression
-            compressed = np.copy(audio_data)
-            compressed[above_threshold] = np.sign(audio_data[above_threshold]) * (
-                threshold + (np.abs(audio_data[above_threshold]) - threshold) / ratio
-            )
-            
-            audio_data = compressed
-            logger.debug("Applied soft compression")
-        except Exception as e:
-            logger.warning(f"Audio compression failed: {e}")
+            # Ensure float32 consistency for Whisper
+            return processed_data.astype(np.float32)
         
-        # Final normalization
-        if np.max(np.abs(audio_data)) > 0:
-            audio_data = audio_data / np.max(np.abs(audio_data)) * 0.8
-        
-        # Ensure float32 consistency for Whisper
-        return audio_data.astype(np.float32)
+        # Execute in thread pool to avoid blocking
+        return await loop.run_in_executor(None, _cpu_intensive_processing)
         
     except Exception as e:
         logger.error(f"Audio preprocessing failed: {e}")
@@ -241,109 +368,14 @@ class WhisperTranscriptionService:
 
         return self._models[language_code]
 
-class MemoryOptimizedTranscriptionService(WhisperTranscriptionService):
-    """Memory-optimized version of WhisperTranscriptionService with smart caching"""
-    
-    def __init__(self):
-        super().__init__()
-        self._model_timestamps = {}  # Track last access time for each model
-        self._max_cached_models = 2  # Maximum number of models to keep in memory
-        self._cleanup_interval = 1800  # 30 minutes
-        self._last_cleanup = 0
-        
-    async def load_whisper_model(self, language_code: str) -> Any:
-        """Load and cache Whisper model with memory optimization"""
-        # Ensure ML dependencies are loaded
-        if not _ensure_ml_imports():
-            logger.error("Whisper not available")
-            raise TranscriptionError("Whisper dependencies not installed")
-
-        async with self._model_lock:
-            # Update timestamp for this language
-            import time
-            current_time = time.time()
-            self._model_timestamps[language_code] = current_time
-            
-            # Clean up unused models periodically
-            if current_time - self._last_cleanup > self._cleanup_interval:
-                await self.cleanup_unused_models()
-                self._last_cleanup = current_time
-            
-            # Check if model is already loaded
-            if language_code not in self._models:
-                # Check if we need to free memory first
-                if len(self._models) >= self._max_cached_models:
-                    await self._free_oldest_model()
-                
-                try:
-                    model_name = WHISPER_MODELS.get(language_code, "small")
-
-                    # Download model in thread pool
-                    loop = asyncio.get_event_loop()
-                    model = await loop.run_in_executor(
-                        None,
-                        whisper.load_model,
-                        model_name,
-                        self.device,
-                        str(WHISPER_MODEL_DIR)
-                    )
-
-                    self._models[language_code] = model
-                    logger.info(f"Whisper model '{model_name}' loaded for {language_code}")
-
-                except Exception as e:
-                    logger.error(f"Failed to load Whisper model for {language_code}: {e}")
-                    raise TranscriptionError(f"Whisper model loading failed: {str(e)}")
-
-        return self._models[language_code]
-    
-    async def cleanup_unused_models(self):
-        """Remove unused models from memory based on timestamp"""
-        import time
-        current_time = time.time()
-        models_to_remove = []
-        
-        for lang, timestamp in list(self._model_timestamps.items()):
-            # Remove models not used for 30 minutes
-            if current_time - timestamp > 1800:  # 30 minutes
-                models_to_remove.append(lang)
-        
-        for lang in models_to_remove:
-            if lang in self._models:
-                del self._models[lang]
-                del self._model_timestamps[lang]
-                logger.info(f"Removed unused model from memory: {lang}")
-                
-                # Force garbage collection
-                import gc
-                gc.collect()
-    
-    async def _free_oldest_model(self):
-        """Free the oldest (least recently used) model from memory"""
-        if not self._model_timestamps:
-            return
-            
-        # Find the oldest model
-        oldest_lang = min(self._model_timestamps.keys(), 
-                         key=lambda k: self._model_timestamps[k])
-        
-        if oldest_lang in self._models:
-            del self._models[oldest_lang]
-            del self._model_timestamps[oldest_lang]
-            logger.info(f"Freed oldest model from memory: {oldest_lang}")
-            
-            # Force garbage collection
-            import gc
-            gc.collect()
-
 # Global service instance - lazy initialization
 transcription_service = None
 
 def get_transcription_service():
-    """Get or create memory-optimized transcription service instance"""
+    """Get or create transcription service instance"""
     global transcription_service
     if transcription_service is None:
-        transcription_service = MemoryOptimizedTranscriptionService()
+        transcription_service = WhisperTranscriptionService()
     return transcription_service
 
 async def transcribe_audio_with_progress(
@@ -397,42 +429,51 @@ async def transcribe_audio_with_progress(
                 
                 logger.info("Advanced audio preprocessing completed")
 
-                # Transcribe with Whisper - Fix: Allow all configured languages
+                # Transcribe with Whisper - Enhanced with language-specific optimization
                 from config.app_config import WHISPER_MODELS
                 language = language_code if language_code in WHISPER_MODELS else None
                 logger.info(f"Using Whisper with language: {language} (requested: {language_code})")
 
-                # Get language-specific initial prompt
-                initial_prompts = WHISPER_CONFIG.get("initial_prompt", {})
-                initial_prompt = None
-                if isinstance(initial_prompts, dict) and language_code in initial_prompts:
-                    initial_prompt = initial_prompts[language_code]
-                elif isinstance(initial_prompts, str):
-                    initial_prompt = initial_prompts
+                # Get language-specific configuration or fallback
+                language_configs = WHISPER_CONFIG.get("language_configs", {})
+                if language_code in language_configs:
+                    config = language_configs[language_code]
+                    logger.info(f"Using optimized configuration for {language_code}")
+                else:
+                    config = WHISPER_CONFIG.get("fallback_config", {})
+                    logger.info(f"Using fallback configuration for {language_code}")
 
                 # Enhanced diagnostic logging
                 logger.info(f"Whisper transcription parameters:")
                 logger.info(f"  - Language: {language}")
                 logger.info(f"  - Model: {WHISPER_MODELS.get(language_code, 'auto')}")
-                logger.info(f"  - Temperature: {WHISPER_CONFIG['temperature']}")
-                logger.info(f"  - Best of: {WHISPER_CONFIG['best_of']}")
-                logger.info(f"  - Initial prompt: {initial_prompt}")
+                logger.info(f"  - Temperature: {config.get('temperature', (0.0, 0.2))}")
+                logger.info(f"  - Best of: {config.get('best_of', 5)}")
+                logger.info(f"  - Beam size: {config.get('beam_size', 5)}")
+                logger.info(f"  - No speech threshold: {config.get('no_speech_threshold', 0.6)}")
+                logger.info(f"  - Initial prompt: {config.get('initial_prompt', '')}")
 
                 result = model.transcribe(
                     audio_data,
                     language=language,
                     word_timestamps=WHISPER_CONFIG["word_timestamps"],
                     condition_on_previous_text=WHISPER_CONFIG["condition_on_previous_text"],
-                    temperature=WHISPER_CONFIG["temperature"],
-                    best_of=WHISPER_CONFIG["best_of"],
-                    beam_size=WHISPER_CONFIG["beam_size"],
-                    initial_prompt=initial_prompt,
+                    temperature=config.get("temperature", (0.0, 0.2)),
+                    best_of=config.get("best_of", 5),
+                    beam_size=config.get("beam_size", 5),
+                    patience=config.get("patience", 1.0),
+                    length_penalty=config.get("length_penalty", 1.0),
+                    no_speech_threshold=config.get("no_speech_threshold", 0.6),
+                    initial_prompt=config.get("initial_prompt", ""),
                     fp16=False  # Force FP32 to avoid CPU warnings
                 )
                 
                 logger.info(f"Whisper detected language: {result.get('language', 'unknown')}")
 
-                # Convert Whisper result to TranscrevAI format
+                # Initialize contextual corrector
+                corrector = ContextualCorrector()
+
+                # Convert Whisper result to TranscrevAI format with contextual corrections
                 transcription_data = []
 
                 if "segments" in result:
@@ -440,28 +481,51 @@ async def transcribe_audio_with_progress(
                         # Extract word-level timestamps if available
                         if "words" in segment and segment["words"]:
                             for word in segment["words"]:
+                                original_text = word["word"].strip()
+                                confidence = word.get("probability", 1.0)
+                                
+                                # Apply contextual corrections
+                                corrected_text = corrector.apply_corrections(
+                                    original_text, language_code, confidence
+                                )
+                                
                                 transcription_data.append({
                                     "start": word["start"],
                                     "end": word["end"],
-                                    "text": word["word"].strip(),
-                                    "confidence": word.get("probability", 1.0)
+                                    "text": corrected_text,
+                                    "confidence": confidence
                                 })
                         else:
                             # Fallback to segment-level
+                            original_text = segment["text"].strip()
+                            corrected_text = corrector.apply_corrections(
+                                original_text, language_code, 1.0
+                            )
+                            
                             transcription_data.append({
                                 "start": segment["start"],
                                 "end": segment["end"],
-                                "text": segment["text"].strip(),
+                                "text": corrected_text,
                                 "confidence": 1.0
                             })
                 else:
                     # Fallback: single segment
+                    original_text = result.get("text", "").strip()
+                    corrected_text = corrector.apply_corrections(
+                        original_text, language_code, 1.0
+                    )
+                    
                     transcription_data.append({
                         "start": 0.0,
                         "end": len(audio_data) / sr,
-                        "text": result.get("text", "").strip(),
+                        "text": corrected_text,
                         "confidence": 1.0
                     })
+
+                # Log total number of corrections applied
+                corrections_count = sum(1 for item in transcription_data if item["confidence"] <= 0.7)
+                if corrections_count > 0:
+                    logger.info(f"Applied contextual corrections to {corrections_count} low-confidence segments")
 
                 return transcription_data
 
