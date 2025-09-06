@@ -241,14 +241,109 @@ class WhisperTranscriptionService:
 
         return self._models[language_code]
 
+class MemoryOptimizedTranscriptionService(WhisperTranscriptionService):
+    """Memory-optimized version of WhisperTranscriptionService with smart caching"""
+    
+    def __init__(self):
+        super().__init__()
+        self._model_timestamps = {}  # Track last access time for each model
+        self._max_cached_models = 2  # Maximum number of models to keep in memory
+        self._cleanup_interval = 1800  # 30 minutes
+        self._last_cleanup = 0
+        
+    async def load_whisper_model(self, language_code: str) -> Any:
+        """Load and cache Whisper model with memory optimization"""
+        # Ensure ML dependencies are loaded
+        if not _ensure_ml_imports():
+            logger.error("Whisper not available")
+            raise TranscriptionError("Whisper dependencies not installed")
+
+        async with self._model_lock:
+            # Update timestamp for this language
+            import time
+            current_time = time.time()
+            self._model_timestamps[language_code] = current_time
+            
+            # Clean up unused models periodically
+            if current_time - self._last_cleanup > self._cleanup_interval:
+                await self.cleanup_unused_models()
+                self._last_cleanup = current_time
+            
+            # Check if model is already loaded
+            if language_code not in self._models:
+                # Check if we need to free memory first
+                if len(self._models) >= self._max_cached_models:
+                    await self._free_oldest_model()
+                
+                try:
+                    model_name = WHISPER_MODELS.get(language_code, "small")
+
+                    # Download model in thread pool
+                    loop = asyncio.get_event_loop()
+                    model = await loop.run_in_executor(
+                        None,
+                        whisper.load_model,
+                        model_name,
+                        self.device,
+                        str(WHISPER_MODEL_DIR)
+                    )
+
+                    self._models[language_code] = model
+                    logger.info(f"Whisper model '{model_name}' loaded for {language_code}")
+
+                except Exception as e:
+                    logger.error(f"Failed to load Whisper model for {language_code}: {e}")
+                    raise TranscriptionError(f"Whisper model loading failed: {str(e)}")
+
+        return self._models[language_code]
+    
+    async def cleanup_unused_models(self):
+        """Remove unused models from memory based on timestamp"""
+        import time
+        current_time = time.time()
+        models_to_remove = []
+        
+        for lang, timestamp in list(self._model_timestamps.items()):
+            # Remove models not used for 30 minutes
+            if current_time - timestamp > 1800:  # 30 minutes
+                models_to_remove.append(lang)
+        
+        for lang in models_to_remove:
+            if lang in self._models:
+                del self._models[lang]
+                del self._model_timestamps[lang]
+                logger.info(f"Removed unused model from memory: {lang}")
+                
+                # Force garbage collection
+                import gc
+                gc.collect()
+    
+    async def _free_oldest_model(self):
+        """Free the oldest (least recently used) model from memory"""
+        if not self._model_timestamps:
+            return
+            
+        # Find the oldest model
+        oldest_lang = min(self._model_timestamps.keys(), 
+                         key=lambda k: self._model_timestamps[k])
+        
+        if oldest_lang in self._models:
+            del self._models[oldest_lang]
+            del self._model_timestamps[oldest_lang]
+            logger.info(f"Freed oldest model from memory: {oldest_lang}")
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+
 # Global service instance - lazy initialization
 transcription_service = None
 
 def get_transcription_service():
-    """Get or create transcription service instance"""
+    """Get or create memory-optimized transcription service instance"""
     global transcription_service
     if transcription_service is None:
-        transcription_service = WhisperTranscriptionService()
+        transcription_service = MemoryOptimizedTranscriptionService()
     return transcription_service
 
 async def transcribe_audio_with_progress(
