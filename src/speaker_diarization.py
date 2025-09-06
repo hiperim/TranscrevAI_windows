@@ -171,6 +171,20 @@ def safe_speaker_id_conversion(speaker_id):
             return int(speaker_id)
         elif isinstance(speaker_id, (float, np.floating)):
             return int(round(speaker_id))
+        elif isinstance(speaker_id, np.ndarray):
+            # CRITICAL FIX: Handle numpy arrays properly
+            if speaker_id.size == 1:
+                return int(speaker_id.item())  # Extract scalar value
+            else:
+                logger.warning(f"numpy array with multiple elements: {speaker_id}, using first element")
+                return int(speaker_id.flatten()[0])
+        elif isinstance(speaker_id, (list, tuple)):
+            # CRITICAL FIX: Handle lists and tuples
+            if len(speaker_id) == 1:
+                return safe_speaker_id_conversion(speaker_id[0])  # Recursive call
+            else:
+                logger.warning(f"List/tuple with multiple elements: {speaker_id}, using first element")
+                return safe_speaker_id_conversion(speaker_id[0])
         else:
             logger.warning(f"Unexpected speaker_id type: {type(speaker_id)}, value: {speaker_id}")
             return int(speaker_id)  # Last resort conversion
@@ -687,8 +701,12 @@ class SpeakerDiarization:
                 for i, speaker_id in enumerate(cls):
                     segment_time = i * segment_duration
                     
+                    # CRITICAL FIX: Convert both values to scalar before comparison
+                    current_speaker_safe = safe_speaker_id_conversion(current_speaker) if current_speaker is not None else None
+                    speaker_id_safe = safe_speaker_id_conversion(speaker_id)
+                    
                     # Group consecutive segments with same speaker
-                    if current_speaker != speaker_id:
+                    if current_speaker_safe != speaker_id_safe:
                         # Close previous segment
                         if current_speaker is not None:
                             # CRITICAL FIX: Safe speaker ID conversion
@@ -701,8 +719,8 @@ class SpeakerDiarization:
                                 "method": "pyaudioanalysis"
                             })
                         
-                        # Start new segment
-                        current_speaker = speaker_id
+                        # Start new segment - CRITICAL FIX: Store the safe converted value
+                        current_speaker = speaker_id_safe
                         segment_start = segment_time
                 
                 # Close final segment
