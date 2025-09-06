@@ -1071,7 +1071,7 @@ class TestPerformanceOptimizations():
             
             # Test advanced preprocessing for comparison
             start_time = time.time()
-            result_advanced = preprocess_audio_advanced(audio_data, sample_rate)
+            result_advanced = await preprocess_audio_advanced(audio_data, sample_rate)
             advanced_duration = time.time() - start_time
             
             # Verify both produce valid output
@@ -1423,6 +1423,173 @@ class TestCriticalFixes():
             
         except Exception as e:
             pytest.fail(f"Critical modules import test failed: {e}")
+
+class TestAppFunctionality():
+    """Complete app functionality tests after all fixes"""
+    
+    @pytest.mark.asyncio
+    async def test_complete_pipeline_functionality(self):
+        """Test the complete transcription pipeline after fixes"""
+        try:
+            # Test configuration and models
+            from config.app_config import WHISPER_MODELS, validate_config
+            
+            expected_models = {'en': 'small.en', 'pt': 'small', 'es': 'small'}
+            assert WHISPER_MODELS == expected_models, f"Models should be small versions: {WHISPER_MODELS}"
+            
+            # Test validation works
+            result = validate_config()
+            assert result == True, "Configuration validation should pass"
+            
+            logger.info(f"Whisper models configured correctly: {WHISPER_MODELS}")
+            
+        except Exception as e:
+            pytest.fail(f"Configuration test failed: {e}")
+
+    @pytest.mark.asyncio 
+    async def test_async_preprocessing_pipeline(self):
+        """Test async preprocessing in complete pipeline"""
+        try:
+            from src.transcription import preprocess_audio_advanced, preprocess_audio_realtime
+            
+            # Generate test audio
+            audio_data = np.random.random(16000).astype(np.float32)  # 1 second
+            
+            # Test realtime preprocessing (sync)
+            result_realtime = preprocess_audio_realtime(audio_data, 16000)
+            assert len(result_realtime) == len(audio_data), "Realtime preprocessing should preserve length"
+            
+            # Test advanced preprocessing (async) 
+            result_advanced = await preprocess_audio_advanced(audio_data, 16000)
+            assert len(result_advanced) == len(audio_data), "Advanced preprocessing should preserve length"
+            assert isinstance(result_advanced, np.ndarray), "Should return numpy array"
+            assert result_advanced.dtype == np.float32, "Should return float32"
+            
+            logger.info("Both sync and async preprocessing working correctly")
+            
+        except Exception as e:
+            pytest.fail(f"Preprocessing pipeline test failed: {e}")
+
+    def test_main_app_components(self):
+        """Test main app components are working"""
+        try:
+            # Test main app imports
+            from main import app, templates
+            assert app.title == "TranscrevAI", "FastAPI app should be configured"
+            
+            # Test template directory exists
+            template_path = Path("templates/index.html")
+            assert template_path.exists(), "Template file should exist"
+            
+            # Test core modules
+            from src.speaker_diarization import SpeakerDiarization
+            from src.memory_optimizer import memory_optimizer
+            from src.realtime_processor import create_realtime_processor
+            
+            # Test diarization
+            diarizer = SpeakerDiarization()
+            assert hasattr(diarizer, 'analyze_audio_for_speaker_count'), "Should have analysis method"
+            
+            # Test memory optimizer
+            assert hasattr(memory_optimizer, 'check_memory_pressure'), "Memory optimizer should work"
+            
+            # Test realtime processor
+            processor = create_realtime_processor("realtime")
+            assert processor.target_latency == 0.5, "Should have correct latency"
+            assert hasattr(processor, 'process_stream'), "Should have process_stream method"
+            
+            logger.info("All main app components working correctly")
+            
+        except Exception as e:
+            pytest.fail(f"Main app components test failed: {e}")
+
+    def test_file_operations_functionality(self):
+        """Test file operations are working correctly"""
+        try:
+            from src.file_manager import FileManager
+            
+            # Test file manager with context handling
+            test_data = b"test audio data for functionality test"
+            result_path = FileManager.save_audio(test_data, "functionality_test.wav")
+            
+            assert os.path.exists(result_path), "File should be created"
+            
+            # Test file is properly closed and can be removed
+            os.remove(result_path)
+            assert not os.path.exists(result_path), "File should be deleted successfully"
+            
+            logger.info("File operations working correctly")
+            
+        except Exception as e:
+            pytest.fail(f"File operations test failed: {e}")
+
+    def test_no_coroutine_warnings(self):
+        """Test that there are no coroutine warnings when using async functions"""
+        try:
+            import warnings
+            import asyncio
+            from src.transcription import preprocess_audio_advanced
+            
+            # Capture warnings
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                
+                # Test async function
+                audio_data = np.random.random(8000).astype(np.float32)
+                
+                async def test_async():
+                    result = await preprocess_audio_advanced(audio_data, 16000)
+                    return result
+                
+                result = asyncio.run(test_async())
+                
+                # Check no coroutine warnings
+                coroutine_warnings = [warning for warning in w if 'coroutine' in str(warning.message).lower()]
+                assert len(coroutine_warnings) == 0, f"Should have no coroutine warnings, got: {len(coroutine_warnings)}"
+                
+                assert isinstance(result, np.ndarray), "Should return valid result"
+            
+            logger.info("No coroutine warnings detected - async functions working correctly")
+            
+        except Exception as e:
+            pytest.fail(f"Coroutine warnings test failed: {e}")
+
+    @pytest.mark.asyncio
+    async def test_full_integration_ready(self):
+        """Test that all systems are ready for full integration"""
+        try:
+            # This test combines multiple components to ensure they work together
+            from config.app_config import WHISPER_MODELS
+            from src.transcription import preprocess_audio_advanced
+            from src.speaker_diarization import SpeakerDiarization
+            from src.realtime_processor import create_realtime_processor
+            from main import app
+            
+            # Test data
+            audio_data = np.random.random(16000).astype(np.float32)
+            
+            # Test preprocessing
+            processed = await preprocess_audio_advanced(audio_data, 16000)
+            assert len(processed) > 0, "Preprocessing should work"
+            
+            # Test diarization setup
+            diarizer = SpeakerDiarization()
+            assert diarizer is not None, "Diarizer should initialize"
+            
+            # Test realtime processor
+            processor = create_realtime_processor("balanced")
+            assert processor.target_latency == 2.0, "Balanced profile should have 2s latency"
+            
+            # Test models are correct
+            assert all(model in ["small", "small.en"] for model in WHISPER_MODELS.values()), "All models should be small versions"
+            
+            # Test FastAPI app
+            assert app.title == "TranscrevAI", "App should be configured"
+            
+            logger.info("Full integration test passed - all systems ready")
+            
+        except Exception as e:
+            pytest.fail(f"Full integration test failed: {e}")
 
 if __name__ == "__main__":
     pytest.main(["-v", "--cov=src", "--cov-report=html:cov_html", "-p", "no:warnings"])

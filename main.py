@@ -634,14 +634,27 @@ async def process_audio_concurrent(session_id: str, language: str = "en", _forma
             })
             return
         
-        # Generate SRT subtitle file
+        # Generate SRT subtitle file only if we have valid transcription data
         srt_file = None
         try:
-            srt_file = await generate_srt(transcription_data, diarization_segments)
-            if srt_file:
-                logger.info(f"SRT generated successfully: {srt_file}")
+            if transcription_data and len(transcription_data) > 0:
+                # Validate that transcription data contains actual text content
+                has_valid_content = any(
+                    segment.get('text', '').strip() 
+                    for segment in transcription_data 
+                    if isinstance(segment, dict) and segment.get('text')
+                )
+                
+                if has_valid_content:
+                    srt_file = await generate_srt(transcription_data, diarization_segments)
+                    if srt_file:
+                        logger.info(f"SRT generated successfully: {srt_file}")
+                    else:
+                        logger.warning("SRT generation returned None")
+                else:
+                    logger.warning("SRT generation skipped: No valid text content in transcription data")
             else:
-                logger.warning("SRT generation returned None")
+                logger.warning("SRT generation skipped: No transcription data available")
         except Exception as e:
             logger.error(f"SRT generation failed: {e}")
         

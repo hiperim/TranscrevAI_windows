@@ -63,11 +63,11 @@ def _ensure_directories_created():
 DEFAULT_SAMPLE_RATE = 16000
 DEFAULT_CHUNK_SIZE = 4096
 
-# Whisper Models Configuration - Optimized per language
+# Whisper Models Configuration - Using small models for optimal performance
 WHISPER_MODELS = {
     "en": "small.en",  # English-only optimized small model
-    "pt": "base",      # Upgraded to base model for better Portuguese accuracy  
-    "es": "base"       # Upgraded to base model for better Spanish accuracy
+    "pt": "small",     # Small multilingual model for Portuguese  
+    "es": "small"      # Small multilingual model for Spanish
 }
 
 # Model directories
@@ -188,7 +188,7 @@ WHISPER_CONFIG = {
             "no_speech_threshold": 0.55,  # Optimized for Portuguese speech patterns
             "initial_prompt": "Transcrição em português brasileiro com pontuação e acentuação corretas.",
             "patience": 1.2,
-            "length_penalty": 1.1
+            "length_penalty": 0.9
         },
         "en": {  # English
             "temperature": (0.0, 0.2),  # Slightly more flexible
@@ -197,7 +197,7 @@ WHISPER_CONFIG = {
             "no_speech_threshold": 0.6,  # Standard threshold
             "initial_prompt": "Professional English transcription with proper punctuation and grammar.",
             "patience": 1.0,
-            "length_penalty": 1.0
+            "length_penalty": 0.8
         },
         "es": {  # Spanish
             "temperature": (0.0, 0.15),  # Balanced for Spanish variations
@@ -206,7 +206,7 @@ WHISPER_CONFIG = {
             "no_speech_threshold": 0.55,  # Similar to Portuguese
             "initial_prompt": "Transcripción en español con acentuación y puntuación correctas.",
             "patience": 1.1,
-            "length_penalty": 1.05
+            "length_penalty": 0.85
         }
     },
     
@@ -218,7 +218,7 @@ WHISPER_CONFIG = {
         "no_speech_threshold": 0.6,
         "initial_prompt": "Audio transcription with proper punctuation.",
         "patience": 1.0,
-        "length_penalty": 1.0
+        "length_penalty": 0.9
     }
 }
 
@@ -407,7 +407,7 @@ PROCESSING_PROFILES = {
         "quality_score": 80     # 80% quality
     },
     "quality": {
-        "transcription_model": "base",
+        "transcription_model": "small",
         "diarization_method": "pyaudioanalysis", 
         "preprocessing": "full",
         "target_latency": 10.0, # 10s
@@ -421,7 +421,7 @@ LANGUAGE_PREPROCESSING = {
         "lufs_target": -20.0,  # Optimized for Portuguese speech patterns
         "high_pass_cutoff": 85,  # Portuguese phonetics
         "noise_reduction": "moderate",
-        "model_preference": "base"
+        "model_preference": "small"
     },
     "en": {
         "lufs_target": -23.0,  # Standard for English
@@ -433,7 +433,7 @@ LANGUAGE_PREPROCESSING = {
         "lufs_target": -21.0,  # Optimized for Spanish
         "high_pass_cutoff": 90,  # Spanish consonants
         "noise_reduction": "moderate",
-        "model_preference": "base"
+        "model_preference": "small"
     }
 }
 
