@@ -5,10 +5,10 @@ from pathlib import Path
 # Application metadata
 APP_PACKAGE_NAME = "transcrevai"
 
-# Base directories - Cross-platform
+# Base directories - Docker-compatible with environment variable override
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-TEMP_DIR = DATA_DIR / "temp"
+DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE_DIR / "data")))
+TEMP_DIR = Path(os.getenv('TEMP_DIR', str(DATA_DIR / "temp")))
 
 def _ensure_directories_created():
     """Ensure all required directories exist"""
@@ -27,8 +27,8 @@ def _ensure_directories_created():
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
 
-# Whisper model configuration
-WHISPER_MODEL_DIR = DATA_DIR / "models" / "whisper"
+# Whisper model configuration - Docker-compatible
+WHISPER_MODEL_DIR = Path(os.getenv('WHISPER_MODEL_DIR', str(DATA_DIR / "models" / "whisper")))
 
 # Whisper models - Only medium models for supported languages
 WHISPER_MODELS = {
@@ -44,30 +44,30 @@ WHISPER_CONFIG = {
     "condition_on_previous_text": False,  # Better for conversations
     "language_configs": {
         "pt": {
-            "temperature": (0.0, 0.2),
-            "best_of": 3,
-            "beam_size": 4,
+            "temperature": 0.0,
+            "best_of": 1,
+            "beam_size": 2,
             "patience": 1.0,
             "length_penalty": 1.0,
-            "no_speech_threshold": 0.4,
+            "no_speech_threshold": 0.5,
             "initial_prompt": "Transcrição precisa em português brasileiro com pontuação e acentuação corretas."
         },
         "en": {
-            "temperature": (0.0, 0.2),
-            "best_of": 3,
-            "beam_size": 4,
+            "temperature": 0.0,
+            "best_of": 1,
+            "beam_size": 2,
             "patience": 1.0,
             "length_penalty": 1.0,
             "no_speech_threshold": 0.5,
             "initial_prompt": "Accurate English transcription with proper punctuation and grammar."
         },
         "es": {
-            "temperature": (0.0, 0.2),
-            "best_of": 3,
-            "beam_size": 4,
+            "temperature": 0.0,
+            "best_of": 1,
+            "beam_size": 2,
             "patience": 1.0,
             "length_penalty": 1.0,
-            "no_speech_threshold": 0.45,
+            "no_speech_threshold": 0.5,
             "initial_prompt": "Transcripción precisa en español con puntuación correcta y acentuación adecuada."
         }
     }

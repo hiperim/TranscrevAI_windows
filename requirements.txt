@@ -23,11 +23,11 @@ sounddevice>=0.4.6
 scikit-learn>=1.6.1
 tenacity>=9.0.0
 transformers>=4.35.0
-pywin32>=306; sys_platform == "win32"
+# Web framework (Docker-optimized)
 flask==3.1.0
 flask_socketio==5.5.1
 fastapi>=0.104.0
-uvicorn==0.34.3
+uvicorn[standard]==0.34.3
 websockets>=12.0
 python-multipart>=0.0.6
 jinja2>=3.1.0

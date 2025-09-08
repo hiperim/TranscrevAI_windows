@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  transcrevai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persistent data storage
+      - transcrevai_data:/app/data
+      - transcrevai_models:/app/data/models
+    environment:
+      - ENVIRONMENT=production
+      - DATA_DIR=/app/data
+      - WHISPER_MODEL_DIR=/app/data/models/whisper
+      - TEMP_DIR=/app/data/temp
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+
+volumes:
+  transcrevai_data:
+    driver: local
+  transcrevai_models:
+    driver: local
+
+networks:
+  default:
+    name: transcrevai_network

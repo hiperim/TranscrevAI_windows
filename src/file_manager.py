@@ -63,7 +63,7 @@ class FileManager:
                 logger.error(f"Failed to create data directory: {full_path}")
                 raise RuntimeError(f"Data directory creation failed: {str(e)}")
 
-        return os.path.normpath(str(full_path))
+        return str(full_path.resolve())
     
     @staticmethod
     def get_unified_temp_dir() -> str:
@@ -161,17 +161,17 @@ class FileManager:
         try:
             # Use data path instead of validate_path for inputs
             safe_dir = FileManager.get_data_path("inputs")
-            output_path = os.path.join(safe_dir, filename)
+            output_path = Path(safe_dir) / filename
             
             # Validate filename
             if ".." in filename or "/" in filename or "\\" in filename:
                 raise SecurityError("Invalid filename detected")
             
-            FileManager.ensure_directory_exists(os.path.dirname(output_path))
+            FileManager.ensure_directory_exists(str(output_path.parent))
             
             # Write with proper error handling
             try:
-                with open(output_path, 'wb') as f:
+                with open(str(output_path), 'wb') as f:
                     f.write(data)
                     f.flush()  # Ensure data is written
                     os.fsync(f.fileno())  # Force filesystem sync
@@ -180,7 +180,7 @@ class FileManager:
                 raise RuntimeError(f"Cannot write audio file: {str(e)}")
             
             logger.info(f"Audio file saved: {output_path}")
-            return output_path
+            return str(output_path)
             
         except SecurityError:
             raise  # Re-raise security errors
@@ -198,10 +198,10 @@ class FileManager:
             if ".." in filename or "/" in filename or "\\" in filename:
                 raise SecurityError("Invalid filename detected")
             
-            output_path = os.path.join(output_dir, filename)
-            FileManager.ensure_directory_exists(os.path.dirname(output_path))
+            output_path = Path(output_dir) / filename
+            FileManager.ensure_directory_exists(str(output_path.parent))
             
-            with open(output_path, 'w', encoding='utf-8') as f:
+            with open(str(output_path), 'w', encoding='utf-8') as f:
                 f.write(str(data))
                 f.flush()
                 os.fsync(f.fileno())
@@ -220,7 +220,7 @@ class FileManager:
         try:
             base_temp = FileManager.get_data_path("temp")
             
-            if not os.path.exists(base_temp):
+            if not Path(base_temp).exists():
                 logger.info("No temp directory to clean")
                 return
             
@@ -231,7 +231,7 @@ class FileManager:
             
             # Get list of items to clean atomically
             try:
-                temp_items = os.listdir(base_temp)
+                temp_items = list(Path(base_temp).iterdir())
             except OSError as e:
                 logger.error(f"Failed to list temp directory: {e}")
                 return
@@ -239,10 +239,10 @@ class FileManager:
             # Filter items to clean
             items_to_clean = []
             for temp_item in temp_items:
-                if temp_item.startswith("temp_") or temp_item.startswith("atomic_"):
-                    items_to_clean.append(os.path.join(base_temp, temp_item))
+                if temp_item.name.startswith("temp_") or temp_item.name.startswith("atomic_"):
+                    items_to_clean.append(temp_item)
                 else:
-                    logger.warning(f"Skipping non-temp item: {temp_item}")
+                    logger.warning(f"Skipping non-temp item: {temp_item.name}")
             
             # Perform cleanup with atomic operations
             cleaned_count = 0
@@ -251,19 +251,19 @@ class FileManager:
             for item_path in items_to_clean:
                 try:
                     # Use atomic operations for each item
-                    if os.path.isdir(item_path):
+                    if item_path.is_dir():
                         # For directories, use a temporary rename + delete pattern
-                        temp_name = f"{item_path}_deleting_{int(time.time() * 1000000)}"
+                        temp_name = item_path.with_name(f"{item_path.name}_deleting_{int(time.time() * 1000000)}")
                         try:
-                            os.rename(item_path, temp_name)
-                            shutil.rmtree(temp_name)
+                            item_path.rename(temp_name)
+                            shutil.rmtree(str(temp_name))
                             cleaned_count += 1
                         except OSError:
                             # If rename fails, try direct deletion
-                            shutil.rmtree(item_path)
+                            shutil.rmtree(str(item_path))
                             cleaned_count += 1
-                    elif os.path.isfile(item_path):
-                        os.remove(item_path)
+                    elif item_path.is_file():
+                        item_path.unlink()
                         cleaned_count += 1
                 except PermissionError as e:
                     logger.warning(f"Permission denied cleaning: {item_path}")
