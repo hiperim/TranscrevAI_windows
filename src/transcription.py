@@ -1,634 +1,359 @@
+# Enhanced transcription with medium model support
 import asyncio
-import wave
-import json
 import logging
-import os
-import tempfile
-import soundfile as sf
+import time
 import numpy as np
-import librosa # Added missing import
-from scipy import signal
+from typing import Dict, Any, Optional, List, AsyncGenerator, Tuple
+import tempfile
+import os
 
-# Enhanced audio preprocessing imports
-try:
-    import pyloudnorm as pyln
-    PYLOUDNORM_AVAILABLE = True
-except ImportError:
-    PYLOUDNORM_AVAILABLE = False
-
-try:
-    import noisereduce as nr
-    NOISEREDUCE_AVAILABLE = True
-except ImportError:
-    NOISEREDUCE_AVAILABLE = False
-    nr = None # Define nr to avoid unbound variable error
-
-from typing import AsyncGenerator, Tuple, List, Dict, Any
-from pathlib import Path
-
-from src.file_manager import FileManager
-from config.app_config import WHISPER_MODEL_DIR, WHISPER_MODELS, WHISPER_CONFIG
+from config.app_config import (
+    WHISPER_CONFIG, 
+    WHISPER_MODELS,
+    ADAPTIVE_PROMPTS,
+    QUALITY_CONFIG
+)
 from src.logging_setup import setup_app_logging
-import re
 
-# Use proper logging setup first
 logger = setup_app_logging(logger_name="transcrevai.transcription")
 
-# Log library availability after logger is set up
-if not PYLOUDNORM_AVAILABLE:
-    logger.warning("pyloudnorm not available - LUFS normalization disabled")
+# Lazy imports for better performance
+_whisper = None
+_librosa = None
+_soundfile = None
 
-if not NOISEREDUCE_AVAILABLE:
-    logger.warning("noisereduce not available - noise reduction disabled")
+def get_whisper():
+    """Lazy import whisper"""
+    global _whisper
+    if _whisper is None:
+        import whisper
+        _whisper = whisper
+    return _whisper
 
-# Lazy import for heavy ML dependencies
-WHISPER_AVAILABLE = False
-whisper = None
-torch = None
-_ml_imports_attempted = False
+def get_librosa():
+    """Lazy import librosa"""
+    global _librosa
+    if _librosa is None:
+        import librosa
+        _librosa = librosa
+    return _librosa
 
+def get_soundfile():
+    """Lazy import soundfile"""
+    global _soundfile
+    if _soundfile is None:
+        import soundfile
+        _soundfile = soundfile
+    return _soundfile
 
-def _ensure_ml_imports():
-    """Lazy import of heavy ML dependencies"""
-    global WHISPER_AVAILABLE, whisper, torch, _ml_imports_attempted
-
-    if _ml_imports_attempted:
-        return WHISPER_AVAILABLE
-
-    _ml_imports_attempted = True
-
-    try:
-        # Try openai-whisper package first (which should be available)
-        import whisper as _whisper
-        import torch as _torch
-
-        whisper = _whisper
-        torch = _torch
-        WHISPER_AVAILABLE = True
-        logger.info("ML dependencies (OpenAI Whisper) loaded successfully")
-        
-        # Test that whisper is working properly
-        _ = whisper.available_models()
-        logger.info(f"Available Whisper models: {whisper.available_models()}")
-        
-    except ImportError as e:
-        logger.error(f"ML dependencies not available - Whisper import failed: {e}")
-        logger.error("Please ensure 'openai-whisper' is properly installed: pip install openai-whisper")
-        WHISPER_AVAILABLE = False
-        whisper = None
-        torch = None
-    except Exception as e:
-        logger.error(f"ML dependencies loaded but Whisper test failed: {e}")
-        WHISPER_AVAILABLE = False
-        whisper = None
-        torch = None
-
-    return WHISPER_AVAILABLE
-
-class ContextualCorrector:
-    """Lightweight contextual corrections for common transcription errors"""
-    
-    def __init__(self):
-        self.corrections = {
-            "pt": {
-                # Portuguese (Brazilian) common corrections
-                r'\bvoce\b': 'você',
-                r'\besta\b': 'está',  
-                r'\bmedico\b': 'médico',
-                r'\btelefone\b': 'telefone',
-                r'\bopcao\b': 'opção',
-                r'\binformacao\b': 'informação',
-                r'\boperacao\b': 'operação',
-                r'\bcomunicacao\b': 'comunicação',
-                r'\beducacao\b': 'educação',
-                r'\bsituacao\b': 'situação',
-                r'\brapido\b': 'rápido',
-                r'\bbasico\b': 'básico',
-                r'\bpratico\b': 'prático',
-                r'\bautomatico\b': 'automático'
-            },
-            "en": {
-                # English common corrections
-                r'\bthere going\b': "they're going",
-                r'\byour going\b': "you're going",
-                r'\bits going\b': "it's going",
-                r'\bthats\b': "that's",
-                r'\bdont\b': "don't",
-                r'\bcant\b': "can't",
-                r'\bwont\b': "won't",
-                r'\byour\b(?=\s+(are|going|looking|taking))': "you're",
-                r'\btheir\b(?=\s+(going|looking|taking))': "they're",
-                r'\bits\b(?=\s+(going|going|looking|taking))': "it's"
-            },
-            "es": {
-                # Spanish common corrections
-                r'\bmedico\b': 'médico',
-                r'\btelefono\b': 'teléfono',
-                r'\brapido\b': 'rápido',
-                r'\bmusica\b': 'música',
-                r'\bingles\b': 'inglés',
-                r'\bfacil\b': 'fácil',
-                r'\butil\b': 'útil',
-                r'\binformacion\b': 'información',
-                r'\boperacion\b': 'operación',
-                r'\bcomunicacion\b': 'comunicación',
-                r'\beducacion\b': 'educación',
-                r'\bsituacion\b': 'situación',
-                r'\bautomatico\b': 'automático',
-                r'\bpractico\b': 'práctico'
-            }
-        }
-        
-        # Compile regex patterns for better performance
-        self.compiled_patterns = {}
-        for language, patterns in self.corrections.items():
-            self.compiled_patterns[language] = {
-                re.compile(pattern, re.IGNORECASE): replacement
-                for pattern, replacement in patterns.items()
-            }
-    
-    def apply_corrections(self, text: str, language: str, confidence: float = 1.0) -> str:
-        """
-        Apply language-specific corrections to text
-        
-        Args:
-            text: Text to correct
-            language: Language code (pt, en, es)
-            confidence: Confidence score (apply corrections only to low confidence words)
-        
-        Returns:
-            Corrected text
-        """
-        try:
-            # Only apply corrections to low-confidence transcriptions
-            if confidence > 0.7:
-                return text
-            
-            if language not in self.compiled_patterns:
-                return text
-            
-            corrected_text = text
-            for pattern, replacement in self.compiled_patterns[language].items():
-                corrected_text = pattern.sub(replacement, corrected_text)
-            
-            # Log corrections if any were made
-            if corrected_text != text:
-                logger.debug(f"Contextual correction applied [{language}]: '{text}' -> '{corrected_text}'")
-                
-            return corrected_text
-            
-        except Exception as e:
-            logger.warning(f"Contextual correction failed: {e}")
-            return text
-
-def load_audio_librosa(audio_file, sr=16000, mono=True):
-    """
-    Load audio using librosa
-    
-    Args:
-        audio_file: Path to audio file
-        sr: Target sample rate (default 16000 for Whisper)
-        mono: Convert to mono if True
-    
-    Returns:
-        tuple: (audio_data, sample_rate)
-    """
-    audio_data, sample_rate = librosa.load(audio_file, sr=sr, mono=mono, dtype=np.float32)
-    return audio_data, sample_rate
-
-def preprocess_audio_realtime(audio_data, sample_rate):
-    """
-    Lightweight preprocessing optimized for real-time performance
-    Replaces heavy pipeline with minimal, fast operations
-    """
-    try:
-        # Simple normalization only (fastest)
-        if np.max(np.abs(audio_data)) > 0:
-            audio_data = audio_data / np.max(np.abs(audio_data)) * 0.8
-        
-        # Optional: Simple high-pass filter only for real-time
-        if sample_rate >= 16000:
-            from scipy import signal
-            # Lightweight 2nd order filter instead of complex pipeline
-            b, a = signal.butter(2, 80, btype='highpass', fs=sample_rate)
-            audio_data = signal.filtfilt(b, a, audio_data)
-        
-        return audio_data.astype(np.float32)
-        
-    except Exception as e:
-        logger.warning(f"Real-time preprocessing failed: {e}, using simple normalization")
-        # Fallback to simple normalization
-        if np.max(np.abs(audio_data)) > 0:
-            return (audio_data / np.max(np.abs(audio_data)) * 0.8).astype(np.float32)
-        return audio_data.astype(np.float32)
-
-async def preprocess_audio_advanced(audio_data, sample_rate):
-    """
-    Advanced audio preprocessing for better transcription quality - now properly async
-    
-    Args:
-        audio_data: numpy array of audio samples
-        sample_rate: sample rate of audio
-        
-    Returns:
-        numpy array: preprocessed audio
-    """
-    try:
-        # Run CPU-intensive operations in thread pool
-        loop = asyncio.get_event_loop()
-        
-        def _cpu_intensive_processing():
-            processed_data = audio_data.copy()
-            
-            # Normalize audio level
-            if np.max(np.abs(processed_data)) > 0:
-                processed_data = processed_data / np.max(np.abs(processed_data)) * 0.8
-            
-            # Apply LUFS normalization if available
-            if PYLOUDNORM_AVAILABLE:
-                try:
-                    meter = pyln.Meter(sample_rate)
-                    loudness = meter.integrated_loudness(processed_data)
-                    
-                    # Target -23 LUFS for speech with clipping protection  
-                    if not np.isinf(loudness) and not np.isnan(loudness):
-                        # Only normalize if current loudness is significantly different
-                        if abs(loudness - (-23.0)) > 3.0:  # 3 dB threshold
-                            processed_data = pyln.normalize.loudness(processed_data, loudness, -23.0)
-                            # Apply soft limiter to prevent clipping
-                            processed_data = np.clip(processed_data, -0.95, 0.95)
-                except Exception as e:
-                    logger.warning(f"LUFS normalization failed: {e}")
-            
-            # Apply noise reduction if available
-            if NOISEREDUCE_AVAILABLE and nr is not None:
-                try:
-                    # Only apply if audio is long enough for stationary noise estimation
-                    if len(processed_data) / sample_rate > 2.0:
-                        processed_data = nr.reduce_noise(y=processed_data, sr=sample_rate, stationary=True)
-                    else:
-                        # Use non-stationary for shorter audio
-                        processed_data = nr.reduce_noise(y=processed_data, sr=sample_rate, stationary=False)
-                except Exception as e:
-                    logger.warning(f"Noise reduction failed: {e}")
-            
-            # Apply high-pass filter to remove low-frequency noise
-            try:
-                # 80 Hz high-pass filter for speech
-                sos = signal.butter(5, 80, btype='highpass', fs=sample_rate, output='sos')
-                processed_data = signal.sosfilt(sos, processed_data)
-            except Exception as e:
-                logger.warning(f"High-pass filter failed: {e}")
-            
-            # Apply gentle compression to even out dynamics
-            try:
-                # Simple soft compression
-                threshold = 0.5
-                ratio = 4.0
-                
-                # Find samples above threshold
-                above_threshold = np.abs(processed_data) > threshold
-                
-                # Apply compression
-                compressed = np.copy(processed_data)
-                compressed[above_threshold] = np.sign(processed_data[above_threshold]) * (
-                    threshold + (np.abs(processed_data[above_threshold]) - threshold) / ratio
-                )
-                
-                processed_data = compressed
-            except Exception as e:
-                logger.warning(f"Audio compression failed: {e}")
-            
-            # Final normalization
-            if np.max(np.abs(processed_data)) > 0:
-                processed_data = processed_data / np.max(np.abs(processed_data)) * 0.8
-            
-            # Ensure float32 consistency for Whisper
-            return processed_data.astype(np.float32)
-        
-        # Execute in thread pool to avoid blocking
-        return await loop.run_in_executor(None, _cpu_intensive_processing)
-        
-    except Exception as e:
-        logger.error(f"Audio preprocessing failed: {e}")
-        return audio_data
-
-class TranscriptionError(Exception):
-    pass
-
-# Model management removed - handled by main.py
-
-class WhisperTranscriptionService:
-    """Whisper-based transcription service with automatic model management"""
-
-    def __init__(self):
-        self._models = {}
-        self._model_lock = asyncio.Lock()
-        self._device = None # Lazy device detection
-
-    @property
-    def device(self):
-        """Lazy device detection only when needed"""
-        if self._device is None:
-            if _ensure_ml_imports() and torch:
-                self._device = "cuda" if torch.cuda.is_available() else "cpu"
-                logger.info(f"Whisper device: {self._device}")
-            else:
-                self._device = "cpu"
-        return self._device
-
-    async def load_whisper_model(self, language_code: str) -> Any:
-        """Load and cache Whisper model"""
-        # Ensure ML dependencies are loaded
-        if not _ensure_ml_imports():
-            logger.error("Whisper not available")
-            raise TranscriptionError("Whisper dependencies not installed")
-
-        async with self._model_lock:
-            if language_code not in self._models:
-                try:
-                    model_name = WHISPER_MODELS.get(language_code, "small")
-
-                    # Download model in thread pool
-                    loop = asyncio.get_event_loop()
-                    model = await loop.run_in_executor(
-                        None,
-                        whisper.load_model,
-                        model_name,
-                        self.device,
-                        str(WHISPER_MODEL_DIR)
-                    )
-
-                    self._models[language_code] = model
-                    logger.info(f"Whisper model '{model_name}' loaded for {language_code}")
-
-                except Exception as e:
-                    logger.error(f"Failed to load Whisper model for {language_code}: {e}")
-                    raise TranscriptionError(f"Whisper model loading failed: {str(e)}")
-
-        return self._models[language_code]
-
-# Global service instance - lazy initialization
-transcription_service = None
-
-def get_transcription_service():
-    """Get or create transcription service instance"""
-    global transcription_service
-    if transcription_service is None:
-        transcription_service = WhisperTranscriptionService()
-    return transcription_service
-
+# CRITICAL FIX: Enhanced transcription with adaptive processing
 async def transcribe_audio_with_progress(
-    wav_file: str,
-    language_code: str,
-    sample_rate: int = 16000
-) -> AsyncGenerator[Tuple[int, List[Dict]], None]:
-    """Whisper-based transcription with progress tracking"""
+    audio_file: str, 
+    language: str = "en", 
+    sample_rate: int = 16000,
+    audio_input_type: str = "neutral",
+    processing_profile: str = "balanced"
+) -> AsyncGenerator[Tuple[int, List[Dict[str, Any]]], None]:
+    """
+    Enhanced transcription using medium models for pt, en, es
+    """
     try:
-        logger.info(f"Starting Whisper transcription for {wav_file} with language {language_code}")
-
-        # Check if Whisper is available - ensure ML imports are attempted first
-        if not _ensure_ml_imports():
-            logger.error("Whisper not available - ML dependencies failed to load")
-            yield 100, [{"start": 0.0, "end": 1.0, "text": "Whisper not available"}]
-            return
-
-        # Load Whisper model
-        service = get_transcription_service()
-        model = await service.load_whisper_model(language_code)
-
-        # Validate audio file
-        if not os.path.exists(wav_file):
-            raise FileNotFoundError(f"Audio file not found: {wav_file}")
-
-        if os.path.getsize(wav_file) == 0:
-            raise ValueError("Audio file is empty")
-
-        # Yield initial progress
+        logger.info(f"Starting enhanced transcription: {audio_file}, language: {language}, type: {audio_input_type}")
+        
+        # Step 1: Get configuration for medium model
         yield 10, []
-
-        # Process audio with Whisper
-        loop = asyncio.get_event_loop()
-
-        async def transcribe_with_whisper():
-            try:
-                # Load and preprocess audio using librosa
-                logger.info("Loading audio with librosa")
-                audio_data, sr = load_audio_librosa(wav_file, sr=16000, mono=True)
-                
-                # Ensure consistent dtype for Whisper (fix dtype mismatch)
-                audio_data = audio_data.astype(np.float32)
-                
-                if len(audio_data) == 0:
-                    raise ValueError("No audio data loaded")
-
-                logger.info(f"Audio loaded: {len(audio_data)} samples at {sr}Hz")
-
-                # Apply advanced preprocessing
-                audio_data = await preprocess_audio_advanced(audio_data, sr)
-                
-                logger.info("Advanced audio preprocessing completed")
-
-                # Transcribe with Whisper - Enhanced with language-specific optimization
-                from config.app_config import WHISPER_MODELS
-                language = language_code if language_code in WHISPER_MODELS else None
-                logger.info(f"Using Whisper with language: {language} (requested: {language_code})")
-
-                # Get language-specific configuration or fallback
-                language_configs = WHISPER_CONFIG.get("language_configs", {})
-                if language_code in language_configs:
-                    config = language_configs[language_code]
-                    logger.info(f"Using optimized configuration for {language_code}")
-                else:
-                    config = WHISPER_CONFIG.get("fallback_config", {})
-                    logger.info(f"Using fallback configuration for {language_code}")
-
-                # Enhanced diagnostic logging
-                logger.info(f"Whisper transcription parameters:")
-                logger.info(f"  - Language: {language}")
-                logger.info(f"  - Model: {WHISPER_MODELS.get(language_code, 'auto')}")
-                logger.info(f"  - Temperature: {config.get('temperature', (0.0, 0.2))}")
-                logger.info(f"  - Best of: {config.get('best_of', 5)}")
-                logger.info(f"  - Beam size: {config.get('beam_size', 5)}")
-                logger.info(f"  - No speech threshold: {config.get('no_speech_threshold', 0.6)}")
-                logger.info(f"  - Initial prompt: {config.get('initial_prompt', '')}")
-
-                result = model.transcribe(
-                    audio_data,
-                    language=language,
-                    word_timestamps=WHISPER_CONFIG["word_timestamps"],
-                    condition_on_previous_text=WHISPER_CONFIG["condition_on_previous_text"],
-                    temperature=config.get("temperature", (0.0, 0.2)),
-                    best_of=config.get("best_of", 5),
-                    beam_size=config.get("beam_size", 5),
-                    patience=config.get("patience", 1.0),
-                    length_penalty=config.get("length_penalty", 1.0),
-                    no_speech_threshold=config.get("no_speech_threshold", 0.6),
-                    initial_prompt=config.get("initial_prompt", ""),
-                    fp16=False  # Force FP32 to avoid CPU warnings
-                )
-                
-                logger.info(f"Whisper detected language: {result.get('language', 'unknown')}")
-
-                # Initialize contextual corrector
-                corrector = ContextualCorrector()
-
-                # Convert Whisper result to TranscrevAI format with contextual corrections
-                transcription_data = []
-
-                if "segments" in result:
-                    for segment in result["segments"]:
-                        # Extract word-level timestamps if available
-                        if "words" in segment and segment["words"]:
-                            for word in segment["words"]:
-                                original_text = word["word"].strip()
-                                confidence = word.get("probability", 1.0)
-                                
-                                # Apply contextual corrections
-                                corrected_text = corrector.apply_corrections(
-                                    original_text, language_code, confidence
-                                )
-                                
-                                transcription_data.append({
-                                    "start": word["start"],
-                                    "end": word["end"],
-                                    "text": corrected_text,
-                                    "confidence": confidence
-                                })
-                        else:
-                            # Fallback to segment-level
-                            original_text = segment["text"].strip()
-                            corrected_text = corrector.apply_corrections(
-                                original_text, language_code, 1.0
-                            )
-                            
-                            transcription_data.append({
-                                "start": segment["start"],
-                                "end": segment["end"],
-                                "text": corrected_text,
-                                "confidence": 1.0
-                            })
-                else:
-                    # Fallback: single segment
-                    original_text = result.get("text", "").strip()
-                    corrected_text = corrector.apply_corrections(
-                        original_text, language_code, 1.0
-                    )
-                    
-                    transcription_data.append({
-                        "start": 0.0,
-                        "end": len(audio_data) / sr,
-                        "text": corrected_text,
-                        "confidence": 1.0
-                    })
-
-                # Log total number of corrections applied
-                corrections_count = sum(1 for item in transcription_data if item["confidence"] <= 0.7)
-                if corrections_count > 0:
-                    logger.info(f"Applied contextual corrections to {corrections_count} low-confidence segments")
-
-                return transcription_data
-
-            except Exception as e:
-                logger.error(f"Whisper transcription failed: {e}")
-                raise TranscriptionError(f"Whisper error: {str(e)}")
-
-        # Yield progress updates
+        whisper_config = get_whisper_config(language, audio_input_type)
+        model_name = WHISPER_MODELS.get(language, "medium")
+        
+        logger.info(f"Using model: {model_name} for {language}")
+        
+        # Step 3: Load model
+        yield 30, []
+        whisper = get_whisper()
+        try:
+            model = whisper.load_model(model_name)
+        except Exception as e:
+            logger.warning(f"Failed to load {model_name}, falling back to medium: {e}")
+            model = whisper.load_model("medium")
+        
+        # Step 4: Prepare audio
+        yield 40, []
+        audio_data = await prepare_audio_for_transcription(audio_file, sample_rate)
+        
+        # Step 5: Transcribe with adaptive settings
         yield 50, []
-
-        # Execute transcription
-        transcription_data = await transcribe_with_whisper()
-
-        yield 90, transcription_data
-
-        # Apply post-processing
-        def post_process_whisper_results(segments):
-            """Post-process Whisper transcription results"""
-            if not segments:
-                return segments
-
-            processed = []
-            for segment in segments:
-                text = segment.get('text', '').strip()
-                if text and len(text) > 1: # Filter very short segments
-                    processed.append(segment)
-
-            return processed
-
-        # Apply post-processing
-        transcription_data = post_process_whisper_results(transcription_data)
-
-        # Final yield
-        yield 100, transcription_data
-
-        logger.info(f"Whisper transcription completed: {len(transcription_data)} segments")
-
-    except Exception as e:
-        logger.error(f"Transcription failed: {e}")
-        raise TranscriptionError(f"Transcription error: {str(e)}")
-
-# Additional utility functions
-
-def get_audio_info(audio_file):
-    """
-    Get audio file information using soundfile
-    
-    Args:
-        audio_file: Path to audio file
         
-    Returns:
-        dict: Audio file information (duration, sample_rate, channels)
-    """
-    try:
-        info = sf.info(audio_file)
-        return {
-            "duration": float(info.duration),
-            "sample_rate": int(info.samplerate),
-            "channels": int(info.channels),
-            "method": "soundfile"
+        # Get the appropriate initial prompt
+        # Use configured prompt from whisper_config
+        
+        transcribe_options = {
+            "language": language,
+            "word_timestamps": True,
+            "initial_prompt": initial_prompt,
+            **{k: v for k, v in whisper_config.items() if k != "model"}
         }
         
-    except Exception as e:
-        logger.error(f"Failed to get audio info: {e}")
-        return {
-            "duration": 0.0,
-            "sample_rate": 16000,
-            "channels": 1,
-            "method": "fallback"
-        }
-
-def convert_audio_format(input_file, output_file, target_sr=16000, mono=True):
-    """
-    Convert audio format using librosa
-    
-    Args:
-        input_file: Input audio file path
-        output_file: Output audio file path
-        target_sr: Target sample rate
-        mono: Convert to mono
+        logger.info(f"Transcription options: {transcribe_options}")
         
-    Returns:
-        bool: Success status
+        # Perform transcription
+        yield 70, []
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, lambda: model.transcribe(audio_data, **transcribe_options)
+        )
+        
+        # Step 6: Process and enhance results
+        yield 90, []
+        segments = process_transcription_result(result, language)
+        
+        # Step 7: Apply contextual corrections
+        enhanced_segments = apply_contextual_corrections(segments, language)
+        
+        yield 100, enhanced_segments
+        
+        logger.info(f"Enhanced transcription completed: {len(enhanced_segments)} segments")
+        
+    except Exception as e:
+        logger.error(f"Enhanced transcription failed: {e}")
+        yield 100, []
+
+async def prepare_audio_for_transcription(audio_file: str, target_sr: int = 16000) -> np.ndarray:
+    """
+    CRITICAL FIX: Enhanced audio preparation with noise reduction and normalization
     """
     try:
-        # Load audio using librosa
-        audio_data, sr = load_audio_librosa(input_file, sr=target_sr, mono=mono)
+        sf = get_soundfile()
+        librosa = get_librosa()
         
-        # Save using soundfile
-        sf.write(output_file, audio_data, target_sr)
+        # Load audio file
+        audio_data, sr = sf.read(audio_file)
         
-        logger.info(f"Audio conversion successful: {input_file} -> {output_file}")
-        return True
+        # Convert to mono if stereo and ensure consistent dtype
+        if audio_data.ndim > 1:
+            audio_data = audio_data.mean(axis=1)
+        
+        # Ensure consistent float32 dtype to avoid dtype conflicts
+        audio_data = audio_data.astype(np.float32)
+        
+        # Resample if necessary
+        if sr != target_sr:
+            audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=target_sr)
+            audio_data = audio_data.astype(np.float32)  # Ensure float32 after resampling
+        
+        # Normalize audio
+        if np.max(np.abs(audio_data)) > 0:
+            audio_data = audio_data / np.max(np.abs(audio_data)) * 0.9
+        
+        # Basic noise reduction (high-pass filter)
+        from scipy import signal
+        sos = signal.butter(4, 80, btype='highpass', fs=target_sr, output='sos')
+        audio_data = signal.sosfilt(sos, audio_data)
+        
+        # Final dtype conversion to float32 for compatibility
+        return audio_data.astype(np.float32)
         
     except Exception as e:
-        logger.error(f"Audio conversion failed: {e}")
+        logger.error(f"Audio preparation failed: {e}")
+        # Fallback: return raw audio with consistent dtype
+        sf = get_soundfile()
+        audio_data, _ = sf.read(audio_file)
+        if audio_data.ndim > 1:
+            audio_data = audio_data.mean(axis=1)
+        return audio_data.astype(np.float32)
+
+def get_whisper_config(language_code, audio_input_type="neutral"):
+    """
+    Get Whisper configuration for medium model
+    """
+    base_config = WHISPER_CONFIG["language_configs"].get(language_code, WHISPER_CONFIG["language_configs"]["en"])
+    
+    config = {
+        **base_config,
+        "model": WHISPER_MODELS.get(language_code, "medium")
+    }
+    
+    # Adjust prompt based on audio type
+    if language_code in ADAPTIVE_PROMPTS and audio_input_type in ADAPTIVE_PROMPTS[language_code]:
+        config["initial_prompt"] = ADAPTIVE_PROMPTS[language_code][audio_input_type]
+    
+    return config
+
+def process_transcription_result(result, language):
+    """
+    CRITICAL FIX: Enhanced processing of transcription results
+    """
+    segments = []
+    
+    if not result.get("segments"):
+        return segments
+    
+    for i, segment in enumerate(result["segments"]):
+        # Basic segment processing
+        processed_segment = {
+            "id": i,
+            "start": segment.get("start", 0),
+            "end": segment.get("end", 0), 
+            "text": segment.get("text", "").strip(),
+            "confidence": calculate_segment_confidence(segment),
+            "language": language,
+        }
+        
+        # Add word-level timestamps if available
+        if segment.get("words"):
+            processed_segment["words"] = [
+                {
+                    "word": word.get("word", ""),
+                    "start": word.get("start", 0),
+                    "end": word.get("end", 0),
+                    "confidence": word.get("probability", 0.5)
+                }
+                for word in segment["words"]
+            ]
+        
+        # Quality filtering
+        if should_include_segment(processed_segment):
+            segments.append(processed_segment)
+    
+    return segments
+
+def calculate_segment_confidence(segment):
+    """Calculate confidence score for a segment"""
+    # If we have word-level probabilities, use those
+    if segment.get("words"):
+        probs = [word.get("probability", 0.5) for word in segment["words"]]
+        return sum(probs) / len(probs) if probs else 0.5
+    
+    # Fallback to segment-level confidence
+    return segment.get("avg_logprob", -1.0) + 1.0  # Convert from log prob
+
+def should_include_segment(segment):
+    """Determine if a segment should be included based on quality thresholds"""
+    min_confidence = QUALITY_CONFIG["transcription"]["min_confidence"]
+    min_duration = QUALITY_CONFIG["transcription"]["segment_min_duration"]
+    
+    if segment["confidence"] < min_confidence:
         return False
+        
+    duration = segment["end"] - segment["start"]
+    if duration < min_duration:
+        return False
+        
+    if not segment["text"] or len(segment["text"].strip()) < 2:
+        return False
+        
+    return True
 
-# Maintain backward compatibility with existing functions
-def load_audio_librosa_fallback(audio_file, sr=16000, mono=True):
+# CRITICAL FIX: Contextual corrections for Portuguese, English, and Spanish
+def apply_contextual_corrections(segments, language):
     """
-    DEPRECATED: Legacy function for loading audio with librosa.
-    Use load_audio_librosa instead.
+    CRITICAL FIX: Apply language-specific contextual corrections
     """
-    logger.warning("Using deprecated load_audio_librosa_fallback, use load_audio_librosa instead")
-    return load_audio_librosa(audio_file, sr=sr, mono=mono)
+    if language == "pt":
+        return apply_portuguese_corrections(segments)
+    elif language == "en":
+        return apply_english_corrections(segments)
+    elif language == "es":
+        return apply_spanish_corrections(segments)
+    else:
+        return segments
+
+def apply_portuguese_corrections(segments):
+    """Apply Portuguese-specific corrections"""
+    pt_corrections = {
+        # Common transcription errors in Portuguese
+        "mas": "mas",  # conjunction vs "more"
+        "mais": "mais",  # "more" 
+        "então": "então",  # "so/then"
+        "né": "né",  # informal "right?"
+        "tá": "tá",  # informal "ok"
+        "pra": "para",  # informal "to/for"
+        "pro": "para o",  # informal contraction
+        "dum": "de um",  # contraction correction
+        "numa": "em uma",  # contraction correction
+        "numa": "em uma",
+        # Question words
+        "que que": "o que",  # "what" correction
+        "cadê": "onde está",  # "where is"
+        # Common phrases
+        "a gente": "a gente",  # "we" (colloquial)
+        "tipo assim": "tipo assim",  # "like this"
+        "sabe": "sabe"  # "you know"
+    }
+    
+    return apply_text_corrections(segments, pt_corrections)
+
+def apply_english_corrections(segments):
+    """Apply English-specific corrections"""
+    en_corrections = {
+        # Common transcription errors
+        "gonna": "going to",
+        "wanna": "want to", 
+        "gotta": "got to",
+        "kinda": "kind of",
+        "sorta": "sort of",
+        "dunno": "don't know",
+        "yeah": "yes",
+        "nah": "no",
+        "um": "um",  # Keep filler words
+        "uh": "uh",
+        # Contractions (keep as is for natural speech)
+        "can't": "can't",
+        "won't": "won't",
+        "don't": "don't"
+    }
+    
+    return apply_text_corrections(segments, en_corrections)
+
+def apply_spanish_corrections(segments):
+    """Apply Spanish-specific corrections"""
+    es_corrections = {
+        # Common transcription errors in Spanish
+        "pos": "pues",  # "well"
+        "ta": "está",  # informal "is"
+        "pa": "para",  # informal "for"
+        "pal": "para el",  # informal contraction
+        "na": "nada",  # informal "nothing"
+        # Question words
+        "que": "qué",  # add accent for questions
+        "como": "cómo",  # add accent for questions
+        "cuando": "cuándo",  # add accent for questions
+        "donde": "dónde",  # add accent for questions
+        # Common phrases
+        "o sea": "o sea",  # "I mean"
+        "tipo": "tipo",  # "like"
+        "sabes": "sabes"  # "you know"
+    }
+    
+    return apply_text_corrections(segments, es_corrections)
+
+def apply_text_corrections(segments, corrections_dict):
+    """Apply text corrections to segments"""
+    corrected_segments = []
+    
+    for segment in segments:
+        corrected_segment = segment.copy()
+        text = segment["text"]
+        
+        # Apply word-level corrections
+        for wrong, correct in corrections_dict.items():
+            text = text.replace(f" {wrong} ", f" {correct} ")
+            text = text.replace(f" {wrong}.", f" {correct}.")
+            text = text.replace(f" {wrong},", f" {correct},")
+            text = text.replace(f" {wrong}?", f" {correct}?")
+            text = text.replace(f" {wrong}!", f" {correct}!")
+            
+            # Handle start and end of text
+            if text.startswith(wrong + " "):
+                text = correct + text[len(wrong):]
+            if text.endswith(" " + wrong):
+                text = text[:-len(wrong)] + correct
+        
+        corrected_segment["text"] = text.strip()
+        corrected_segments.append(corrected_segment)
+    
+    return corrected_segments
+
+# Export functions for main usage
+def get_transcription_functions():
+    """Get transcription functions for lazy import"""
+    return transcribe_audio_with_progress
