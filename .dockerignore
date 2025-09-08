@@ -1,0 +1,93 @@
+# Docker ignore file for TranscrevAI
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test files
+.pytest_cache/
+.coverage
+.tox/
+.cache
+htmlcov/
+
+# Data directories (will be created in container)
+data/
+temp/
+logs/
+models/
+recordings/
+transcripts/
+inputs/
+outputs/
+
+# Windows-specific files
+*.lnk
+thumbs.db
+Desktop.ini
+
+# Development documentation
+README.md
+docs/
+*.md
+
+# Docker files (except this ignore file)
+Dockerfile.*
+docker-compose.override.yml
+
+# Node modules (if any)
+node_modules/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# IDE files
+.spyderproject
+.spyproject
+.ropeproject

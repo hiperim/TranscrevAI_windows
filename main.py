@@ -3,12 +3,8 @@ import asyncio
 import logging
 import os
 import time
+import datetime
 import random
-import tempfile
-import urllib.request
-import zipfile
-import shutil
-from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -35,9 +31,9 @@ def get_model_config():
     """Lazy import model configuration"""
     from config.app_config import (
         WHISPER_MODEL_DIR, WHISPER_MODELS, WHISPER_CONFIG, 
-        ADAPTIVE_WHISPER_MODELS, ADAPTIVE_PROMPTS, PROCESSING_PROFILES
+        ADAPTIVE_PROMPTS, PROCESSING_PROFILES
     )
-    return WHISPER_MODEL_DIR, WHISPER_MODELS, WHISPER_CONFIG, ADAPTIVE_WHISPER_MODELS, ADAPTIVE_PROMPTS, PROCESSING_PROFILES
+    return WHISPER_MODEL_DIR, WHISPER_MODELS, WHISPER_CONFIG, ADAPTIVE_PROMPTS, PROCESSING_PROFILES
 
 def get_concurrent_processor():
     """Lazy import concurrent processor"""
@@ -61,6 +57,9 @@ app = FastAPI(
 # Jinja2 templates setup
 templates = Jinja2Templates(directory="templates")
 
+# Global whisper module initialization
+_whisper_module = None
+
 class EnhancedWhisperModelManager:
     """CRITICAL FIX: Enhanced Whisper model management with complexity-based selection and intelligent caching"""
     
@@ -73,36 +72,42 @@ class EnhancedWhisperModelManager:
     def _get_whisper():
         """Lazy import of whisper module"""
         global _whisper_module
-        if '_whisper_module' not in globals():
-            import whisper
-            globals()['_whisper_module'] = whisper
-        return globals()['_whisper_module']
+        try:
+            # Initialize if not exists
+            if '_whisper_module' not in globals() or _whisper_module is None:
+                import whisper
+                _whisper_module = whisper
+            return _whisper_module
+        except Exception as e:
+            logger.error(f"Failed to load whisper module: {e}")
+            raise ImportError(f"Cannot load whisper: {e}")
     
     @staticmethod
     def get_model_name(language: str, complexity: str = "medium") -> str:
         """CRITICAL FIX: Get Whisper model name based on language and complexity"""
-        _, WHISPER_MODELS, _, ADAPTIVE_WHISPER_MODELS, _, _ = get_model_config()
+        _, WHISPER_MODELS, _, _, _ = get_model_config()
         
-        if complexity in ADAPTIVE_WHISPER_MODELS:
-            return ADAPTIVE_WHISPER_MODELS[complexity].get(language, "small")
-        else:
-            return WHISPER_MODELS.get(language, "small")
+        # Use medium model for all supported languages
+        return WHISPER_MODELS.get(language, "medium")
     
     @classmethod
     async def get_cached_model(cls, language: str, complexity: str = "medium"):
         """Get cached model if available and not expired"""
         model_name = cls.get_model_name(language, complexity)
         
+        # Thread-safe cache access
         if model_name in cls._model_cache:
-            # Check if cache is still valid
-            cache_time = cls._cache_timestamps.get(model_name, 0)
-            if time.time() - cache_time < cls._cache_ttl:
-                logger.info(f"Using cached Whisper model: {model_name}")
-                return cls._model_cache[model_name]
-            else:
-                # Cache expired, remove it
-                del cls._model_cache[model_name]
-                del cls._cache_timestamps[model_name]
+            cached_model = cls._model_cache.get(model_name)
+            if cached_model is not None:
+                # Check if cache is still valid
+                cache_time = cls._cache_timestamps.get(model_name, 0)
+                if time.time() - cache_time < cls._cache_ttl:
+                    logger.info(f"Using cached Whisper model: {model_name}")
+                    return cached_model
+                else:
+                    # Cache expired, remove it safely
+                    cls._model_cache.pop(model_name, None)
+                    cls._cache_timestamps.pop(model_name, None)
         
         return None
     
@@ -162,7 +167,7 @@ class EnhancedWhisperModelManager:
             
                 # Try to load and cache model  
                 try:
-                    WHISPER_MODEL_DIR, _, _, _, _, _ = get_model_config()
+                    WHISPER_MODEL_DIR, _, _, _, _ = get_model_config()
                     model = await loop.run_in_executor(
                         None,
                         whisper.load_model,
@@ -192,7 +197,7 @@ class EnhancedWhisperModelManager:
                     logger.info(f"Model '{model_name}' not available, downloading: {e}")
                     
                     # Download and cache model
-                    WHISPER_MODEL_DIR, _, _, _, _, _ = get_model_config()
+                    WHISPER_MODEL_DIR, _, _, _, _ = get_model_config()
                     model = await loop.run_in_executor(
                         None,
                         whisper.load_model,
@@ -368,7 +373,7 @@ async def health_check():
     return JSONResponse({
         "status": "healthy",
         "version": "2.0.0",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.datetime.now().isoformat(),
         "sessions": len(app_state.sessions),
         "features": [
             "adaptive_transcription",
@@ -387,7 +392,7 @@ async def main_interface(request: Request):
 # API endpoint with enhanced info
 @app.get("/api")
 async def api_status():
-    _, WHISPER_MODELS, _, _, ADAPTIVE_PROMPTS, PROCESSING_PROFILES = get_model_config()
+    _, WHISPER_MODELS, _, ADAPTIVE_PROMPTS, PROCESSING_PROFILES = get_model_config()
     return {
         "message": "TranscrevAI Enhanced API is running", 
         "version": "2.0.0",

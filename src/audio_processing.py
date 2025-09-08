@@ -14,63 +14,32 @@ import soundfile as sf
 import numpy as np
 from typing import Optional
 
-# Import Windows-specific modules only if available
-try:
-    import win32file  # type: ignore
-    import win32con  # type: ignore
-    import pywintypes  # type: ignore
-    from ctypes import windll
-    WINDOWS_AVAILABLE = True
-except ImportError:
-    WINDOWS_AVAILABLE = False
-    win32file = None
-    win32con = None
-    pywintypes = None
-    windll = None
-
-try:
-    import static_ffmpeg
-    FFMPEG_AVAILABLE = True
-    _ffmpeg_paths_added = False
-except ImportError:
-    static_ffmpeg = None
-    FFMPEG_AVAILABLE = False
-    _ffmpeg_paths_added = True  # Skip path addition if not available
-
-def _ensure_ffmpeg_paths(websocket_manager=None, session_id=None):
-    """Lazily add FFmpeg paths only when needed"""
-    global _ffmpeg_paths_added
-    if not _ffmpeg_paths_added and FFMPEG_AVAILABLE and static_ffmpeg is not None:
-        # Notify user about download starting
-        if websocket_manager and session_id:
-            try:
-                asyncio.create_task(websocket_manager.send_message(session_id, {
-                    "type": "system_download_start",
-                    "message": "Downloading FFmpeg components (required for audio processing)..."
-                }))
-            except:
-                pass  # Don't fail if websocket notification fails
-        
-        logger.info("Adding static_ffmpeg paths - this may trigger a download")
-        static_ffmpeg.add_paths()
-        _ffmpeg_paths_added = True
-        
-        # Notify user about download completion
-        if websocket_manager and session_id:
-            try:
-                asyncio.create_task(websocket_manager.send_message(session_id, {
-                    "type": "system_download_complete", 
-                    "message": "FFmpeg components ready"
-                }))
-            except:
-                pass  # Don't fail if websocket notification fails
-
 from src.logging_setup import setup_app_logging
 from src.file_manager import FileManager
 from config.app_config import APP_PACKAGE_NAME
 
 # Use proper logging setup
 logger = setup_app_logging(logger_name="transcrevai.audio_processing")
+
+# FFmpeg is always available in Docker environment
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+    logger.info("static_ffmpeg configured successfully")
+except ImportError:
+    # FFmpeg should be available system-wide in Docker
+    logger.info("Using system FFmpeg")
+
+def _ensure_ffmpeg_paths(websocket_manager=None, session_id=None):
+    """Simplified FFmpeg setup - always available in Docker"""
+    if websocket_manager and session_id:
+        try:
+            asyncio.create_task(websocket_manager.send_message(session_id, {
+                "type": "system_ready",
+                "message": "Sistema pronto para processamento de áudio"
+            }))
+        except:
+            pass
 
 class AudioProcessingError(Exception):
     """Custom exception for audio processing errors"""
@@ -88,12 +57,12 @@ class AudioProcessingError(Exception):
         self.error_type = error_type
         super().__init__(f"{error_type.value}: {message}")
 
-class CrossPlatformFileHandler:
-    """Cross-platform file handling with fallback methods"""
+class SimpleFileHandler:
+    """Simplified file handling for Linux/Docker environment"""
     
     @staticmethod
     async def safe_atomic_move(temp_path: str, final_path: str) -> bool:
-        """Safely move file with cross-platform atomic operations"""
+        """Atomic file move using standard Linux operations"""
         try:
             temp_path_obj = Path(temp_path)
             final_path_obj = Path(final_path)
@@ -101,130 +70,40 @@ class CrossPlatformFileHandler:
             # Ensure destination directory exists
             final_path_obj.parent.mkdir(parents=True, exist_ok=True)
             
-            # Try Windows-specific atomic move if available
-            if WINDOWS_AVAILABLE and sys.platform == "win32":
-                return await CrossPlatformFileHandler._windows_atomic_move(temp_path_obj, final_path_obj)
-            else:
-                return await CrossPlatformFileHandler._posix_atomic_move(temp_path_obj, final_path_obj)
-                
-        except Exception as e:
-            logger.error(f"Atomic move failed: {e}")
-            return False
-    
-    @staticmethod
-    async def _windows_atomic_move(temp_path: Path, final_path: Path) -> bool:
-        """Windows-specific atomic file move"""
-        if not WINDOWS_AVAILABLE:
-            return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
-        
-        try:
-            # Kill any processes that might be locking the files
-            await CrossPlatformFileHandler._kill_file_locks(temp_path, final_path)
-            
-            # Use Windows API for atomic move with correct flags
-            if windll is None:
-                return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
-                
-            MOVEFILE_REPLACE_EXISTING = 0x1
-            MOVEFILE_WRITE_THROUGH = 0x8
-            
-            success = windll.kernel32.MoveFileExW(
-                str(temp_path),
-                str(final_path),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
-            )
-            
-            if success:
-                # Force filesystem sync
-                await CrossPlatformFileHandler._force_file_sync(final_path)
-                return True
-            else:
-                logger.warning(f"Windows MoveFileEx failed, falling back to standard move")
-                return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
-                
-        except Exception as e:
-            logger.warning(f"Windows atomic move failed: {e}, falling back")
-            return await CrossPlatformFileHandler._posix_atomic_move(temp_path, final_path)
-    
-    @staticmethod
-    async def _posix_atomic_move(temp_path: Path, final_path: Path) -> bool:
-        """POSIX-compatible atomic file move"""
-        try:
-            # Use asyncio.to_thread for blocking operations
-            await asyncio.to_thread(shutil.move, str(temp_path), str(final_path))
+            # Use shutil.move for atomic operation on Linux
+            await asyncio.to_thread(shutil.move, str(temp_path_obj), str(final_path_obj))
             
             # Verify the move was successful
-            if final_path.exists() and final_path.stat().st_size > 0:
+            if final_path_obj.exists() and final_path_obj.stat().st_size > 0:
                 return True
             else:
                 logger.error("Move succeeded but file validation failed")
                 return False
                 
         except Exception as e:
-            logger.error(f"POSIX atomic move failed: {e}")
+            logger.error(f"Atomic move failed: {e}")
             return False
     
     @staticmethod
-    async def _kill_file_locks(temp_path: Path, final_path: Path):
-        """Kill processes that might be locking files"""
-        try:
-            # Kill any FFmpeg processes that might be locking our files
-            for proc in psutil.process_iter(['pid', 'name']):
-                try:
-                    if any(x in proc.name().lower() for x in ['ffmpeg', 'ffprobe']):
-                        proc.kill()
-                        logger.debug(f"Killed process {proc.pid}: {proc.name()}")
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-        except Exception as e:
-            logger.debug(f"Error killing file locks: {e}")
-    
-    @staticmethod
-    async def _force_file_sync(path: Path):
-        """Force file synchronization to disk"""
-        if WINDOWS_AVAILABLE and sys.platform == "win32" and win32file is not None and win32con is not None and windll is not None:
-            try:
-                handle = win32file.CreateFile(
-                    str(path),
-                    win32con.GENERIC_READ,
-                    0,
-                    None,
-                    win32con.OPEN_EXISTING,
-                    0,
-                    None
-                )
-                windll.kernel32.FlushFileBuffers(handle.handle)
-                win32file.CloseHandle(handle.handle)
-            except Exception as e:
-                logger.debug(f"Windows file sync failed: {e}")
-        else:
-            try:
-                # POSIX: open the file and fsync its file descriptor
-                with open(path, "rb") as f:
-                    await asyncio.to_thread(os.fsync, f.fileno())
-            except Exception as e:
-                logger.debug(f"POSIX file sync failed: {e}")
-    
-    @staticmethod
     async def safe_delete(file_path: str) -> bool:
-        """Safely delete with retry logic"""
+        """Safely delete file with retry logic"""
         path = Path(file_path)
         if not path.exists():
             return True
         
-        for attempt in range(5):
+        for attempt in range(3):
             try:
                 await asyncio.to_thread(path.unlink)
                 return True
             except Exception as e:
                 logger.warning(f"Delete attempt {attempt + 1} failed: {e}")
-                await asyncio.sleep(0.5 * (attempt + 1))
+                await asyncio.sleep(0.5)
         
-        logger.error(f"Failed to delete file after 5 attempts: {file_path}")
+        logger.error(f"Failed to delete file after 3 attempts: {file_path}")
         return False
 
 class AtomicAudioFile:
-    """Improved atomic file context manager with cross-platform support"""
+    """Simplified atomic file context manager for Docker environment"""
     
     def __init__(self, extension: str = ".wav"):
         self.final_path: Optional[str] = None
@@ -235,10 +114,7 @@ class AtomicAudioFile:
         """Create a temporary file path"""
         temp_dir = FileManager.get_data_path("temp")
         FileManager.ensure_directory_exists(temp_dir)
-        return os.path.join(
-            temp_dir,
-            f"atomic_temp_{os.getpid()}_{int(time.time()*1000)}{extension}"
-        )
+        return str(Path(temp_dir) / f"atomic_temp_{os.getpid()}_{int(time.time()*1000)}{extension}")
     
     async def __aenter__(self):
         return self
@@ -254,8 +130,8 @@ class AtomicAudioFile:
                     logger.warning(f"Exception occurred, skipping commit: {exc_val}")
             
             # Always clean up temp file if it exists
-            if os.path.exists(self.temp_path):
-                await CrossPlatformFileHandler.safe_delete(self.temp_path)
+            if Path(self.temp_path).exists():
+                await SimpleFileHandler.safe_delete(self.temp_path)
                 
         except Exception as cleanup_error:
             logger.error(f"Error in AtomicAudioFile cleanup: {cleanup_error}")
@@ -268,7 +144,7 @@ class AtomicAudioFile:
     async def _async_commit(self):
         """Perform the actual atomic commit operation"""
         if self.final_path and self.temp_path:
-            success = await CrossPlatformFileHandler.safe_atomic_move(
+            success = await SimpleFileHandler.safe_atomic_move(
                 self.temp_path, self.final_path
             )
             
@@ -283,10 +159,7 @@ class AudioRecorder:
     
     def __init__(self, output_file: Optional[str] = None, sample_rate: int = 16000, 
                  websocket_manager=None, session_id=None):
-        self.output_file = output_file or os.path.join(
-            FileManager.get_data_path("recordings"),
-            f"recording_{int(time.time())}.wav"
-        )
+        self.output_file = output_file or str(Path(FileManager.get_data_path("recordings")) / f"recording_{int(time.time())}.wav")
         
         self.temp_wav = self.get_temp_path()
         self.wav_file = self.temp_wav
@@ -300,7 +173,7 @@ class AudioRecorder:
         self.is_paused = False
         
         # Ensure output directory exists
-        os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
+        Path(self.output_file).parent.mkdir(parents=True, exist_ok=True)
         
         # Verify audio device availability (non-blocking)
         self._verify_audio_device()
@@ -326,7 +199,8 @@ class AudioRecorder:
             # Ensure FFmpeg paths are added before verification
             _ensure_ffmpeg_paths(self.websocket_manager, self.session_id)
             
-            if FFMPEG_AVAILABLE:
+            # FFmpeg availability test - simplified for Docker
+            try:
                 subprocess.run(
                     ["ffmpeg", "-version"],
                     check=True,
@@ -334,18 +208,11 @@ class AudioRecorder:
                     stderr=subprocess.DEVNULL,
                     timeout=10
                 )
-                logger.info("FFmpeg verified via static_ffmpeg")
-            else:
-                subprocess.run(
-                    ["ffmpeg", "-version"],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=10
-                )
-                logger.info("System FFmpeg verified")
-        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-            logger.warning(f"FFmpeg verification failed: {e}")
+                logger.info("FFmpeg verified successfully")
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+                logger.warning(f"FFmpeg verification failed: {e}")
+        except Exception as e:
+            logger.error(f"Audio device verification failed: {e}")
     
     def get_temp_path(self, extension: str = ".wav") -> str:
         """Generate a temporary file path"""
@@ -372,7 +239,7 @@ class AudioRecorder:
                 logger.warning(f"High CPU usage detected: {cpu_usage}%")
             
             # Check disk space
-            free_space = shutil.disk_usage(os.path.dirname(self.output_file)).free / (1024 ** 3)
+            free_space = shutil.disk_usage(str(Path(self.output_file).parent)).free / (1024 ** 3)
             if free_space < 0.1:  # Less than 100MB
                 raise IOError(f"Insufficient disk space: {free_space:.2f}GB available")
         except Exception as e:
@@ -543,7 +410,7 @@ class AudioRecorder:
                     logger.warning("No audio frames recorded, created minimal audio file")
                 
                 # Validate temporary file
-                if not os.path.exists(temp_ctx.temp_path) or os.path.getsize(temp_ctx.temp_path) == 0:
+                if not Path(temp_ctx.temp_path).exists() or Path(temp_ctx.temp_path).stat().st_size == 0:
                     raise AudioProcessingError(
                         "Temporary audio file is missing or empty",
                         AudioProcessingError.ErrorType.FILE_OPERATION
@@ -581,7 +448,15 @@ class AudioRecorder:
             try:
                 await asyncio.wait_for(process.communicate(), timeout=120)
             except asyncio.TimeoutError:
-                process.kill()
+                # First try terminate, then kill if needed
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.communicate(), timeout=5)
+                except asyncio.TimeoutError:
+                    # Force kill if terminate didn't work
+                    process.kill()
+                    await process.communicate()  # Clean up zombie process
+                
                 raise AudioProcessingError(
                     "MP4 conversion timed out",
                     AudioProcessingError.ErrorType.TIMEOUT
@@ -605,13 +480,13 @@ class AudioRecorder:
     
     async def _validate_output(self):
         """Validate the output audio file"""
-        if not os.path.exists(self.output_file):
+        if not Path(self.output_file).exists():
             raise AudioProcessingError(
                 f"Output file not found: {self.output_file}",
                 AudioProcessingError.ErrorType.FILE_OPERATION
             )
         
-        if os.path.getsize(self.output_file) == 0:
+        if Path(self.output_file).stat().st_size == 0:
             raise AudioProcessingError(
                 "Output file is empty",
                 AudioProcessingError.ErrorType.INVALID_FORMAT
@@ -640,8 +515,8 @@ class AudioRecorder:
             temp_files = [self.temp_wav] if hasattr(self, 'temp_wav') and self.temp_wav else []
             
             for temp_file in temp_files:
-                if temp_file and os.path.exists(temp_file):
-                    await CrossPlatformFileHandler.safe_delete(temp_file)
+                if temp_file and Path(temp_file).exists():
+                    await SimpleFileHandler.safe_delete(temp_file)
             
             # Clear audio data safely
             if hasattr(self, '_frames'):

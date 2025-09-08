@@ -227,7 +227,7 @@
 <body>
     <div class="container">
         <h1>TranscrevAI</h1>
-        <p class="subtitle">Real-time Audio Transcription with Speaker Diarization</p>
+        <p class="subtitle">Transcrição de Áudio com Diarização de Falantes</p>
         
         <div class="controls">
             <div class="control-row">
@@ -394,6 +394,11 @@
                         
                     case 'progress':
                         this.updateProgress(message.transcription || 0, message.diarization || 0);
+                        // Add percentage to status message during processing
+                        const transcriptionPercent = Math.round(message.transcription || 0);
+                        if (transcriptionPercent > 0 && transcriptionPercent < 100) {
+                            this.updateStatus(`Processing audio... ${transcriptionPercent}%`);
+                        }
                         break;
                         
                     case 'model_download_start':

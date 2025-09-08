@@ -22,6 +22,10 @@ _whisper = None
 _librosa = None
 _soundfile = None
 
+# Global model cache for faster loading
+_model_cache = {}
+_cache_lock = asyncio.Lock()
+
 def get_whisper():
     """Lazy import whisper"""
     global _whisper
@@ -46,6 +50,23 @@ def get_soundfile():
         _soundfile = soundfile
     return _soundfile
 
+async def get_cached_model(model_name):
+    """Get cached Whisper model or load if not cached"""
+    async with _cache_lock:
+        if model_name not in _model_cache:
+            logger.info(f"Loading and caching model: {model_name}")
+            whisper = get_whisper()
+            try:
+                _model_cache[model_name] = whisper.load_model(model_name)
+            except Exception as e:
+                logger.warning(f"Failed to load {model_name}, falling back to medium: {e}")
+                model_name = "medium"
+                _model_cache[model_name] = whisper.load_model("medium")
+        else:
+            logger.info(f"Using cached model: {model_name}")
+        
+        return _model_cache[model_name]
+
 # CRITICAL FIX: Enhanced transcription with adaptive processing
 async def transcribe_audio_with_progress(
     audio_file: str, 
@@ -67,30 +88,26 @@ async def transcribe_audio_with_progress(
         
         logger.info(f"Using model: {model_name} for {language}")
         
-        # Step 3: Load model
+        # Step 3 & 4: Parallel model loading and audio preparation
         yield 30, []
-        whisper = get_whisper()
-        try:
-            model = whisper.load_model(model_name)
-        except Exception as e:
-            logger.warning(f"Failed to load {model_name}, falling back to medium: {e}")
-            model = whisper.load_model("medium")
+        model_task = asyncio.create_task(get_cached_model(model_name))
+        audio_task = asyncio.create_task(prepare_audio_for_transcription(audio_file, sample_rate))
         
-        # Step 4: Prepare audio
+        # Wait for both to complete
         yield 40, []
-        audio_data = await prepare_audio_for_transcription(audio_file, sample_rate)
+        model, audio_data = await asyncio.gather(model_task, audio_task)
         
         # Step 5: Transcribe with adaptive settings
         yield 50, []
         
-        # Get the appropriate initial prompt
-        # Use configured prompt from whisper_config
+        # Get the appropriate initial prompt from whisper_config
+        initial_prompt = whisper_config.get("initial_prompt", "")
         
         transcribe_options = {
             "language": language,
             "word_timestamps": True,
             "initial_prompt": initial_prompt,
-            **{k: v for k, v in whisper_config.items() if k != "model"}
+            **{k: v for k, v in whisper_config.items() if k not in ["model", "initial_prompt"]}
         }
         
         logger.info(f"Transcription options: {transcribe_options}")
@@ -119,7 +136,7 @@ async def transcribe_audio_with_progress(
 
 async def prepare_audio_for_transcription(audio_file: str, target_sr: int = 16000) -> np.ndarray:
     """
-    CRITICAL FIX: Enhanced audio preparation with noise reduction and normalization
+    Enhanced audio preparation optimized for Whisper performance
     """
     try:
         sf = get_soundfile()
@@ -135,19 +152,32 @@ async def prepare_audio_for_transcription(audio_file: str, target_sr: int = 1600
         # Ensure consistent float32 dtype to avoid dtype conflicts
         audio_data = audio_data.astype(np.float32)
         
-        # Resample if necessary
-        if sr != target_sr:
+        # Smart resampling - only if significantly different
+        if abs(sr - target_sr) > 2000:  # Only resample if very different
             audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=target_sr)
-            audio_data = audio_data.astype(np.float32)  # Ensure float32 after resampling
+            audio_data = audio_data.astype(np.float32)
         
-        # Normalize audio
-        if np.max(np.abs(audio_data)) > 0:
-            audio_data = audio_data / np.max(np.abs(audio_data)) * 0.9
+        # Enhanced normalization for optimal Whisper performance
+        rms = np.sqrt(np.mean(audio_data**2))
+        if rms > 0:
+            # Normalize to optimal RMS level for Whisper (around 0.15-0.25)
+            target_rms = 0.2
+            audio_data = audio_data * (target_rms / rms)
+            
+            # Clip to prevent distortion
+            audio_data = np.clip(audio_data, -0.9, 0.9)
         
-        # Basic noise reduction (high-pass filter)
+        # Adaptive filtering based on audio characteristics
+        audio_variance = np.var(audio_data)
+        if audio_variance < 0.001:  # Very quiet audio
+            # Amplify quiet sections while preserving dynamics
+            audio_data = audio_data * 2.0
+        
+        # High-pass filter for noise reduction (optimized for speech)
         from scipy import signal
-        sos = signal.butter(4, 80, btype='highpass', fs=target_sr, output='sos')
-        audio_data = signal.sosfilt(sos, audio_data)
+        if target_sr >= 16000:  # Only apply if sufficient sample rate
+            sos = signal.butter(3, 85, btype='highpass', fs=target_sr, output='sos')
+            audio_data = signal.sosfilt(sos, audio_data)
         
         # Final dtype conversion to float32 for compatibility
         return audio_data.astype(np.float32)

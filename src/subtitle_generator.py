@@ -4,6 +4,7 @@ import logging
 import os
 import time
 import uuid
+from pathlib import Path
 from src.file_manager import FileManager
 from src.logging_setup import setup_app_logging
 import numpy as np
@@ -42,11 +43,11 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
             logger.info(f"First transcription item: {transcription_data[0] if transcription_data else 'None'}")
 
         # If filename contains directory path, use provided path
-        dirname = os.path.dirname(filename)
+        dirname = str(Path(filename).parent)
         if dirname:
             output_path = filename
             try:
-                os.makedirs(dirname, exist_ok=True)
+                Path(dirname).mkdir(parents=True, exist_ok=True)
             except OSError as e:
                 logger.error(f"Failed to create output directory {dirname}: {e}")
                 raise RuntimeError(f"Cannot create output directory: {e}") from e
@@ -59,7 +60,7 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
                 unique_id = str(uuid.uuid4())[:8]
                 timestamp = int(time.time())
                 unique_name = f"{base_name}_{timestamp}_{unique_id}.srt"
-                output_path = os.path.join(output_dir, unique_name)
+                output_path = str(Path(output_dir) / unique_name)
             except Exception as e:
                 logger.error(f"Failed to get output directory: {e}")
                 raise RuntimeError(f"Cannot determine output path: {e}") from e
@@ -150,7 +151,7 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
     except Exception as e:
         logger.error(f"SRT generation failed: {str(e)}")
         # Clean up temp file if it exists and is in scope
-        if 'temp_path' in locals() and temp_path and os.path.exists(temp_path):
+        if 'temp_path' in locals() and temp_path and os.path.exists(str(temp_path)):
             try:
                 os.remove(str(temp_path))
             except Exception as cleanup_error:

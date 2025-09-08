@@ -28,6 +28,7 @@ from src.transcription import transcribe_audio_with_progress
 from config.app_config import WHISPER_MODEL_DIR, WHISPER_MODELS
 from src.logging_setup import setup_app_logging
 from tests.conftest import generate_test_audio
+# Platform utils removed - Docker-only environment
 
 # ========================
 # EXISTING FIXTURES
@@ -810,6 +811,8 @@ class TestRecordingAccuracy:
             
         except ImportError:
             pytest.skip("Cannot test model configuration - config not available")
+
+# Platform compatibility tests removed - Docker-only environment
 
 if __name__ == "__main__":
     # Run tests with pytest
