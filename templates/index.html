@@ -606,7 +606,7 @@
             }
             
             // CRITICAL FIX: Safe format access with fallback
-            startRecording() {
+            async startRecording() {
                 this.resultsEl.classList.remove('visible');
                 
                 // Validate language selection
@@ -615,13 +615,33 @@
                     return;
                 }
                 
-                // Safe format access with fallback
-                const formatValue = this.formatEl && this.formatEl.value ? this.formatEl.value : 'wav';
+                // Immediate button state update
+                this.recordBtn.disabled = true;
+                this.pauseBtn.disabled = true;
+                this.stopBtn.disabled = true;
                 
-                this.send('start_recording', { 
-                    language: this.languageEl.value,
-                    format: formatValue
-                });
+                try {
+                    // 3-second countdown
+                    for (let i = 3; i > 0; i--) {
+                        this.updateStatus(`Get ready... ${i}`);
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                    
+                    this.updateStatus('Recording!');
+                    
+                    // Safe format access with fallback
+                    const formatValue = this.formatEl && this.formatEl.value ? this.formatEl.value : 'wav';
+                    
+                    this.send('start_recording', { 
+                        language: this.languageEl.value,
+                        format: formatValue
+                    });
+                } catch (error) {
+                    console.error('Countdown error:', error);
+                    this.showError('Failed to start recording');
+                    this.recordBtn.disabled = false;
+                    this.updateStatus('Ready to record');
+                }
             }
             
             togglePause() {

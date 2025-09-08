@@ -42,6 +42,9 @@ Thumbs.db
 # Backup files
 backups/
 
+# Proposed alterations
+propositions/
+
 # Preference files
 preferences.txt
 *.prefs
