@@ -687,17 +687,38 @@ class SpeakerDiarization:
     def _run_pyaudio_analysis_segmentation(self, audio_file, num_speakers):
         """Run PyAudioAnalysis segmentation in executor"""
         try:
-            # Use speaker diarization from PyAudioAnalysis
+            # Validate audio file first
+            if not self._validate_audio_for_diarization(audio_file):
+                logger.warning(f"Audio validation failed for {audio_file}, using fallback")
+                return self._create_fallback_segments(audio_file, num_speakers)
+            
+            # Use speaker diarization from PyAudioAnalysis with robust error handling
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 if aS is not None:
-                    speaker_labels, _, _ = aS.speaker_diarization(
-                        audio_file, 
-                        num_speakers, 
-                        mid_window=0.5,  # 500ms step (correct parameter name)
-                        short_window=0.1,  # 100ms short-term window (correct parameter name)
-                        plot_res=False
-                    )
+                    try:
+                        # First attempt with optimized parameters for speed
+                        speaker_labels, _, _ = aS.speaker_diarization(
+                            audio_file, 
+                            num_speakers, 
+                            mid_window=0.8,  # Optimized for speed vs accuracy balance
+                            short_window=0.15,  # Faster processing window
+                            plot_res=False
+                        )
+                    except Exception as e:
+                        logger.warning(f"PyAudioAnalysis first attempt failed: {e}")
+                        # Second attempt with more conservative parameters
+                        try:
+                            speaker_labels, _, _ = aS.speaker_diarization(
+                                audio_file, 
+                                min(2, num_speakers),  # Limit to max 2 speakers for stability
+                                mid_window=2.0,  # Larger window for more stable features
+                                short_window=0.5,  # Larger short-term window
+                                plot_res=False
+                            )
+                        except Exception as e2:
+                            logger.error(f"PyAudioAnalysis second attempt failed: {e2}")
+                            speaker_labels = None
                 else:
                     speaker_labels = None
             
@@ -772,6 +793,52 @@ class SpeakerDiarization:
         except Exception as e:
             logger.error(f"Failed to convert PyAudioAnalysis results: {e}")
             return []
+
+    def _validate_audio_for_diarization(self, audio_file):
+        """Validate audio file has sufficient variation for PyAudioAnalysis"""
+        try:
+            if not _ensure_scipy_imports() or _scipy_wavfile is None:
+                return True  # Can't validate, assume it's okay
+            
+            # Read audio file
+            try:
+                sample_rate, audio_data = _scipy_wavfile.read(audio_file)
+            except Exception as e:
+                logger.warning(f"Cannot read audio file for validation: {e}")
+                return True  # Can't read, assume it's okay
+            
+            # Convert to mono if stereo
+            if audio_data.ndim > 1:
+                audio_data = audio_data.mean(axis=1)
+            
+            # Check basic audio properties
+            if len(audio_data) < sample_rate * 0.5:  # Less than 0.5 seconds
+                logger.warning("Audio too short for reliable diarization")
+                return False
+            
+            # Check for sufficient variation (avoid flat audio)
+            audio_variance = np.var(audio_data.astype(np.float64))
+            if audio_variance < 1e-10:  # Almost no variation
+                logger.warning("Audio has insufficient variation for diarization")
+                return False
+            
+            # Check for sufficient dynamic range
+            audio_range = np.ptp(audio_data)  # Peak-to-peak range
+            if audio_range < 100:  # Very low dynamic range
+                logger.warning("Audio has insufficient dynamic range")
+                return False
+            
+            # Check RMS level
+            rms = np.sqrt(np.mean(audio_data.astype(np.float64) ** 2))
+            if rms < 10:  # Very quiet audio
+                logger.warning("Audio is very quiet, may affect diarization quality")
+                # Don't return False here, just warn
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Audio validation failed: {e}")
+            return True  # If validation fails, assume it's okay to try
 
     def _post_process_segments(self, segments):
         """Post-process segments to improve quality"""

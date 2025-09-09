@@ -49,17 +49,10 @@ class ConcurrentProcessor:
                 "processing_profile": processing_profile
             }
             
-            # Stage 1: Audio Complexity Analysis
-            await websocket_manager.send_message(session_id, {
-                "type": "processing_stage",
-                "stage": "complexity_analysis",
-                "message": "Analyzing audio complexity for optimal processing pipeline..."
-            })
+            # Direct processing - skip complexity analysis for speed
+            complexity = "medium"  # Always use medium model for optimal balance
             
-            complexity = await self._complexity_analysis_with_progress(session_id, audio_file, websocket_manager)
-            self.active_sessions[session_id]["complexity"] = complexity
-            
-            # Stage 2: Enhanced concurrent transcription and diarization
+            # Stage 1: Enhanced concurrent transcription and diarization
             await websocket_manager.send_message(session_id, {
                 "type": "processing_stage", 
                 "stage": "concurrent_processing",
@@ -95,32 +88,32 @@ class ConcurrentProcessor:
                     "speaker": "Speaker_1"
                 }]
             
-            # Stage 3: Content-based analysis and speaker change detection
-            await websocket_manager.send_message(session_id, {
-                "type": "processing_stage",
-                "stage": "content_analysis", 
-                "message": "Analyzing content for speaker change patterns..."
-            })
-            
-            # Ensure transcription_result is valid before analysis
-            if isinstance(transcription_result, list):
-                content_hints = await self._analyze_content_for_speaker_changes(transcription_result, language)
-            else:
-                content_hints = []
-            
-            # Stage 4: Enhanced alignment with content-based intelligence
+            # Parallel content analysis and alignment
             await websocket_manager.send_message(session_id, {
                 "type": "processing_stage",
                 "stage": "intelligent_alignment",
-                "message": "Performing intelligent alignment of transcription and diarization..."
+                "message": "Performing intelligent alignment and content analysis..."
             })
             
-            # Import alignment function
+            # Run content analysis and alignment in parallel for speed
             from src.speaker_diarization import align_transcription_with_diarization
             
-            aligned_transcription = align_transcription_with_diarization(transcription_result, diarization_result)
+            # Create parallel tasks
+            if isinstance(transcription_result, list):
+                content_task = asyncio.create_task(
+                    self._analyze_content_for_speaker_changes(transcription_result, language)
+                )
+            else:
+                content_task = asyncio.create_task(asyncio.coroutine(lambda: [])())
             
-            # Stage 5: Comprehensive quality metrics calculation
+            alignment_task = asyncio.create_task(
+                asyncio.coroutine(lambda: align_transcription_with_diarization(transcription_result, diarization_result))()
+            )
+            
+            # Wait for both to complete
+            content_hints, aligned_transcription = await asyncio.gather(content_task, alignment_task)
+            
+            # Stage 3: Quality metrics calculation
             await websocket_manager.send_message(session_id, {
                 "type": "processing_stage",
                 "stage": "quality_metrics",
@@ -179,39 +172,6 @@ class ConcurrentProcessor:
                 del self.active_sessions[session_id]
             raise
 
-    async def _complexity_analysis_with_progress(self, session_id: str, audio_file: str, websocket_manager) -> str:
-        """Perform complexity analysis with progress updates"""
-        try:
-            # No complexity analysis needed - using medium model for all
-            
-            # Update progress
-            if session_id in self.active_sessions:
-                self.active_sessions[session_id]["complexity_analysis_progress"] = 50
-                await websocket_manager.send_message(session_id, {
-                    "type": "progress",
-                    "complexity_analysis": 50,
-                    "transcription": 0,
-                    "diarization": 0
-                })
-            
-            # Fixed complexity - always use medium model
-            complexity = "medium"
-            
-            # Final progress update
-            if session_id in self.active_sessions:
-                self.active_sessions[session_id]["complexity_analysis_progress"] = 100
-                await websocket_manager.send_message(session_id, {
-                    "type": "progress", 
-                    "complexity_analysis": 100,
-                    "transcription": 0,
-                    "diarization": 0
-                })
-            
-            return complexity
-            
-        except Exception as e:
-            logger.error(f"Complexity analysis with progress failed: {e}")
-            return "medium"  # Safe default
 
     async def _enhanced_transcription_with_progress(self, session_id: str, audio_file: str, language: str, 
                                                    audio_input_type: str, complexity: str, websocket_manager) -> List[Dict]:
@@ -256,16 +216,9 @@ class ConcurrentProcessor:
             # Create diarizer instance
             diarizer = SpeakerDiarization()
             
-            # Adaptive progress updates based on complexity
-            if complexity == "high":
-                progress_steps = [10, 25, 45, 70, 85]
-                step_delay = 0.8  # Longer processing time
-            elif complexity == "medium":
-                progress_steps = [15, 35, 60, 80]
-                step_delay = 0.6
-            else:  # low complexity
-                progress_steps = [25, 60, 85]
-                step_delay = 0.4
+            # Optimized progress updates for speed - complexity removed
+            progress_steps = [20, 50, 80]  # Fewer steps for faster processing
+            step_delay = 0.2  # Reduced delays for speed
             
             # Send progress updates
             for progress in progress_steps:
