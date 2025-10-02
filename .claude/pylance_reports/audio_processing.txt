@@ -1,0 +1,13 @@
+c:\TranscrevAI_windows\src\audio_processing.py
+  c:\TranscrevAI_windows\src\audio_processing.py:9:8 - error: Import "numpy" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\audio_processing.py:20:16 - error: Import "torch" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\audio_processing.py:27:16 - error: Import "librosa" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\audio_processing.py:34:16 - error: Import "soundfile" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\audio_processing.py:49:20 - error: Import "torchaudio" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\audio_processing.py:65:20 - error: Import "torchaudio" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\audio_processing.py:66:20 - error: Import "torch" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\audio_processing.py:82:18 - error: Import "scipy" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\audio_processing.py:83:20 - error: Import "numpy" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\audio_processing.py:90:20 - error: Import "torchaudio" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\audio_processing.py:91:20 - error: Import "torch" could not be resolved (reportMissingImports)
+11 errors, 0 warnings, 0 informations

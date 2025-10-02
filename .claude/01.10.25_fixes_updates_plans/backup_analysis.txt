@@ -1,0 +1,45 @@
+=== MODELS.PY ANALYSIS ===
+models.py NOT FOUND
+
+=== CHECKING IMPORTS ===
+tests/performance_validation.py:        from models import INT8ModelConverter
+tests/test_unit.py:            from src.models import INT8ModelConverter
+tests/test_unit.py:            from src.models import INT8ModelConverter
+
+=== DIARIZATION_METRICS.PY ANALYSIS ===
+diarization_metrics.py NOT FOUND
+
+=== CHECKING IMPORTS ===
+No imports found
+
+=== MODELS.PY.BACKUP CONTENT (first 30 lines) ===
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Simple Models Module - OpenAI Whisper Only
+Simplified version without ONNX complexity for maximum reliability
+"""
+
+import gc
+import logging
+import shutil
+import time
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+# Set up logging
+logger = logging.getLogger("transcrevai.models")
+
+# Whisper imports
+try:
+    import whisper
+    WHISPER_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"OpenAI Whisper not available: {e}")
+    WHISPER_AVAILABLE = False
+
+class SimpleModelManager:
+    """Simplified model manager for OpenAI Whisper only"""
+
+    def __init__(self, cache_dir: str = "models"):
+        self.cache_dir = Path(cache_dir)

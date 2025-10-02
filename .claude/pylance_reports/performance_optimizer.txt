@@ -1,0 +1,20 @@
+c:\TranscrevAI_windows\src\performance_optimizer.py
+  c:\TranscrevAI_windows\src\performance_optimizer.py:20:8 - error: Import "numpy" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\performance_optimizer.py:21:8 - warning: Import "psutil" could not be resolved from source (reportMissingModuleSource)
+  c:\TranscrevAI_windows\src\performance_optimizer.py:258:37 - error: No parameter named "language" (reportCallIssue)
+  c:\TranscrevAI_windows\src\performance_optimizer.py:458:20 - warning: Import "psutil" could not be resolved from source (reportMissingModuleSource)
+  c:\TranscrevAI_windows\src\performance_optimizer.py:1195:26 - error: Cannot access attribute "enable_streaming_mode" for class "ResourceManager*"
+    Attribute "enable_streaming_mode" is unknown (reportAttributeAccessIssue)
+  c:\TranscrevAI_windows\src\performance_optimizer.py:1197:26 - error: Cannot access attribute "disable_streaming_mode" for class "ResourceManager*"
+    Attribute "disable_streaming_mode" is unknown (reportAttributeAccessIssue)
+  c:\TranscrevAI_windows\src\performance_optimizer.py:1535:24 - error: Cannot access attribute "_send_audio_command" for class "MultiProcessingTranscrevAI*"
+    Attribute "_send_audio_command" is unknown (reportAttributeAccessIssue)
+  c:\TranscrevAI_windows\src\performance_optimizer.py:1560:24 - error: Cannot access attribute "_send_audio_command" for class "MultiProcessingTranscrevAI*"
+    Attribute "_send_audio_command" is unknown (reportAttributeAccessIssue)
+  c:\TranscrevAI_windows\src\performance_optimizer.py:1565:24 - error: Cannot access attribute "_wait_for_session_completion" for class "MultiProcessingTranscrevAI*"
+    Attribute "_wait_for_session_completion" is unknown (reportAttributeAccessIssue)
+  c:\TranscrevAI_windows\src\performance_optimizer.py:1713:41 - error: Cannot access attribute "load_model" for class "TranscriptionService"
+    Attribute "load_model" is unknown (reportAttributeAccessIssue)
+  c:\TranscrevAI_windows\src\performance_optimizer.py:1919:52 - error: Cannot access attribute "get_active_concurrent_session_count" for class "MultiProcessingTranscrevAI*"
+    Attribute "get_active_concurrent_session_count" is unknown (reportAttributeAccessIssue)
+9 errors, 2 warnings, 0 informations

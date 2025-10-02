@@ -1,0 +1,10 @@
+c:\TranscrevAI_windows\src\diarization.py
+  c:\TranscrevAI_windows\src\diarization.py:13:8 - error: Import "numpy" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\diarization.py:18:12 - error: Import "librosa" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\diarization.py:19:12 - error: Import "soundfile" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\diarization.py:21:8 - warning: Import "psutil" could not be resolved from source (reportMissingModuleSource)
+  c:\TranscrevAI_windows\src\diarization.py:39:10 - error: Import "sklearn.cluster" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\diarization.py:40:10 - error: Import "sklearn.preprocessing" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\diarization.py:54:20 - error: Import "librosa" could not be resolved (reportMissingImports)
+  c:\TranscrevAI_windows\src\diarization.py:65:20 - error: Import "soundfile" could not be resolved (reportMissingImports)
+7 errors, 1 warning, 0 informations

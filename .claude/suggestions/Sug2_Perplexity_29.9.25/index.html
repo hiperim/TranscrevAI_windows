@@ -1,0 +1,1553 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="TranscrevAI Optimized - Transcrição e diarização inteligente para português brasileiro">
+    <title>TranscrevAI Optimized - Transcrição Inteligente PT-BR</title>
+    
+    <style>
+        /* ============================================================================
+           CSS VARIABLES & RESET
+           ============================================================================ */
+        :root {
+            --primary-color: #667eea;
+            --primary-dark: #5a67d8;
+            --secondary-color: #764ba2;
+            --success-color: #48bb78;
+            --warning-color: #ed8936;
+            --error-color: #e53e3e;
+            --info-color: #4299e1;
+            
+            --bg-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --card-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            --card-shadow-hover: 0 25px 50px rgba(0,0,0,0.15);
+            
+            --text-primary: #2d3748;
+            --text-secondary: #718096;
+            --text-light: #a0aec0;
+            --bg-white: #ffffff;
+            --bg-gray-50: #f7fafc;
+            --bg-gray-100: #edf2f7;
+            
+            --border-radius: 12px;
+            --border-radius-lg: 20px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            
+            --font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: var(--font-family);
+            background: var(--bg-gradient);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            color: var(--text-primary);
+        }
+        
+        /* ============================================================================
+           MAIN CONTAINER
+           ============================================================================ */
+        .container {
+            background: var(--bg-white);
+            border-radius: var(--border-radius-lg);
+            box-shadow: var(--card-shadow);
+            padding: 40px;
+            max-width: 800px;
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--bg-gradient);
+        }
+        
+        /* ============================================================================
+           HEADER
+           ============================================================================ */
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+        
+        .header .subtitle {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            margin-bottom: 15px;
+        }
+        
+        .header .version {
+            display: inline-block;
+            background: var(--bg-gray-100);
+            color: var(--text-secondary);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        
+        /* ============================================================================
+           STATUS BAR
+           ============================================================================ */
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-gray-50);
+            padding: 15px 20px;
+            border-radius: var(--border-radius);
+            margin-bottom: 30px;
+            border: 2px solid transparent;
+            transition: var(--transition);
+        }
+        
+        .status-bar.connected {
+            border-color: var(--success-color);
+            background: #f0fff4;
+        }
+        
+        .status-bar.warning {
+            border-color: var(--warning-color);
+            background: #fffbf0;
+        }
+        
+        .status-bar.error {
+            border-color: var(--error-color);
+            background: #fff5f5;
+        }
+        
+        .status-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--text-light);
+            transition: var(--transition);
+        }
+        
+        .status-indicator.connected { background: var(--success-color); }
+        .status-indicator.warning { background: var(--warning-color); }
+        .status-indicator.error { background: var(--error-color); }
+        
+        .memory-usage {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .memory-bar {
+            width: 100px;
+            height: 6px;
+            background: var(--bg-gray-100);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        
+        .memory-fill {
+            height: 100%;
+            background: var(--success-color);
+            transition: var(--transition);
+            border-radius: 3px;
+        }
+        
+        .memory-fill.warning { background: var(--warning-color); }
+        .memory-fill.critical { background: var(--error-color); }
+        
+        /* ============================================================================
+           TABS
+           ============================================================================ */
+        .tabs {
+            display: flex;
+            margin-bottom: 30px;
+            border-bottom: 2px solid var(--bg-gray-100);
+        }
+        
+        .tab {
+            flex: 1;
+            padding: 15px 20px;
+            text-align: center;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            font-weight: 600;
+            transition: var(--transition);
+            color: var(--text-secondary);
+        }
+        
+        .tab:hover {
+            color: var(--primary-color);
+            background: var(--bg-gray-50);
+        }
+        
+        .tab.active {
+            border-bottom-color: var(--primary-color);
+            color: var(--primary-color);
+            background: var(--bg-gray-50);
+        }
+        
+        /* ============================================================================
+           TAB CONTENT
+           ============================================================================ */
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* ============================================================================
+           RECORDING INTERFACE
+           ============================================================================ */
+        .recording-interface {
+            text-align: center;
+        }
+        
+        .recording-visualizer {
+            background: var(--bg-gray-50);
+            border-radius: var(--border-radius);
+            padding: 40px 20px;
+            margin-bottom: 30px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .audio-wave {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 3px;
+            height: 60px;
+            margin-bottom: 20px;
+        }
+        
+        .wave-bar {
+            width: 4px;
+            background: var(--primary-color);
+            border-radius: 2px;
+            transition: var(--transition);
+            opacity: 0.3;
+        }
+        
+        .wave-bar.active {
+            opacity: 1;
+            animation: waveAnimation 0.5s ease-in-out infinite alternate;
+        }
+        
+        @keyframes waveAnimation {
+            from { height: 10px; }
+            to { height: 40px; }
+        }
+        
+        .recording-time {
+            font-size: 2rem;
+            font-weight: 600;
+            color: var(--primary-color);
+            margin-bottom: 10px;
+        }
+        
+        .recording-status {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+        }
+        
+        .recording-controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 30px;
+        }
+        
+        /* ============================================================================
+           UPLOAD INTERFACE
+           ============================================================================ */
+        .upload-area {
+            border: 3px dashed var(--bg-gray-100);
+            border-radius: var(--border-radius);
+            padding: 60px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: var(--transition);
+            margin-bottom: 30px;
+            position: relative;
+        }
+        
+        .upload-area:hover,
+        .upload-area.dragover {
+            border-color: var(--primary-color);
+            background: var(--bg-gray-50);
+        }
+        
+        .upload-area.dragover {
+            transform: scale(1.02);
+        }
+        
+        .upload-icon {
+            font-size: 3rem;
+            color: var(--text-light);
+            margin-bottom: 20px;
+        }
+        
+        .upload-text {
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            margin-bottom: 10px;
+        }
+        
+        .upload-hint {
+            font-size: 0.9rem;
+            color: var(--text-light);
+        }
+        
+        .file-info {
+            display: none;
+            background: var(--bg-gray-50);
+            padding: 20px;
+            border-radius: var(--border-radius);
+            margin-top: 20px;
+        }
+        
+        .file-info.visible {
+            display: block;
+        }
+        
+        /* ============================================================================
+           PROGRESS TRACKING
+           ============================================================================ */
+        .progress-section {
+            margin: 30px 0;
+            display: none;
+        }
+        
+        .progress-section.visible {
+            display: block;
+        }
+        
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .progress-title {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .progress-percentage {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 12px;
+            background: var(--bg-gray-100);
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: var(--primary-color);
+            transition: width 0.3s ease;
+            border-radius: 6px;
+            position: relative;
+        }
+        
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(255,255,255,0.3),
+                transparent
+            );
+            animation: progressShimmer 1.5s infinite;
+        }
+        
+        @keyframes progressShimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        
+        .progress-message {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            text-align: center;
+        }
+        
+        /* ============================================================================
+           RESULTS DISPLAY
+           ============================================================================ */
+        .results-section {
+            display: none;
+            margin-top: 30px;
+        }
+        
+        .results-section.visible {
+            display: block;
+        }
+        
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .results-title {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .results-stats {
+            display: flex;
+            gap: 20px;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+        
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .transcription-display {
+            background: var(--bg-gray-50);
+            border-radius: var(--border-radius);
+            padding: 20px;
+            margin-bottom: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--bg-gray-100);
+        }
+        
+        .transcript-segment {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: var(--bg-white);
+            border-radius: 8px;
+            border-left: 4px solid var(--primary-color);
+        }
+        
+        .segment-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+        
+        .speaker-label {
+            background: var(--primary-color);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+        }
+        
+        .timestamp {
+            font-family: monospace;
+        }
+        
+        .segment-text {
+            color: var(--text-primary);
+            line-height: 1.5;
+        }
+        
+        /* ============================================================================
+           BUTTONS
+           ============================================================================ */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: var(--border-radius);
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
+            min-width: 120px;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn-success {
+            background: var(--success-color);
+            color: white;
+        }
+        
+        .btn-success:hover:not(:disabled) {
+            background: #38a169;
+            transform: translateY(-1px);
+        }
+        
+        .btn-warning {
+            background: var(--warning-color);
+            color: white;
+        }
+        
+        .btn-error {
+            background: var(--error-color);
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: var(--bg-gray-100);
+            color: var(--text-primary);
+        }
+        
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--bg-gray-100);
+            transform: translateY(-1px);
+        }
+        
+        .btn-large {
+            padding: 16px 32px;
+            font-size: 1.1rem;
+            min-width: 150px;
+        }
+        
+        .btn-round {
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            min-width: unset;
+            padding: 0;
+        }
+        
+        /* ============================================================================
+           ANIMATIONS & LOADING STATES
+           ============================================================================ */
+        .loading {
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .loading::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(255,255,255,0.4),
+                transparent
+            );
+            animation: loading 1.5s infinite;
+        }
+        
+        @keyframes loading {
+            0% { left: -100%; }
+            100% { left: 100%; }
+        }
+        
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* ============================================================================
+           NOTIFICATIONS
+           ============================================================================ */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--bg-white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--card-shadow);
+            padding: 16px 20px;
+            max-width: 400px;
+            z-index: 1000;
+            transform: translateX(100%);
+            transition: var(--transition);
+        }
+        
+        .notification.show {
+            transform: translateX(0);
+        }
+        
+        .notification.success {
+            border-left: 4px solid var(--success-color);
+        }
+        
+        .notification.warning {
+            border-left: 4px solid var(--warning-color);
+        }
+        
+        .notification.error {
+            border-left: 4px solid var(--error-color);
+        }
+        
+        .notification.info {
+            border-left: 4px solid var(--info-color);
+        }
+        
+        /* ============================================================================
+           RESPONSIVE DESIGN
+           ============================================================================ */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            
+            .container {
+                padding: 25px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .tabs {
+                flex-direction: column;
+            }
+            
+            .tab {
+                padding: 12px;
+            }
+            
+            .recording-controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .btn {
+                width: 100%;
+                margin-bottom: 10px;
+            }
+            
+            .results-stats {
+                flex-direction: column;
+                gap: 10px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 20px;
+            }
+            
+            .header h1 {
+                font-size: 1.8rem;
+            }
+            
+            .status-bar {
+                flex-direction: column;
+                gap: 15px;
+                text-align: center;
+            }
+        }
+        
+        /* ============================================================================
+           UTILITY CLASSES
+           ============================================================================ */
+        .hidden { display: none !important; }
+        .visible { display: block !important; }
+        .text-center { text-align: center; }
+        .text-left { text-align: left; }
+        .text-right { text-align: right; }
+        .mt-10 { margin-top: 10px; }
+        .mt-20 { margin-top: 20px; }
+        .mb-10 { margin-bottom: 10px; }
+        .mb-20 { margin-bottom: 20px; }
+        .flex { display: flex; }
+        .flex-center { display: flex; justify-content: center; align-items: center; }
+        .gap-10 { gap: 10px; }
+        .gap-15 { gap: 15px; }
+        .gap-20 { gap: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>TranscrevAI Optimized</h1>
+            <div class="subtitle">Transcrição e diarização inteligente para português brasileiro</div>
+            <div class="version">v1.0.0 PT-BR Exclusive</div>
+        </div>
+        
+        <!-- Status Bar -->
+        <div class="status-bar" id="statusBar">
+            <div class="status-info">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span id="statusText">Conectando...</span>
+            </div>
+            <div class="memory-usage">
+                <span id="memoryText">Memória: --</span>
+                <div class="memory-bar">
+                    <div class="memory-fill" id="memoryFill"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Tab Navigation -->
+        <div class="tabs">
+            <div class="tab active" data-tab="record">
+                📹 Gravação ao Vivo
+            </div>
+            <div class="tab" data-tab="upload">
+                📁 Upload de Arquivo
+            </div>
+        </div>
+        
+        <!-- Recording Tab -->
+        <div class="tab-content active" id="recordTab">
+            <div class="recording-interface">
+                <div class="recording-visualizer">
+                    <div class="audio-wave" id="audioWave">
+                        <!-- Audio wave bars will be generated by JavaScript -->
+                    </div>
+                    <div class="recording-time" id="recordingTime">00:00</div>
+                    <div class="recording-status" id="recordingStatus">Pronto para gravar</div>
+                </div>
+                
+                <div class="recording-controls">
+                    <button class="btn btn-primary btn-large" id="startRecordBtn">
+                        🎤 Iniciar Gravação
+                    </button>
+                    <button class="btn btn-warning btn-large hidden" id="pauseRecordBtn">
+                        ⏸️ Pausar
+                    </button>
+                    <button class="btn btn-error btn-large hidden" id="stopRecordBtn">
+                        ⏹️ Finalizar
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Upload Tab -->
+        <div class="tab-content" id="uploadTab">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📁</div>
+                <div class="upload-text">Clique para selecionar ou arraste um arquivo de áudio</div>
+                <div class="upload-hint">Formatos suportados: WAV, MP3, MP4, M4A, FLAC, OGG (máx. 500MB)</div>
+                <input type="file" id="fileInput" accept="audio/*" style="display: none;">
+            </div>
+            
+            <div class="file-info" id="fileInfo">
+                <div class="flex gap-15">
+                    <div>
+                        <strong>Arquivo:</strong> <span id="fileName">-</span><br>
+                        <strong>Tamanho:</strong> <span id="fileSize">-</span><br>
+                        <strong>Duração:</strong> <span id="fileDuration">-</span>
+                    </div>
+                    <div style="margin-left: auto;">
+                        <button class="btn btn-primary" id="processFileBtn">
+                            🚀 Processar Arquivo
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Progress Section -->
+        <div class="progress-section" id="progressSection">
+            <div class="progress-header">
+                <div class="progress-title" id="progressTitle">Processando...</div>
+                <div class="progress-percentage" id="progressPercentage">0%</div>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-message" id="progressMessage">Iniciando processamento...</div>
+        </div>
+        
+        <!-- Results Section -->
+        <div class="results-section" id="resultsSection">
+            <div class="results-header">
+                <div class="results-title">Resultados da Transcrição</div>
+                <div class="results-stats">
+                    <div class="stat-item">
+                        <span>🎭</span>
+                        <span id="speakersCount">-</span> falantes
+                    </div>
+                    <div class="stat-item">
+                        <span>⏱️</span>
+                        <span id="processingTime">-</span>s
+                    </div>
+                    <div class="stat-item">
+                        <span>⚡</span>
+                        <span id="processingRatio">-</span>x velocidade
+                    </div>
+                </div>
+            </div>
+            
+            <div class="transcription-display" id="transcriptionDisplay">
+                <!-- Transcription segments will be populated by JavaScript -->
+            </div>
+            
+            <div class="flex gap-15 mt-20">
+                <button class="btn btn-success" id="downloadSrtBtn">
+                    💾 Baixar SRT
+                </button>
+                <button class="btn btn-secondary" id="newTranscriptionBtn">
+                    🔄 Nova Transcrição
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Notification Template -->
+    <div class="notification" id="notificationTemplate" style="display: none;">
+        <div class="notification-content"></div>
+    </div>
+
+    <script>
+        // ============================================================================
+        // GLOBAL STATE & CONFIGURATION
+        // ============================================================================
+        const AppState = {
+            websocket: null,
+            sessionId: null,
+            isRecording: false,
+            isPaused: false,
+            isProcessing: false,
+            currentFile: null,
+            recordingStartTime: null,
+            recordingTimer: null
+        };
+        
+        const Config = {
+            websocketUrl: `ws://${location.host}/ws/`,
+            maxFileSize: 500 * 1024 * 1024, // 500MB
+            supportedFormats: ['.wav', '.mp3', '.mp4', '.m4a', '.flac', '.ogg'],
+            reconnectAttempts: 3,
+            reconnectDelay: 1000
+        };
+        
+        // ============================================================================
+        // UTILITY FUNCTIONS
+        // ============================================================================
+        function generateSessionId() {
+            return 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+        }
+        
+        function formatTime(seconds) {
+            const minutes = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        function showNotification(message, type = 'info', duration = 5000) {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type} show`;
+            notification.innerHTML = `<div class="notification-content">${message}</div>`;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+                setTimeout(() => {
+                    document.body.removeChild(notification);
+                }, 300);
+            }, duration);
+        }
+        
+        // ============================================================================
+        // DOM ELEMENTS
+        // ============================================================================
+        const elements = {
+            // Status
+            statusBar: document.getElementById('statusBar'),
+            statusIndicator: document.getElementById('statusIndicator'),
+            statusText: document.getElementById('statusText'),
+            memoryText: document.getElementById('memoryText'),
+            memoryFill: document.getElementById('memoryFill'),
+            
+            // Tabs
+            tabs: document.querySelectorAll('.tab'),
+            tabContents: document.querySelectorAll('.tab-content'),
+            
+            // Recording
+            audioWave: document.getElementById('audioWave'),
+            recordingTime: document.getElementById('recordingTime'),
+            recordingStatus: document.getElementById('recordingStatus'),
+            startRecordBtn: document.getElementById('startRecordBtn'),
+            pauseRecordBtn: document.getElementById('pauseRecordBtn'),
+            stopRecordBtn: document.getElementById('stopRecordBtn'),
+            
+            // Upload
+            uploadArea: document.getElementById('uploadArea'),
+            fileInput: document.getElementById('fileInput'),
+            fileInfo: document.getElementById('fileInfo'),
+            fileName: document.getElementById('fileName'),
+            fileSize: document.getElementById('fileSize'),
+            fileDuration: document.getElementById('fileDuration'),
+            processFileBtn: document.getElementById('processFileBtn'),
+            
+            // Progress
+            progressSection: document.getElementById('progressSection'),
+            progressTitle: document.getElementById('progressTitle'),
+            progressPercentage: document.getElementById('progressPercentage'),
+            progressFill: document.getElementById('progressFill'),
+            progressMessage: document.getElementById('progressMessage'),
+            
+            // Results
+            resultsSection: document.getElementById('resultsSection'),
+            speakersCount: document.getElementById('speakersCount'),
+            processingTime: document.getElementById('processingTime'),
+            processingRatio: document.getElementById('processingRatio'),
+            transcriptionDisplay: document.getElementById('transcriptionDisplay'),
+            downloadSrtBtn: document.getElementById('downloadSrtBtn'),
+            newTranscriptionBtn: document.getElementById('newTranscriptionBtn')
+        };
+        
+        // ============================================================================
+        // WEBSOCKET MANAGEMENT
+        // ============================================================================
+        function connectWebSocket() {
+            if (AppState.websocket) {
+                AppState.websocket.close();
+            }
+            
+            AppState.sessionId = generateSessionId();
+            const wsUrl = Config.websocketUrl + AppState.sessionId;
+            
+            updateStatus('Conectando...', 'connecting');
+            
+            try {
+                AppState.websocket = new WebSocket(wsUrl);
+                
+                AppState.websocket.onopen = onWebSocketOpen;
+                AppState.websocket.onmessage = onWebSocketMessage;
+                AppState.websocket.onclose = onWebSocketClose;
+                AppState.websocket.onerror = onWebSocketError;
+                
+            } catch (error) {
+                console.error('WebSocket connection failed:', error);
+                updateStatus('Erro de conexão', 'error');
+                showNotification('Falha na conexão. Verifique sua internet.', 'error');
+            }
+        }
+        
+        function onWebSocketOpen() {
+            console.log('WebSocket connected:', AppState.sessionId);
+            updateStatus('Conectado', 'connected');
+            showNotification('Conectado com sucesso!', 'success', 3000);
+            
+            // Start periodic ping
+            setInterval(() => {
+                if (AppState.websocket && AppState.websocket.readyState === WebSocket.OPEN) {
+                    sendWebSocketMessage('ping', {});
+                }
+            }, 30000); // 30 seconds
+        }
+        
+        function onWebSocketMessage(event) {
+            try {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            } catch (error) {
+                console.error('Failed to parse WebSocket message:', error);
+            }
+        }
+        
+        function onWebSocketClose() {
+            console.log('WebSocket closed');
+            updateStatus('Desconectado', 'error');
+            
+            // Attempt to reconnect
+            setTimeout(() => {
+                if (!AppState.websocket || AppState.websocket.readyState === WebSocket.CLOSED) {
+                    connectWebSocket();
+                }
+            }, Config.reconnectDelay);
+        }
+        
+        function onWebSocketError(error) {
+            console.error('WebSocket error:', error);
+            updateStatus('Erro de conexão', 'error');
+        }
+        
+        function sendWebSocketMessage(type, data) {
+            if (AppState.websocket && AppState.websocket.readyState === WebSocket.OPEN) {
+                AppState.websocket.send(JSON.stringify({
+                    type: type,
+                    data: data,
+                    timestamp: Date.now()
+                }));
+            } else {
+                console.error('WebSocket not connected');
+                showNotification('Conexão perdida. Reconectando...', 'warning');
+                connectWebSocket();
+            }
+        }
+        
+        // ============================================================================
+        // WEBSOCKET MESSAGE HANDLERS
+        // ============================================================================
+        function handleWebSocketMessage(message) {
+            const { type, data } = message;
+            
+            switch (type) {
+                case 'connected':
+                    console.log('Session initialized:', data);
+                    break;
+                    
+                case 'recording_started':
+                    onRecordingStarted();
+                    break;
+                    
+                case 'recording_stopped':
+                    onRecordingStopped();
+                    break;
+                    
+                case 'processing_progress':
+                    updateProgress(data.progress, data.message, data.phase);
+                    break;
+                    
+                case 'processing_complete':
+                    onProcessingComplete(data);
+                    break;
+                    
+                case 'processing_error':
+                    onProcessingError(data);
+                    break;
+                    
+                case 'status_update':
+                    updateSystemStatus(data.system);
+                    break;
+                    
+                case 'error':
+                    showNotification(data.message || 'Erro desconhecido', 'error');
+                    break;
+                    
+                case 'pong':
+                    // Heartbeat response
+                    break;
+                    
+                default:
+                    console.log('Unknown message type:', type, data);
+            }
+        }
+        
+        // ============================================================================
+        // UI UPDATE FUNCTIONS
+        // ============================================================================
+        function updateStatus(text, type) {
+            elements.statusText.textContent = text;
+            elements.statusIndicator.className = `status-indicator ${type}`;
+            elements.statusBar.className = `status-bar ${type}`;
+        }
+        
+        function updateSystemStatus(systemData) {
+            if (systemData) {
+                // Update memory usage
+                const memoryUsage = systemData.memory_usage || 0;
+                elements.memoryText.textContent = `Memória: ${memoryUsage.toFixed(1)}%`;
+                elements.memoryFill.style.width = `${memoryUsage}%`;
+                
+                // Update memory fill color based on usage
+                elements.memoryFill.className = 'memory-fill';
+                if (memoryUsage > 85) {
+                    elements.memoryFill.classList.add('critical');
+                } else if (memoryUsage > 75) {
+                    elements.memoryFill.classList.add('warning');
+                }
+            }
+        }
+        
+        function updateProgress(percentage, message, phase) {
+            elements.progressSection.classList.add('visible');
+            elements.progressPercentage.textContent = `${percentage}%`;
+            elements.progressFill.style.width = `${percentage}%`;
+            elements.progressMessage.textContent = message;
+            
+            // Update progress title based on phase
+            if (phase === 'transcription') {
+                elements.progressTitle.textContent = 'Transcrevendo Áudio';
+            } else if (phase === 'diarization') {
+                elements.progressTitle.textContent = 'Identificando Falantes';
+            } else if (phase === 'subtitle') {
+                elements.progressTitle.textContent = 'Gerando Legendas';
+            } else {
+                elements.progressTitle.textContent = 'Processando';
+            }
+        }
+        
+        // ============================================================================
+        // RECORDING FUNCTIONS
+        // ============================================================================
+        function startRecording() {
+            sendWebSocketMessage('start_recording', {
+                format: 'wav' // PT-BR optimized format
+            });
+        }
+        
+        function stopRecording() {
+            sendWebSocketMessage('stop_recording', {});
+        }
+        
+        function onRecordingStarted() {
+            AppState.isRecording = true;
+            AppState.recordingStartTime = Date.now();
+            
+            // Update UI
+            elements.startRecordBtn.classList.add('hidden');
+            elements.pauseRecordBtn.classList.remove('hidden');
+            elements.stopRecordBtn.classList.remove('hidden');
+            elements.recordingStatus.textContent = 'Gravando...';
+            
+            // Start timer and animation
+            startRecordingTimer();
+            startAudioVisualization();
+            
+            showNotification('Gravação iniciada!', 'success', 3000);
+        }
+        
+        function onRecordingStopped() {
+            AppState.isRecording = false;
+            
+            // Update UI
+            elements.startRecordBtn.classList.remove('hidden');
+            elements.pauseRecordBtn.classList.add('hidden');
+            elements.stopRecordBtn.classList.add('hidden');
+            elements.recordingStatus.textContent = 'Processando gravação...';
+            
+            // Stop timer and animation
+            stopRecordingTimer();
+            stopAudioVisualization();
+            
+            showNotification('Gravação finalizada. Processando...', 'info');
+        }
+        
+        function startRecordingTimer() {
+            AppState.recordingTimer = setInterval(() => {
+                if (AppState.recordingStartTime) {
+                    const elapsed = (Date.now() - AppState.recordingStartTime) / 1000;
+                    elements.recordingTime.textContent = formatTime(elapsed);
+                }
+            }, 1000);
+        }
+        
+        function stopRecordingTimer() {
+            if (AppState.recordingTimer) {
+                clearInterval(AppState.recordingTimer);
+                AppState.recordingTimer = null;
+            }
+        }
+        
+        // ============================================================================
+        // AUDIO VISUALIZATION
+        // ============================================================================
+        function initializeAudioWave() {
+            // Create wave bars
+            for (let i = 0; i < 20; i++) {
+                const bar = document.createElement('div');
+                bar.className = 'wave-bar';
+                bar.style.height = '10px';
+                elements.audioWave.appendChild(bar);
+            }
+        }
+        
+        function startAudioVisualization() {
+            const bars = elements.audioWave.querySelectorAll('.wave-bar');
+            
+            // Animate bars to simulate audio input
+            setInterval(() => {
+                if (AppState.isRecording) {
+                    bars.forEach(bar => {
+                        bar.classList.add('active');
+                        bar.style.height = Math.random() * 40 + 10 + 'px';
+                    });
+                }
+            }, 100);
+        }
+        
+        function stopAudioVisualization() {
+            const bars = elements.audioWave.querySelectorAll('.wave-bar');
+            bars.forEach(bar => {
+                bar.classList.remove('active');
+                bar.style.height = '10px';
+            });
+        }
+        
+        // ============================================================================
+        // FILE UPLOAD FUNCTIONS
+        // ============================================================================
+        function handleFileSelect(file) {
+            if (!file) return;
+            
+            // Validate file type
+            const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+            if (!Config.supportedFormats.includes(fileExtension)) {
+                showNotification('Formato de arquivo não suportado!', 'error');
+                return;
+            }
+            
+            // Validate file size
+            if (file.size > Config.maxFileSize) {
+                showNotification(`Arquivo muito grande! Máximo ${formatFileSize(Config.maxFileSize)}`, 'error');
+                return;
+            }
+            
+            AppState.currentFile = file;
+            
+            // Update file info display
+            elements.fileName.textContent = file.name;
+            elements.fileSize.textContent = formatFileSize(file.size);
+            elements.fileDuration.textContent = 'Calculando...';
+            elements.fileInfo.classList.add('visible');
+            
+            // Calculate duration (simplified - would need actual audio analysis)
+            setTimeout(() => {
+                const estimatedDuration = Math.floor(file.size / 32000); // Rough estimate
+                elements.fileDuration.textContent = formatTime(estimatedDuration);
+            }, 500);
+            
+            showNotification('Arquivo carregado com sucesso!', 'success', 3000);
+        }
+        
+        function processUploadedFile() {
+            if (!AppState.currentFile) return;
+            
+            // In a real implementation, you would upload the file here
+            // For now, we'll simulate the process
+            showNotification('Processando arquivo...', 'info');
+            
+            // Show progress
+            updateProgress(0, 'Enviando arquivo...', 'upload');
+            
+            // Simulate progress
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += Math.random() * 15;
+                if (progress >= 100) {
+                    progress = 100;
+                    clearInterval(progressInterval);
+                    
+                    // Start actual processing
+                    setTimeout(() => {
+                        simulateProcessingComplete();
+                    }, 2000);
+                }
+                updateProgress(Math.min(progress, 100), 'Processando áudio...', 'processing');
+            }, 500);
+        }
+        
+        // ============================================================================
+        // PROCESSING RESULT HANDLERS
+        // ============================================================================
+        function onProcessingComplete(data) {
+            AppState.isProcessing = false;
+            
+            // Hide progress, show results
+            elements.progressSection.classList.remove('visible');
+            elements.resultsSection.classList.add('visible');
+            
+            // Update stats
+            if (data.metrics) {
+                elements.processingTime.textContent = data.metrics.processing_time?.toFixed(1) || '-';
+                elements.processingRatio.textContent = data.metrics.processing_ratio?.toFixed(2) || '-';
+            }
+            
+            if (data.results) {
+                elements.speakersCount.textContent = data.results.speakers_detected || '-';
+                displayTranscription(data.results.transcription || []);
+            }
+            
+            showNotification('Transcrição concluída com sucesso!', 'success');
+        }
+        
+        function onProcessingError(data) {
+            AppState.isProcessing = false;
+            elements.progressSection.classList.remove('visible');
+            
+            showNotification(data.message || 'Erro durante o processamento', 'error');
+        }
+        
+        function displayTranscription(transcriptionData) {
+            elements.transcriptionDisplay.innerHTML = '';
+            
+            if (!transcriptionData || transcriptionData.length === 0) {
+                elements.transcriptionDisplay.innerHTML = '<p>Nenhuma transcrição disponível.</p>';
+                return;
+            }
+            
+            transcriptionData.forEach((segment, index) => {
+                const segmentDiv = document.createElement('div');
+                segmentDiv.className = 'transcript-segment fade-in';
+                segmentDiv.style.animationDelay = `${index * 0.1}s`;
+                
+                const speakerLabel = segment.speaker !== undefined ? `Falante ${segment.speaker + 1}` : 'Falante';
+                const startTime = formatTime(segment.start || 0);
+                const endTime = formatTime(segment.end || 0);
+                
+                segmentDiv.innerHTML = `
+                    <div class="segment-header">
+                        <span class="speaker-label">${speakerLabel}</span>
+                        <span class="timestamp">${startTime} - ${endTime}</span>
+                    </div>
+                    <div class="segment-text">${segment.text || ''}</div>
+                `;
+                
+                elements.transcriptionDisplay.appendChild(segmentDiv);
+            });
+        }
+        
+        // ============================================================================
+        // EVENT LISTENERS
+        // ============================================================================
+        function setupEventListeners() {
+            // Tab switching
+            elements.tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const tabName = tab.dataset.tab;
+                    switchTab(tabName);
+                });
+            });
+            
+            // Recording controls
+            elements.startRecordBtn.addEventListener('click', startRecording);
+            elements.stopRecordBtn.addEventListener('click', stopRecording);
+            
+            // File upload
+            elements.uploadArea.addEventListener('click', () => {
+                elements.fileInput.click();
+            });
+            
+            elements.fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    handleFileSelect(file);
+                }
+            });
+            
+            // Drag and drop
+            elements.uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                elements.uploadArea.classList.add('dragover');
+            });
+            
+            elements.uploadArea.addEventListener('dragleave', () => {
+                elements.uploadArea.classList.remove('dragover');
+            });
+            
+            elements.uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                elements.uploadArea.classList.remove('dragover');
+                
+                const file = e.dataTransfer.files[0];
+                if (file) {
+                    handleFileSelect(file);
+                }
+            });
+            
+            // Process file button
+            elements.processFileBtn.addEventListener('click', processUploadedFile);
+            
+            // Results actions
+            elements.downloadSrtBtn.addEventListener('click', downloadSRT);
+            elements.newTranscriptionBtn.addEventListener('click', resetInterface);
+        }
+        
+        function switchTab(tabName) {
+            // Update tab buttons
+            elements.tabs.forEach(tab => {
+                tab.classList.remove('active');
+                if (tab.dataset.tab === tabName) {
+                    tab.classList.add('active');
+                }
+            });
+            
+            // Update tab content
+            elements.tabContents.forEach(content => {
+                content.classList.remove('active');
+                if (content.id === tabName + 'Tab') {
+                    content.classList.add('active');
+                }
+            });
+        }
+        
+        // ============================================================================
+        // UTILITY ACTIONS
+        // ============================================================================
+        function downloadSRT() {
+            // In a real implementation, this would download the actual SRT file
+            showNotification('Funcionalidade em desenvolvimento', 'info');
+        }
+        
+        function resetInterface() {
+            // Reset to initial state
+            AppState.currentFile = null;
+            AppState.isProcessing = false;
+            
+            // Hide sections
+            elements.progressSection.classList.remove('visible');
+            elements.resultsSection.classList.remove('visible');
+            elements.fileInfo.classList.remove('visible');
+            
+            // Reset recording UI
+            elements.recordingTime.textContent = '00:00';
+            elements.recordingStatus.textContent = 'Pronto para gravar';
+            elements.startRecordBtn.classList.remove('hidden');
+            elements.pauseRecordBtn.classList.add('hidden');
+            elements.stopRecordBtn.classList.add('hidden');
+            
+            // Reset file input
+            elements.fileInput.value = '';
+            
+            // Clear transcription display
+            elements.transcriptionDisplay.innerHTML = '';
+            
+            showNotification('Interface resetada', 'success', 2000);
+        }
+        
+        // Simulation function for development
+        function simulateProcessingComplete() {
+            const sampleTranscription = [
+                {
+                    speaker: 0,
+                    start: 0,
+                    end: 3.5,
+                    text: "Olá, bem-vindos ao TranscrevAI Optimized!"
+                },
+                {
+                    speaker: 1,
+                    start: 4,
+                    end: 8,
+                    text: "Este é um exemplo de transcrição com diarização de falantes."
+                },
+                {
+                    speaker: 0,
+                    start: 8.5,
+                    end: 12,
+                    text: "O sistema consegue identificar diferentes pessoas falando."
+                }
+            ];
+            
+            onProcessingComplete({
+                results: {
+                    transcription: sampleTranscription,
+                    speakers_detected: 2
+                },
+                metrics: {
+                    processing_time: 5.8,
+                    processing_ratio: 0.75
+                }
+            });
+        }
+        
+        // ============================================================================
+        // INITIALIZATION
+        // ============================================================================
+        function initializeApp() {
+            console.log('🚀 TranscrevAI Optimized Client Starting...');
+            
+            // Initialize components
+            setupEventListeners();
+            initializeAudioWave();
+            
+            // Connect WebSocket
+            connectWebSocket();
+            
+            // Initial status request
+            setTimeout(() => {
+                if (AppState.websocket && AppState.websocket.readyState === WebSocket.OPEN) {
+                    sendWebSocketMessage('get_status', {});
+                }
+            }, 1000);
+            
+            console.log('✅ Client initialized successfully');
+        }
+        
+        // Start the application when DOM is loaded
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeApp);
+        } else {
+            initializeApp();
+        }
+        
+        // Handle page unload
+        window.addEventListener('beforeunload', () => {
+            if (AppState.websocket) {
+                AppState.websocket.close();
+            }
+        });
+    </script>
+</body>
+</html>

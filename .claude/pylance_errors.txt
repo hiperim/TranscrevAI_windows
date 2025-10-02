@@ -1,0 +1,65 @@
+Fix all these errors below:
+
+[{
+	"resource": "/c:/TranscrevAI_windows/src/performance_optimizer.py",
+	"owner": "pylance4",
+	"code": {
+		"value": "reportAttributeAccessIssue",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportAttributeAccessIssue.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 8,
+	"message": "Cannot access attribute \"transcribe_parallel\" for class \"Literal[False]\"\n  Attribute \"transcribe_parallel\" is unknown",
+	"source": "Pylance",
+	"startLineNumber": 234,
+	"startColumn": 63,
+	"endLineNumber": 234,
+	"endColumn": 82,
+	"origin": "extHost1"
+},{
+	"resource": "/c:/TranscrevAI_windows/src/performance_optimizer.py",
+	"owner": "pylance4",
+	"code": {
+		"value": "reportAttributeAccessIssue",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportAttributeAccessIssue.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 8,
+	"message": "Cannot access attribute \"initialize\" for class \"TranscriptionService\"\n  Attribute \"initialize\" is unknown",
+	"source": "Pylance",
+	"startLineNumber": 1576,
+	"startColumn": 41,
+	"endLineNumber": 1576,
+	"endColumn": 51,
+	"origin": "extHost1"
+},{
+	"resource": "/c:/TranscrevAI_windows/src/performance_optimizer.py",
+	"owner": "pylance4",
+	"code": {
+		"value": "reportAttributeAccessIssue",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportAttributeAccessIssue.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 8,
+	"message": "Cannot access attribute \"transcribe_file\" for class \"TranscriptionService\"\n  Attribute \"transcribe_file\" is unknown",
+	"source": "Pylance",
+	"startLineNumber": 1578,
+	"startColumn": 64,
+	"endLineNumber": 1578,
+	"endColumn": 79,
+	"origin": "extHost1"
+}]
+
+

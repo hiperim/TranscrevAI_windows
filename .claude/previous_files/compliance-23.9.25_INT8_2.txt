@@ -1,0 +1,299 @@
+# TRANSCREVAI PROJECT COMPLIANCE RULES - INT8 DOCKER PRODUCTION
+*Updated for INT8 optimization, Docker containerization, and strategic MCP integration*
+
+**MANDATORY ADHERENCE**: All TranscrevAI development must comply with these rules. Violations will cause system instability and deployment failures.
+
+---
+
+## CRITICAL PRODUCTION REQUIREMENTS (UPDATED)
+
+### Rule 0: INT8 Pre-Conversion Architecture (REPLACES Progressive Loading)
+- **Core Approach**: Use INT8 models pre-converted during build/installation phase
+- **Startup Performance**: <5s app startup vs 190s runtime conversion delay  
+- **Memory Efficiency**: 750MB-1GB peak usage vs 4.1GB with standard models
+- **Build Integration**: INT8 conversion happens during Docker build, not user runtime
+- **Fallback Strategy**: Graceful fallback to FP16 if INT8 incompatible
+
+**VALIDATION**: Docker container must include pre-converted INT8 models ready for immediate use.
+
+### Rule 0.1: Strategic MCP Gemini Integration (OPTIMIZED)
+- **Gemini Usage (100 free daily)**: Web research, model validation, compatibility checks, benchmarking
+- **Claude Usage (paid tokens)**: Code implementation, debugging, optimization, integration
+- **High-Value Gemini**: Docker best practices, ONNX compatibility research, PT-BR datasets, hardware compatibility
+- **Avoid Gemini Waste**: Single-file code analysis, simple implementations, documentation updates
+
+**VALIDATION**: >80% of Gemini queries focus on research/validation, <20% on code implementation.
+
+### Rule 0.2: Docker Containerization Requirements (NEW)
+- **Complete Containerization**: App must run fully in Docker with zero external dependencies
+- **Easy Testing**: Anyone with working PC can run `docker run -p 8000:8000 transcrevai-int8`
+- **Pre-built Models**: INT8 models included in container image (no download during runtime)
+- **Auto-deployment**: Container starts immediately with all dependencies satisfied
+- **Cross-platform**: Works on Windows, macOS, Linux with Docker installed
+
+**VALIDATION**: Docker container deployment on fresh system without external setup.
+
+---
+
+## CORE FUNCTIONALITY REQUIREMENTS (UPDATED)
+
+### Rule 1: Audio Processing Standards (INT8 OPTIMIZED)
+- **Processing Speed**: Target 0.5s processing per 1s audio (improved from 0.7s with INT8)
+- **Accuracy Target**: ≥95% accuracy in both transcription and diarization (restored with PT-BR INT8 optimization)
+- **Language Optimization**: PT-BR (Portuguese Brazilian) exclusive with INT8 calibration
+- **Model Specification**: Use ONLY Whisper "medium" model with INT8 quantization
+- **Conversation Focus**: Optimize for PT-BR conversational patterns with calibrated INT8
+
+**VALIDATION**: Test with real PT-BR audio achieving 0.5s ratio and 95% accuracy.
+
+### Rule 2: SRT Auto-Download System (NEW REQUIREMENT)
+- **Automatic Download**: SRT file downloads automatically when processing completes
+- **Path Display**: Show full system path to user in UI for easy file access
+- **File Format**: Standard SRT format with accurate timestamps and speaker labels
+- **Download Integration**: WebSocket triggers browser download + displays file location
+- **User Experience**: Clear notification "SRT saved to: /path/to/file.srt" with download link
+
+**VALIDATION**: SRT file automatically downloads and path is displayed to user in interface.
+
+### Rule 3: Live Recording Format Choice (NEW REQUIREMENT)
+- **Format Options**: User chooses between MP4 or WAV for live recordings
+- **UI Integration**: Radio buttons or dropdown for format selection before recording
+- **Quality Settings**: MP4 with good compression, WAV for maximum quality
+- **Processing Compatibility**: Both formats work seamlessly with INT8 transcription pipeline
+- **File Management**: Clear naming convention: recording_timestamp_format.mp4/wav
+
+**VALIDATION**: User can select MP4 or WAV format and both work with transcription pipeline.
+
+### Rule 4: System Stability Requirements (INT8 OPTIMIZED)
+- **Memory Efficiency**: ≤1GB peak usage with INT8 pre-converted models
+- **Browser Safety**: Stay well under 2GB browser limit with significant margin
+- **Container Stability**: Stable operation within Docker resource constraints
+- **Error Recovery**: Graceful fallback if INT8 models fail to load
+
+**VALIDATION**: Memory monitoring shows <1GB peak usage in containerized environment.
+
+---
+
+## TECHNICAL ARCHITECTURE REQUIREMENTS (UPDATED)
+
+### Rule 5: INT8 Model Management (CORE ARCHITECTURE)
+- **Pre-conversion**: Models converted to INT8 during Docker build phase
+- **Immediate Loading**: Models load in <5s from pre-converted files
+- **PT-BR Calibration**: INT8 quantization calibrated with Portuguese Brazilian audio patterns
+- **Compatibility Checks**: Automatic detection of INT8 support with FP16 fallback
+- **Validation System**: Built-in INT8 model validation before production use
+
+**VALIDATION**: Docker container starts with working INT8 models in <5s.
+
+### Rule 6: Docker Production Architecture (NEW)
+- **Single Container**: All functionality in one Docker image for simple deployment
+- **No External Dependencies**: Complete system runs without external downloads or APIs
+- **Volume Mapping**: Optional volume mapping for persistent data (recordings, outputs)
+- **Port Configuration**: Standard HTTP server on configurable port (default 8000)
+- **Health Checks**: Built-in health endpoints for container monitoring
+
+**VALIDATION**: Fresh Docker deployment works on clean system without configuration.
+
+### Rule 7: WebSocket Real-time Communication (ENHANCED)
+- **Progress Reporting**: Real-time progress updates during processing
+- **Auto-download Triggers**: WebSocket initiates SRT download when ready
+- **Path Notification**: Send file path to frontend for user display
+- **Format Status**: Report selected recording format and processing status
+- **Error Handling**: Clear error messages via WebSocket for user feedback
+
+**VALIDATION**: WebSocket provides real-time updates including file paths and download triggers.
+
+---
+
+## PERFORMANCE AND OPTIMIZATION REQUIREMENTS (INT8 FOCUSED)
+
+### Rule 8: Memory Management (INT8 OPTIMIZED)
+- **Peak Usage**: ≤1GB with INT8 models vs 4.1GB with standard models
+- **Container Efficiency**: Optimized for Docker resource constraints
+- **Browser Safety**: Significant margin under browser memory limits
+- **Emergency Prevention**: Normal operation never triggers emergency mode
+- **Resource Monitoring**: Real-time memory tracking and optimization
+
+**VALIDATION**: Consistent <1GB memory usage across different audio file sizes.
+
+### Rule 9: Processing Performance (INT8 ENHANCED)
+- **Speed Target**: 0.5s processing per 1s audio (60% improvement with INT8)
+- **Startup Time**: <5s from container start to ready state
+- **GPU Utilization**: Automatic GPU detection with CPU fallback
+- **Parallel Processing**: Efficient use of available CPU cores
+- **Cache Optimization**: Smart caching of processed results
+
+**VALIDATION**: Measure processing ratios and startup times in containerized environment.
+
+### Rule 10: Quality Assurance (PT-BR SPECIALIZED)
+- **Transcription Accuracy**: ≥95% for Portuguese Brazilian conversational audio
+- **Diarization Quality**: ≥92% speaker identification accuracy
+- **Audio Format Support**: High quality processing for both MP4 and WAV inputs
+- **Noise Handling**: Robust processing of real-world audio conditions
+- **Speaker Detection**: Dynamic handling of multiple speakers (2-6 typical range)
+
+**VALIDATION**: Benchmark testing with PT-BR audio samples achieving accuracy targets.
+
+---
+
+## USER EXPERIENCE REQUIREMENTS (UPDATED)
+
+### Rule 11: Interface Requirements (ENHANCED)
+- **Format Selection**: Clear MP4/WAV choice for live recordings
+- **Auto-download**: Seamless SRT file download with path display
+- **Progress Display**: Real-time processing progress with INT8 status
+- **Error Communication**: Clear error messages and recovery suggestions
+- **Mobile Responsive**: Works across desktop and mobile browsers
+
+**VALIDATION**: Complete user workflow testing from recording to SRT download.
+
+### Rule 12: File Management (AUTO-DOWNLOAD FOCUS)
+- **Automatic SRT Generation**: SRT created and ready immediately after processing
+- **Path Display**: Full system path shown to user in readable format
+- **Download Integration**: Browser download triggered automatically
+- **File Organization**: Logical file naming and organization
+- **Cleanup Management**: Optional cleanup of temporary files
+
+**VALIDATION**: User receives SRT file automatically with clear path information.
+
+---
+
+## DEPLOYMENT AND INTEGRATION REQUIREMENTS (NEW SECTION)
+
+### Rule 13: Docker Deployment (CRITICAL)
+- **One-Command Deploy**: `docker run -p 8000:8000 transcrevai-int8` starts complete system
+- **Pre-built Image**: Docker image includes all models and dependencies
+- **Cross-platform**: Works identically on Windows, macOS, Linux
+- **Resource Requirements**: Clear documentation of minimum system requirements
+- **Testing Validation**: Easy for anyone to test and review the implementation
+
+**VALIDATION**: Fresh deployment on multiple platforms without configuration.
+
+### Rule 14: Build Pipeline (INT8 INTEGRATION)
+- **Automated Build**: Docker build includes INT8 model pre-conversion
+- **Validation Steps**: Built-in validation of INT8 model functionality
+- **Size Optimization**: Optimized image size while including necessary models
+- **Build Documentation**: Clear build instructions and requirements
+- **CI/CD Ready**: Build process suitable for automated deployment
+
+**VALIDATION**: Docker build completes successfully with working INT8 models.
+
+### Rule 15: Monitoring and Debugging (PRODUCTION READY)
+- **Health Endpoints**: /health endpoint for system status monitoring
+- **Performance Metrics**: Built-in performance monitoring and reporting
+- **Debug Information**: Comprehensive logging for troubleshooting
+- **Container Logs**: Proper logging structure for Docker log management
+- **Error Tracking**: Systematic error tracking and reporting
+
+**VALIDATION**: Complete monitoring and debugging capability in containerized deployment.
+
+---
+
+## MCP STRATEGIC USAGE FRAMEWORK (OPTIMIZED)
+
+### Rule 16: Gemini Research Optimization (100 FREE REQUESTS)
+**High-Value Gemini Usage:**
+- 🌐 **ONNX Runtime compatibility research** for INT8 support validation
+- 🔍 **Docker optimization best practices** for ML model deployment  
+- 📊 **Portuguese Brazilian dataset research** for calibration improvement
+- ⚙️ **Hardware compatibility research** for cross-platform deployment
+- 🐳 **Container orchestration patterns** for production deployment
+- 🌍 **Performance benchmarking research** for realistic targets
+
+**VALIDATION**: Each Gemini query focuses on research/validation rather than implementation.
+
+### Rule 17: Claude Implementation Focus (PAID TOKENS)
+**High-Value Claude Usage:**
+- 💻 **INT8 model integration implementation** and optimization
+- 🔧 **Docker containerization development** and build scripts
+- 🐛 **WebSocket debugging and optimization** for real-time communication
+- 📝 **SRT generation and auto-download** implementation
+- 🎯 **PT-BR transcription optimization** and accuracy tuning
+- 🧪 **Testing framework development** and validation systems
+
+**VALIDATION**: Claude usage focuses on complex implementation rather than research.
+
+---
+
+## VALIDATION AND TESTING FRAMEWORK (UPDATED)
+
+### Rule 18: Integration Testing (DOCKER-BASED)
+- **Container Testing**: All testing performed in Docker environment
+- **Cross-platform Validation**: Testing on Windows, macOS, Linux
+- **Performance Benchmarking**: Automated testing of processing speed and accuracy
+- **Memory Monitoring**: Continuous memory usage validation
+- **End-to-end Testing**: Complete workflow from upload to SRT download
+
+**VALIDATION**: Comprehensive testing suite running in containerized environment.
+
+### Rule 19: User Acceptance Testing (REAL-WORLD)
+- **Format Testing**: Both MP4 and WAV recording formats validated
+- **Auto-download Testing**: SRT download and path display functionality
+- **Performance Validation**: Real PT-BR audio achieving accuracy targets
+- **Usability Testing**: Complete user workflow validation
+- **Cross-browser Testing**: Functionality across different browsers
+
+**VALIDATION**: Real users can successfully use the containerized application.
+
+### Rule 20: Production Readiness (DEPLOYMENT FOCUSED)
+- **Docker Hub Ready**: Container image ready for distribution
+- **Documentation Complete**: Full deployment and usage documentation
+- **Security Validated**: Container security best practices implemented
+- **Resource Optimized**: Efficient resource usage in production environment
+- **Monitoring Integrated**: Production monitoring and alerting capabilities
+
+**VALIDATION**: Application ready for production deployment with full documentation.
+
+---
+
+## SUCCESS METRICS (UPDATED TARGETS)
+
+### Technical Performance (INT8 OPTIMIZED)
+- **Startup Time**: ≤5s from container start to ready state (Target: 100%)
+- **Processing Speed**: ≤0.5s processing per 1s audio (Target: 100%)
+- **Memory Usage**: ≤1GB peak usage vs 4.1GB baseline (Target: 100%)
+- **Transcription Accuracy**: ≥95% for PT-BR conversational audio (Target: 100%)
+- **Container Size**: Optimized Docker image size with included models (Target: <2GB)
+
+### User Experience (ENHANCED)
+- **Auto-download Success**: 100% successful SRT downloads with path display
+- **Format Support**: Both MP4 and WAV formats working perfectly (Target: 100%)
+- **Cross-platform**: Identical functionality across Windows/macOS/Linux (Target: 100%)
+- **Error Recovery**: Graceful handling of all error conditions (Target: 100%)
+- **Mobile Compatibility**: Responsive interface across devices (Target: 100%)
+
+### Deployment Efficiency (NEW)
+- **One-command Deploy**: Single Docker command starts complete system (Target: 100%)
+- **Zero Configuration**: No external setup required (Target: 100%)
+- **Build Success**: Automated Docker build with INT8 models (Target: 100%)
+- **Testing Coverage**: Comprehensive testing across platforms (Target: 90%+)
+- **Documentation Quality**: Complete deployment documentation (Target: 100%)
+
+---
+
+## COMPLIANCE VALIDATION FRAMEWORK (UPDATED)
+
+### Automated Validation Checkpoints
+1. **INT8 Integration**: Pre-converted models load successfully in <5s
+2. **Docker Deployment**: One-command deployment works on fresh systems
+3. **Auto-download**: SRT files download automatically with path display
+4. **Format Support**: MP4 and WAV recording formats both functional
+5. **Memory Efficiency**: Peak usage ≤1GB with continuous monitoring
+6. **Performance Standards**: 0.5s processing ratio with 95% accuracy
+
+### Integration Success Criteria
+- **Container Deployment**: `docker run` command starts working application
+- **Model Loading**: INT8 models load immediately without conversion delay
+- **File Processing**: Both upload and live recording work end-to-end
+- **SRT Generation**: Automatic download with clear path display
+- **Cross-platform**: Identical functionality on Windows/macOS/Linux
+- **User Experience**: Complete workflow without technical barriers
+
+### Emergency Protocols
+- **Build Failure**: Fallback to FP16 models if INT8 conversion fails
+- **Deploy Issues**: Clear error messages and troubleshooting documentation
+- **Performance Degradation**: Automatic fallback to CPU if GPU fails
+- **Memory Pressure**: Graceful degradation before system limits
+- **Integration Failure**: Rollback to last working container version
+
+**This compliance framework ensures TranscrevAI delivers a complete, containerized transcription solution optimized for INT8 performance, Portuguese Brazilian accuracy, and seamless user experience with automatic SRT downloads and format choice capabilities.**

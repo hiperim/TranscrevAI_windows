@@ -1,0 +1,326 @@
+ ╭─────────────────────────────────────────────────────────────────────────────────╮
+│ Ready to code?                                                                  │
+│                                                                                 │
+│ Here is Claude's plan:                                                          │
+│ ╭─────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Plano Completo: Cleanup de Atributos + Consolidação de Testes + Validação   │ │
+│ │ Full Pipeline                                                               │ │
+│ │                                                                             │ │
+│ │ 📋 Visão Geral                                                              │ │
+│ │                                                                             │ │
+│ │ Este plano executa 3 objetivos principais:                                  │ │
+│ │ 1. Análise e remoção de atributos 60% confidence em diarization.py          │ │
+│ │ 2. Consolidação de todos os testes em test_unit.py e remoção de arquivos    │ │
+│ │ deprecated                                                                  │ │
+│ │ 3. Validação completa com testes full pipeline usando áudio real            │ │
+│ │                                                                             │ │
+│ │ ---                                                                         │ │
+│ │ PARTE 1: Análise de Atributos 60% Confidence                                │ │
+│ │                                                                             │ │
+│ │ Atributos a Validar (6 itens em CPUSpeakerDiarization)                      │ │
+│ │                                                                             │ │
+│ │ 1. self.min_speakers (linhas 86, 92)                                        │ │
+│ │ 2. self.confidence_threshold (linhas 88, 94)                                │ │
+│ │ 3. self.analysis_thresholds (linhas 89, 95-100)                             │ │
+│ │ 4. self.available_methods (linha 103)                                       │ │
+│ │ 5. self.embedding_cache (linha 107)                                         │ │
+│ │ 6. Variável audio_quality (buscar localização)                              │ │
+│ │                                                                             │ │
+│ │ Método de Validação (Triple Grep)                                           │ │
+│ │                                                                             │ │
+│ │ Para cada atributo:                                                         │ │
+│ │ grep -n "self\.min_speakers" src/diarization.py                             │ │
+│ │ grep -r "\.min_speakers" src/ main.py tests/                                │ │
+│ │ grep -r "getattr.*min_speakers\|'min_speakers'" src/                        │ │
+│ │                                                                             │ │
+│ │ Decisão: Remover SE 0 usos encontrados (exceto definição)                   │ │
+│ │                                                                             │ │
+│ │ Execução                                                                    │ │
+│ │                                                                             │ │
+│ │ - Validar cada atributo sequencialmente                                     │ │
+│ │ - Remover um por vez + compilar após cada remoção                           │ │
+│ │ - Estimativa: -5 a -18 linhas                                               │ │
+│ │                                                                             │ │
+│ │ ---                                                                         │ │
+│ │ PARTE 2: Consolidação de Testes em test_unit.py                             │ │
+│ │                                                                             │ │
+│ │ 2.1 Análise de Arquivos de Teste Atuais                                     │ │
+│ │                                                                             │ │
+│ │ ✅ MANTER (Core Testing Files):                                              │ │
+│ │                                                                             │ │
+│ │ tests/                                                                      │ │
+│ │ ├── test_unit.py          # MAIN - Consolidated test suite                  │ │
+│ │ ├── conftest.py           # CORE - Pytest configuration                     │ │
+│ │ └── __init__.py           # Package marker                                  │ │
+│ │                                                                             │ │
+│ │ 📝 AVALIAR PARA CONSOLIDAÇÃO (Standalone Scripts):                          │ │
+│ │                                                                             │ │
+│ │ tests/                                                                      │ │
+│ │ ├── simple_validation.py      # Validation script - 98 linhas               │ │
+│ │ ├── performance_validation.py # Performance tests - analisar tamanho        │ │
+│ │ └── test_real_audio.py        # Real audio tests - analisar tamanho         │ │
+│ │                                                                             │ │
+│ │ 🗑️ REMOVER (Root Directory - Deprecated Test Files)                        │ │
+│ │                                                                             │ │
+│ │ / (root)                                                                    │ │
+│ │ ├── test_fase2_isolated.py           # Fase-specific test (deprecated)      │ │
+│ │ ├── test_fase3_compliance.py         # Fase-specific test (deprecated)      │ │
+│ │ ├── test_fase3_quick.py              # Quick test (deprecated)              │ │
+│ │ ├── test_cold_vs_warm.py             # Cold/warm comparison (redundant)     │ │
+│ │ ├── test_debug_quick.py              # Debug test (temporary)               │ │
+│ │ ├── test_ratio_calculation.py        # Ratio test (redundant)               │ │
+│ │ ├── test_all_audios_debug.py         # Debug test (temporary)               │ │
+│ │ ├── test_cold_warm_accuracy.py       # Accuracy test (redundant)            │ │
+│ │ ├── test_dual_system_accuracy.py     # System test (redundant)              │ │
+│ │ ├── test_debug_fallback.py           # Debug test (temporary)               │ │
+│ │ ├── test_audio_duration_analysis.py  # Analysis test (temporary)            │ │
+│ │ ├── test_adaptive_vad.py             # VAD test (redundant)                 │ │
+│ │ ├── test_diarization_accuracy.py     # Diarization test (redundant)         │ │
+│ │ └── test_diarization_debug.py        # Debug test (temporary)               │ │
+│ │ Total: 14 arquivos deprecated na raiz                                       │ │
+│ │                                                                             │ │
+│ │ 2.2 Estratégia de Consolidação                                              │ │
+│ │                                                                             │ │
+│ │ Passo 1: Analisar Conteúdo Útil                                             │ │
+│ │                                                                             │ │
+│ │ Para cada arquivo deprecated:                                               │ │
+│ │ - Ler arquivo completo                                                      │ │
+│ │ - Identificar testes/funcionalidades únicas não presentes em test_unit.py   │ │
+│ │ - Determinar se deve ser migrado ou descartado                              │ │
+│ │                                                                             │ │
+│ │ Passo 2: Migrar Testes Úteis para test_unit.py                              │ │
+│ │                                                                             │ │
+│ │ Candidatos para migração:                                                   │ │
+│ │ - simple_validation.py → Converter em TestSimpleValidation class            │ │
+│ │ - performance_validation.py → Converter em TestPerformanceValidation class  │ │
+│ │                                                                             │ │
+│ │ - test_real_audio.py → Converter em TestRealAudioTranscription class        │ │
+│ │                                                                             │ │
+│ │ Estrutura proposta em test_unit.py:                                         │ │
+│ │ class TestSimpleValidation(unittest.TestCase):                              │ │
+│ │     """Migrado de simple_validation.py"""                                   │ │
+│ │     def test_imports_working(self): ...                                     │ │
+│ │     def test_transcription_service_init(self): ...                          │ │
+│ │     def test_basic_transcription_d_speakers(self): ...                      │ │
+│ │     def test_basic_transcription_t_speakers(self): ...                      │ │
+│ │                                                                             │ │
+│ │ class TestPerformanceValidation(unittest.TestCase):                         │ │
+│ │     """Migrado de performance_validation.py"""                              │ │
+│ │     def test_audio_files_available(self): ...                               │ │
+│ │     def test_performance_targets_all_files(self): ...                       │ │
+│ │                                                                             │ │
+│ │ class TestRealAudioTranscription(unittest.TestCase):                        │ │
+│ │     """Migrado de test_real_audio.py"""                                     │ │
+│ │     def test_t2_speakers_transcription(self): ...                           │ │
+│ │     def test_benchmark_validation(self): ...                                │ │
+│ │                                                                             │ │
+│ │ Passo 3: Remover Arquivos Deprecated                                        │ │
+│ │                                                                             │ │
+│ │ Arquivos a deletar (14 arquivos):                                           │ │
+│ │ # Root directory test files                                                 │ │
+│ │ rm test_fase2_isolated.py                                                   │ │
+│ │ rm test_fase3_compliance.py                                                 │ │
+│ │ rm test_fase3_quick.py                                                      │ │
+│ │ rm test_cold_vs_warm.py                                                     │ │
+│ │ rm test_debug_quick.py                                                      │ │
+│ │ rm test_ratio_calculation.py                                                │ │
+│ │ rm test_all_audios_debug.py                                                 │ │
+│ │ rm test_cold_warm_accuracy.py                                               │ │
+│ │ rm test_dual_system_accuracy.py                                             │ │
+│ │ rm test_debug_fallback.py                                                   │ │
+│ │ rm test_audio_duration_analysis.py                                          │ │
+│ │ rm test_adaptive_vad.py                                                     │ │
+│ │ rm test_diarization_accuracy.py                                             │ │
+│ │ rm test_diarization_debug.py                                                │ │
+│ │                                                                             │ │
+│ │ Arquivos standalone a deletar (após consolidação):                          │ │
+│ │ # tests/ directory - after consolidation                                    │ │
+│ │ rm tests/simple_validation.py                                               │ │
+│ │ rm tests/performance_validation.py                                          │ │
+│ │ rm tests/test_real_audio.py                                                 │ │
+│ │                                                                             │ │
+│ │ 2.3 Estrutura Final de Testes                                               │ │
+│ │                                                                             │ │
+│ │ tests/                                                                      │ │
+│ │ ├── test_unit.py          # ✅ ALL TESTS CONSOLIDATED HERE                   │ │
+│ │ │   ├── TestFileManager                                                     │ │
+│ │ │   ├── TestProductionOptimizer                                             │ │
+│ │ │   ├── TestConcurrentSessionManager                                        │ │
+│ │ │   ├── TestResourceController                                              │ │
+│ │ │   ├── TestWhisperONNXManager                                              │ │
+│ │ │   ├── TestComplianceValidation                                            │ │
+│ │ │   ├── TestPhase95Integration                                              │ │
+│ │ │   ├── TestRealUserScenarios                                               │ │
+│ │ │   ├── TestComplianceAutoDiagnosis                                         │ │
+│ │ │   ├── TestBenchmarkValidation                                             │ │
+│ │ │   ├── TestRealisticPerformanceBenchmark                                   │ │
+│ │ │   ├── TestColdStartPipeline                                               │ │
+│ │ │   ├── TestWarmStartPipeline                                               │ │
+│ │ │   ├── TestServerHealthAndBenchmarks                                       │ │
+│ │ │   ├── TestInterfaceWorkflow                                               │ │
+│ │ │   ├── TestWebSocketTranscription                                          │ │
+│ │ │   ├── TestMainCompatibility                                               │ │
+│ │ │   ├── TestCrashResistance                                                 │ │
+│ │ │   ├── TestFullPipelineIntegration                                         │ │
+│ │ │   ├── TestSimpleValidation          # ⭐ NOVO (migrado)                    │ │
+│ │ │   ├── TestPerformanceValidation     # ⭐ NOVO (migrado)                    │ │
+│ │ │   └── TestRealAudioTranscription    # ⭐ NOVO (migrado)                    │ │
+│ │ ├── conftest.py           # ✅ Pytest config                                 │ │
+│ │ └── __init__.py           # ✅ Package marker                                │ │
+│ │                                                                             │ │
+│ │ Benefícios:                                                                 │ │
+│ │ - ✅ Single source of truth para todos os testes                             │ │
+│ │ - ✅ Fácil descoberta com pytest                                             │ │
+│ │ - ✅ Remoção de 17 arquivos deprecated (~3000-5000 linhas de código          │ │
+│ │ duplicado)                                                                  │ │
+│ │ - ✅ Melhor organização e manutenibilidade                                   │ │
+│ │                                                                             │ │
+│ │ ---                                                                         │ │
+│ │ PARTE 3: Validação Full Pipeline                                            │ │
+│ │                                                                             │ │
+│ │ 3.1 Testes a Executar (Após Consolidação)                                   │ │
+│ │                                                                             │ │
+│ │ # 1. Testes básicos de validação                                            │ │
+│ │ pytest tests/test_unit.py::TestSimpleValidation -v                          │ │
+│ │                                                                             │ │
+│ │ # 2. Testes de performance                                                  │ │
+│ │ pytest tests/test_unit.py::TestPerformanceValidation -v                     │ │
+│ │                                                                             │ │
+│ │ # 3. Full pipeline com todos os áudios                                      │ │
+│ │ pytest tests/test_unit.py::TestFullPipelineIntegration -v                   │ │
+│ │                                                                             │ │
+│ │ # 4. Cold/Warm start                                                        │ │
+│ │ pytest tests/test_unit.py::TestColdStartPipeline -v                         │ │
+│ │ pytest tests/test_unit.py::TestWarmStartPipeline -v                         │ │
+│ │                                                                             │ │
+│ │ # 5. Real audio transcription                                               │ │
+│ │ pytest tests/test_unit.py::TestRealAudioTranscription -v                    │ │
+│ │                                                                             │ │
+│ │ # 6. Tudo de uma vez                                                        │ │
+│ │ pytest tests/test_unit.py -v                                                │ │
+│ │                                                                             │ │
+│ │ 3.2 Áudios de Teste                                                         │ │
+│ │                                                                             │ │
+│ │ data/recordings/                                                            │ │
+│ │ ├── d.speakers.wav    # 14s, 2 speakers                                     │ │
+│ │ ├── t.speakers.wav    # 21s, 2 speakers                                     │ │
+│ │ ├── q.speakers.wav    # 87s, 3 speakers                                     │ │
+│ │ └── t2.speakers.wav   # 64s, 3 speakers                                     │ │
+│ │                                                                             │ │
+│ │ 3.3 Métricas de Sucesso                                                     │ │
+│ │                                                                             │ │
+│ │ Transcription:                                                              │ │
+│ │ - ✅ Ratio ≤ 0.5 para todos os 4 arquivos                                    │ │
+│ │ - ✅ Texto transcrito não vazio                                              │ │
+│ │ - ✅ Sem erros/exceções                                                      │ │
+│ │                                                                             │ │
+│ │ Diarization:                                                                │ │
+│ │ - ✅ Speakers detectados > 0                                                 │ │
+│ │ - ✅ Ratio ≤ 0.3 (target)                                                    │ │
+│ │                                                                             │ │
+│ │ Sistema:                                                                    │ │
+│ │ - ✅ Todos os imports funcionam                                              │ │
+│ │ - ✅ Nenhuma regressão após cleanup                                          │ │
+│ │                                                                             │ │
+│ │ ---                                                                         │ │
+│ │ EXECUÇÃO: Ordem e Timing                                                    │ │
+│ │                                                                             │ │
+│ │ Fase A: Cleanup de Atributos (15-20 min)                                    │ │
+│ │                                                                             │ │
+│ │ 1. Triple Grep para 6 atributos (5 min)                                     │ │
+│ │ 2. Remover atributos confirmed unused (5 min)                               │ │
+│ │ 3. Compilar e validar (2 min)                                               │ │
+│ │                                                                             │ │
+│ │ Fase B: Consolidação de Testes (30-40 min)                                  │ │
+│ │                                                                             │ │
+│ │ 4. Analisar 3 arquivos standalone para migração (10 min)                    │ │
+│ │ 5. Migrar conteúdo útil para test_unit.py (15 min)                          │ │
+│ │   - Criar TestSimpleValidation                                              │ │
+│ │   - Criar TestPerformanceValidation                                         │ │
+│ │   - Criar TestRealAudioTranscription                                        │ │
+│ │ 6. Deletar 14 arquivos deprecated da raiz (2 min)                           │ │
+│ │ 7. Deletar 3 arquivos standalone do tests/ (2 min)                          │ │
+│ │ 8. Validar estrutura final (5 min)                                          │ │
+│ │                                                                             │ │
+│ │ Fase C: Validação Full Pipeline (20-30 min)                                 │ │
+│ │                                                                             │ │
+│ │ 9. Executar TestSimpleValidation (3 min)                                    │ │
+│ │ 10. Executar TestPerformanceValidation (5 min)                              │ │
+│ │ 11. Executar TestFullPipelineIntegration (10 min)                           │ │
+│ │ 12. Executar TestColdStartPipeline + TestWarmStartPipeline (10 min)         │ │
+│ │ 13. Executar TestRealAudioTranscription (5 min)                             │ │
+│ │                                                                             │ │
+│ │ Fase D: Documentação (10 min)                                               │ │
+│ │                                                                             │ │
+│ │ 14. Criar .claude/FASE_6_CONSOLIDATION_AND_VALIDATION.md                    │ │
+│ │                                                                             │ │
+│ │ Tempo Total: 75-100 minutos (~1.5 horas)                                    │ │
+│ │                                                                             │ │
+│ │ ---                                                                         │ │
+│ │ DOCUMENTAÇÃO DE RESULTADOS                                                  │ │
+│ │                                                                             │ │
+│ │ Arquivo: .claude/FASE_6_CONSOLIDATION_AND_VALIDATION.md                     │ │
+│ │                                                                             │ │
+│ │ Conteúdo:                                                                   │ │
+│ │ ## Atributos Removidos                                                      │ │
+│ │ - Lista de atributos 60% confidence removidos                               │ │
+│ │ - Validação grep para cada um                                               │ │
+│ │                                                                             │ │
+│ │ ## Arquivos Deletados                                                       │ │
+│ │ - 14 test files deprecated (raiz)                                           │ │
+│ │ - 3 standalone test files (tests/)                                          │ │
+│ │ - Total: ~3000-5000 linhas de código duplicado removido                     │ │
+│ │                                                                             │ │
+│ │ ## Testes Migrados                                                          │ │
+│ │ - TestSimpleValidation (simple_validation.py)                               │ │
+│ │ - TestPerformanceValidation (performance_validation.py)                     │ │
+│ │ - TestRealAudioTranscription (test_real_audio.py)                           │ │
+│ │                                                                             │ │
+│ │ ## Resultados de Testes                                                     │ │
+│ │ - Transcription ratios por arquivo                                          │ │
+│ │ - Diarization speakers detectados                                           │ │
+│ │ - Performance metrics                                                       │ │
+│ │ - Comparação antes/depois cleanup                                           │ │
+│ │                                                                             │ │
+│ │ ---                                                                         │ │
+│ │ CRITÉRIOS DE APROVAÇÃO                                                      │ │
+│ │                                                                             │ │
+│ │ ✅ Aprovação SE:                                                             │ │
+│ │                                                                             │ │
+│ │ 1. Todos os testes consolidados em test_unit.py passam                      │ │
+│ │ 2. 17 arquivos deprecated deletados com sucesso                             │ │
+│ │ 3. Performance ≥ baseline (ratio ≤ 0.5 transcription)                       │ │
+│ │ 4. Nenhuma funcionalidade quebrada                                          │ │
+│ │ 5. Código compila sem erros                                                 │ │
+│ │                                                                             │ │
+│ │ ⚠️ Rollback SE:                                                             │ │
+│ │                                                                             │ │
+│ │ - Qualquer teste crítico falha                                              │ │
+│ │ - Funcionalidade essencial quebrada                                         │ │
+│ │ - Performance degradada > 20%                                               │ │
+│ │                                                                             │ │
+│ │ ---                                                                         │ │
+│ │ BENEFÍCIOS ESPERADOS                                                        │ │
+│ │                                                                             │ │
+│ │ Redução de Código:                                                          │ │
+│ │                                                                             │ │
+│ │ - diarization.py: -5 a -18 linhas (atributos unused)                        │ │
+│ │ - 17 test files: -3000 a -5000 linhas (duplicação removida)                 │ │
+│ │ - Total estimado: -3005 a -5018 linhas                                      │ │
+│ │                                                                             │ │
+│ │ Manutenibilidade:                                                           │ │
+│ │                                                                             │ │
+│ │ - ✅ Single source of truth (test_unit.py)                                   │ │
+│ │ - ✅ Fácil descoberta de testes                                              │ │
+│ │ - ✅ Menos confusão sobre qual teste usar                                    │ │
+│ │                                                                             │ │
+│ │ Performance:                                                                │ │
+│ │                                                                             │ │
+│ │ - ✅ Pytest discovery mais rápido                                            │ │
+│ │ - ✅ Menos arquivos para manter                                              │ │
+│ │                                                                             │ │
+│ │ Organização:                                                                │ │
+│ │                                                                             │ │
+│ │ - ✅ tests/ directory limpo (3 files vs 6 files)                             │ │
+│ │ - ✅ Root directory limpo (sem test_*.py na raiz)                            │ │
+│ ╰─────────────────────────────────────────────────────────────────────────────╯

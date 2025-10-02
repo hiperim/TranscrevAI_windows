@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/TranscrevAI_windows/src/**)",
+      "Read(//c/TranscrevAI_windows/**)",
+      "Bash(python:*)",
+      "Bash(timeout:*)",
+      "Bash(source:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,163 @@
+AUTO UNLOAD MODELS COMO VARIAVEL DE AMBIENTE PARA DOCKER FILE COM MODEL:
+Como a configuração de AUTO_UNLOAD_MODELS já foi adicionada em main.py, mas é preciso passá-la para onde a transcrição acontece. Como main.py está usando
+  MultiProcessingTranscrevAI, a configuração precisa ser global ou passada através do sistema. A abordagem mais simples é tornar AUTO_UNLOAD_MODELS uma variável de
+  ambiente que será lida em dual_whisper_system.py.
+
+Sprint 2 Dia 2 (Opcional, se performance atual insuficiente):
+  - Batch Processing (12.5x speedup)
+  - Shared Memory multiprocessing
+
+
+
+ Sprint 3 - Plano Detalhado
+
+  Dia 1: Fine-Tuned Model + Testing
+
+  1. Atualizar para fine-tuned PT-BR model (30 min)
+  2. Executar full test suite (30 min)
+  3. Load testing com locust/artillery (1 hora)
+  4. Validar accuracy improvement (30 min)
+
+  Dia 2: Error Handling + Documentation
+
+  1. Error recovery testing (1 hora)
+  2. Production deployment guide (1 hora)
+  3. Performance tuning guide (30 min)
+
+  Deliverable: Sistema production-ready com:
+  - ✅ 18% melhor accuracy (fine-tuned PT-BR)
+  - ✅ Validado sob 50+ concurrent requests
+  - ✅ Error handling testado
+  - ✅ Documentation completa
+
+
+
+  - Implementar diferenciação entre PT-BR, PT-EU, PT-Africano
+  - MFCCs são language-agnostic (não precisam ajuste específico)
+  - Foco em melhorar features gerais ao invés de modelo PT-específico
+  - Implementar fine-tuning com dados PT-BR (pesquisar na web por dados úteis para tanto e atualize o plano)
+
+
+Fase 3: Fine-Tuning com Dados PT-BR
+
+### 3.1 Datasets Disponíveis (2024-2025)
+
+#### Dataset 1: MuPe Life Stories (RECOMENDADO)
+- **Tamanho**: 365 horas, 289 entrevistas
+- **Speakers**: Ampla variedade (idade, educação, sotaques regionais)
+- **Diarização**: Labels automáticos do pyannote-audio (Cohen's Kappa 0.947)
+- **Qualidade**: "Almost perfect" para treinar ASR/TTS
+- **Acesso**: Público, disponível para download
+- **URL**: https://sites.google.com/view/mupe-life-stories
+
+**Uso para TranscrevAI**:
+```python
+# Script de fine-tuning (futuro)
+# 1. Download do dataset
+# 2. Extrair MFCCs + deltas de todos os 365h
+# 3. Treinar modelo de clustering específico para PT-BR
+# 4. Salvar centroides ou modelo treinado
+```
+
+#### Dataset 2: NURC-SP Audio Corpus
+- **Tamanho**: 239.30 horas
+- **Speakers**: 401 speakers (204F, 197M)
+- **Sotaque**: Paulistano (São Paulo)
+- **Diarização**: Automática via WhisperX + pyannote
+- **Acesso**: Público
+
+#### Dataset 3: CORAA (Córpus de Áudios)
+- **Tamanho**: ~239.30 horas, 328 áudios
+- **Transcrição**: WhisperX large-v2
+- **Diarização**: pyannote-audio
+- **Acesso**: Público
+- **URL**: https://sites.google.com/view/tarsila-c4ai/coraa-versions
+
+### 3.2 Estratégia de Fine-Tuning
+
+**Opção A: Feature Statistics (Simples)**
+Coletar estatísticas de MFCCs de speakers PT-BR conhecidos
+
+```python
+# src/diarization_ptbr_stats.py (novo arquivo)
+
+class PTBRSpeakerStats:
+    """Pre-computed statistics from PT-BR datasets"""
+
+    def __init__(self):
+        # Pre-computed from MuPe dataset
+        self.ptbr_mfcc_mean = np.array([...])  # 20D
+        self.ptbr_mfcc_std = np.array([...])   # 20D
+
+        # Typical speaker variance in PT-BR
+        self.within_speaker_variance = 0.15
+        self.between_speaker_variance = 0.45
+
+    def normalize_features(self, features: np.ndarray) -> np.ndarray:
+        """Normalize using PT-BR statistics"""
+        return (features - self.ptbr_mfcc_mean) / self.ptbr_mfcc_std
+
+# Usage in _clustering_diarization:
+if language == "pt-br":
+    ptbr_stats = PTBRSpeakerStats()
+    features_scaled = ptbr_stats.normalize_features(features)
+```
+
+**Opção B: Speaker Centroids (Intermediário)**
+Treinar centroides de speakers típicos PT-BR
+
+```python
+# Pre-train speaker centroids offline
+# 1. Extract MFCCs from 100-200 speakers in MuPe
+# 2. Cluster into 50-100 "typical voices"
+# 3. Save centroides
+# 4. At runtime: Compare to typical voices for better initialization
+```
+
+**Opção C: Full Model Fine-Tuning (Avançado)**
+Treinar modelo de embedding específico para PT-BR
+- Requer PyTorch + embeddings (pyannote)
+- Fora do escopo atual (Fase 6 do plano original)
+
+### 3.3 Implementação Recomendada (Opção A)
+
+**Passo 1**: Download de amostra do MuPe (10h)
+```bash
+# Script: scripts/download_ptbr_data.sh
+wget https://[mupe-dataset-url]/sample_10h.tar.gz
+tar -xzf sample_10h.tar.gz -C data/ptbr_training/
+```
+
+**Passo 2**: Extrair estatísticas
+```python
+# Script: scripts/compute_ptbr_stats.py
+import librosa
+import numpy as np
+from pathlib import Path
+
+audio_files = Path("data/ptbr_training").glob("*.wav")
+all_mfccs = []
+
+for audio_file in audio_files:
+    y, sr = librosa.load(audio_file, sr=16000)
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
+    all_mfccs.append(mfccs)
+
+all_mfccs = np.hstack(all_mfccs)  # [20 x total_frames]
+
+# Save statistics
+ptbr_stats = {
+    'mfcc_mean': np.mean(all_mfccs, axis=1),
+    'mfcc_std': np.std(all_mfccs, axis=1),
+    'mfcc_min': np.min(all_mfccs, axis=1),
+    'mfcc_max': np.max(all_mfccs, axis=1)
+}
+
+np.save('src/ptbr_mfcc_stats.npy', ptbr_stats)
+```
+
+**Passo 3**: Usar estatísticas na diarização
+```python
+# Em src/diarization.py, método _clustering_diler()
+    features_scaled = scaler.fit_transform(features)
+```
