@@ -1,61 +1,66 @@
-# Multi-stage Docker build for TranscrevAI
-FROM python:3.11-slim as base
+# TranscrevAI Docker Container - Production Ready (CPU-Only)
+# Universal Portuguese Brazilian transcription and diarization
+# Compatible with: Windows/Linux/macOS (including Silicon)
+# Minimum specs: 4 cores, 8GB RAM
+
+FROM python:3.11-slim
 
 # Set environment variables
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    DEBIAN_FRONTEND=noninteractive
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    libsndfile1 \
-    libasound2-dev \
-    portaudio19-dev \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
-RUN useradd --create-home --shell /bin/bash transcrevai
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONIOENCODING=utf-8
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first (better Docker caching)
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    curl \
+    wget \
+    git \
+    build-essential \
+    cmake \
+    pkg-config \
+    libsndfile1 \
+    portaudio19-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
 COPY requirements.txt .
 
-# Create virtual environment and install dependencies
-RUN python -m venv /app/venv && \
-    /app/venv/bin/pip install --upgrade pip && \
-    /app/venv/bin/pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Add venv to PATH
-ENV PATH="/app/venv/bin:$PATH"
+# FASE 10: Pre-download models during build to eliminate cold start download time
+RUN python -c "from huggingface_hub import snapshot_download; \
+    snapshot_download(repo_id='Systran/faster-whisper-medium', \
+    cache_dir='/root/.cache/huggingface'); \
+    print('✓ Faster-Whisper model pre-downloaded to cache')"
 
-# Copy application code
-COPY . .
+# Copy application source code
+COPY src/ ./src/
+COPY main.py .
+COPY setup_models.py .
+COPY config/ ./config/
 
-# Create necessary directories with proper permissions
-RUN mkdir -p /app/data/{inputs,outputs,transcripts,recordings,logs,models,temp,processed} && \
-    chown -R transcrevai:transcrevai /app
+# Create necessary directories
+RUN mkdir -p data/uploads data/transcripts data/srt data/recordings temp
 
-# Create entrypoint script
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Pre-download and convert models for immediate use
+RUN python setup_models.py
 
-# Switch to non-root user
-USER transcrevai
+# Set proper permissions
+RUN chmod +x main.py
+
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Set entrypoint
-ENTRYPOINT ["/entrypoint.sh"]
-
-# Default command
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start command
+CMD ["python", "main.py"]

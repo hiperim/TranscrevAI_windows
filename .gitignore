@@ -43,11 +43,25 @@ Thumbs.db
 backups/
 
 # Proposed alterations
-propositions/
+
 
 # Preference files
-preferences.txt
+.claude/
+gemini-aider-workspace/
 *.prefs
 config/local_*
 .env.local
-fixes.txt
+.aider*
+.env
+.specify
+archive/
+backup_src_cleanup_20250924_121143/
+dev_tools/
+examples/
+static/
+.spec
+aider.conf.yml
+gemini.md
+mcp_server.py
+
+

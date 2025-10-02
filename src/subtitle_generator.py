@@ -5,12 +5,77 @@ import os
 import time
 import uuid
 from pathlib import Path
-from src.file_manager import FileManager
-from src.logging_setup import setup_app_logging
+from .file_manager import FileManager
+from .logging_setup import setup_app_logging
 import numpy as np
 
 # Use proper logging setup
 logger = setup_app_logging(logger_name="transcrevai.subtitle_generator")
+
+def format_time_srt(seconds):
+    """Convert seconds to SRT time format (HH:MM:SS,mmm)"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int((seconds % 1) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+def generate_srt_simple(transcription_segments):
+    """
+    Generate SRT content from transcription segments - SIMPLE VERSION
+
+    Args:
+        transcription_segments: List of segments with start, end, text, and speaker
+
+    Returns:
+        str: SRT formatted content
+    """
+    logger.info(f"[FASE 10] generate_srt_simple called with: {type(transcription_segments)}")
+
+    if not transcription_segments:
+        logger.warning(f"[FASE 10] Empty transcription_segments received")
+        return ""
+
+    logger.info(f"[FASE 10] Segments count: {len(transcription_segments)}")
+
+    if transcription_segments:
+        logger.debug(f"[FASE 10] First segment: {transcription_segments[0]}")
+
+    srt_content = []
+    segment_counter = 0
+
+    for i, segment in enumerate(transcription_segments, 1):
+        start_time = segment.get('start', 0)
+        end_time = segment.get('end', 0)
+        text = segment.get('text', '').strip()
+        speaker = segment.get('speaker', 'Speaker_1')
+
+        logger.debug(f"[FASE 10] Segment {i}: start={start_time}, end={end_time}, text='{text[:50] if text else ''}', speaker={speaker}")
+
+        if not text:
+            logger.debug(f"[FASE 10] Skipping segment {i} - empty text")
+            continue
+
+        segment_counter += 1
+
+        # Format: segment number
+        srt_content.append(str(segment_counter))
+
+        # Format: start --> end
+        start_srt = format_time_srt(start_time)
+        end_srt = format_time_srt(end_time)
+        srt_content.append(f"{start_srt} --> {end_srt}")
+
+        # Format: speaker: text
+        srt_content.append(f"{speaker}: {text}")
+
+        # Empty line between segments
+        srt_content.append("")
+
+    result = "\n".join(srt_content)
+    logger.info(f"[FASE 10] Generated SRT: {len(result)} characters, {segment_counter} segments")
+
+    return result
 
 async def generate_srt(transcription_data, diarization_segments, filename="output.srt"):
     """
@@ -39,12 +104,12 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
         logger.info(f"SRT Generation - Transcription data: {len(transcription_data)} items")
         logger.info(f"SRT Generation - Diarization segments: {len(diarization_segments)} items")
         
-        if transcription_data:
+        if transcription_data is not None and transcription_data:
             logger.info(f"First transcription item: {transcription_data[0] if transcription_data else 'None'}")
 
-        # If filename contains directory path, use provided path
+        # If filename contains directory path (not just current dir), use provided path
         dirname = str(Path(filename).parent)
-        if dirname:
+        if dirname and dirname != "." and dirname != "":
             output_path = filename
             try:
                 Path(dirname).mkdir(parents=True, exist_ok=True)
@@ -73,7 +138,7 @@ async def generate_srt(transcription_data, diarization_segments, filename="outpu
 
             try:
                 # ENHANCED: Process transcription data with intelligent synchronization
-                if diarization_segments:
+                if diarization_segments is not None and diarization_segments:
                     # Use enhanced diarization-transcription alignment
                     combined_segments = await _align_transcription_with_diarization(
                         transcription_data, diarization_segments
@@ -332,7 +397,7 @@ async def _align_transcription_with_diarization(transcription_data, diarization_
                 elif overlap_info["coverage_score"] >= 0.6:
                     include_segment = True
                 
-                if include_segment:
+                if include_segment is not None and include_segment:
                     text = segment["text"].strip()
                     if text and len(text) > 1:  # Avoid single characters
                         segment_texts.append({
@@ -349,7 +414,7 @@ async def _align_transcription_with_diarization(transcription_data, diarization_
             segment_texts.sort(key=lambda x: x["start"])
             
             # Create combined segment
-            if segment_texts:
+            if segment_texts is not None and segment_texts:
                 # Extract just the text strings for joining
                 text_strings = [seg["text"] for seg in segment_texts]
                 combined_text = " ".join(text_strings)

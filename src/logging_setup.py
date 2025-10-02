@@ -64,6 +64,6 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
 
 def get_logger(name=None):
     """Get application logger for specific module"""
-    if name:
+    if name is not None and name:
         return logging.getLogger(f"transcrevai.{name}")
     return logging.getLogger("transcrevai")
