@@ -28,71 +28,34 @@ def _ensure_directories_created():
         directory.mkdir(parents=True, exist_ok=True)
 
 # Whisper model configuration - Docker-compatible
-WHISPER_MODEL_DIR = Path(os.getenv('WHISPER_MODEL_DIR', str(DATA_DIR / "models" / "whisper")))
-
-# Whisper models - Only medium models for supported languages
-WHISPER_MODELS = {
-    "pt": "medium",  # Portuguese - medium model
-    "en": "medium",  # English - medium model
-    "es": "medium"   # Spanish - medium model
-}
+# Model name for faster-whisper (will download and cache automatically)
+# SPRINT 3: CTranslate2-optimized medium model with enhanced PT-BR prompts
+# - Default: "medium" (CTranslate2 format, compatible with faster-whisper)
+# - Enhancement: PT-BR accuracy improved via adaptive prompts and VAD
+# Note: pierreguillou/whisper-medium-portuguese requires conversion to CT2 format
+WHISPER_MODEL_PATH = os.getenv('WHISPER_MODEL_PATH', "medium")
 
 
-# CRITICAL FIX: Enhanced Whisper configuration with adaptive settings
+# Whisper configuration - PT-BR only
+# SPRINT 3: Enhanced with PT-BR specific optimizations
 WHISPER_CONFIG = {
     "word_timestamps": True,
     "condition_on_previous_text": False,  # Better for conversations
-    "language_configs": {
-        "pt": {
-            "temperature": 0.0,
-            "best_of": 1,
-            "beam_size": 1,  # Reduced for 50% speed improvement
-            "patience": 0.5,  # Faster decisions
-            "length_penalty": 1.0,
-            "no_speech_threshold": 0.6,  # Less silence processing
-            "initial_prompt": "Transcrição precisa em português brasileiro com pontuação e acentuação corretas."
-        },
-        "en": {
-            "temperature": 0.0,
-            "best_of": 1,
-            "beam_size": 1,  # Reduced for 50% speed improvement
-            "patience": 0.5,  # Faster decisions
-            "length_penalty": 1.0,
-            "no_speech_threshold": 0.6,  # Less silence processing
-            "initial_prompt": "Accurate English transcription with proper punctuation and grammar."
-        },
-        "es": {
-            "temperature": 0.0,
-            "best_of": 1,
-            "beam_size": 1,  # Reduced for 50% speed improvement
-            "patience": 0.5,  # Faster decisions
-            "length_penalty": 1.0,
-            "no_speech_threshold": 0.6,  # Less silence processing
-            "initial_prompt": "Transcripción precisa en español con puntuación correcta y acentuación adecuada."
-        }
-    }
+    "language": "pt",  # Fixed to Portuguese Brazilian
+    "initial_prompt": "Transcrição em português brasileiro. Pontuação correta. Acentuação correta. Maiúsculas em nomes próprios."
 }
 
-# CRITICAL FIX: Adaptive prompts based on audio complexity and language
+# Adaptive prompts for PT-BR based on audio complexity
+# SPRINT 3: Enhanced prompts for better PT-BR accuracy
 ADAPTIVE_PROMPTS = {
-    "pt": {
-        "neutral": "Transcrição precisa em português brasileiro com pontuação e acentuação corretas.",
-        "lecture": "Apresentação ou palestra em português brasileiro com pontuação correta.",
-        "conversation": "Diálogo ou conversa em português brasileiro entre falantes com identificação precisa.",
-        "complex_dialogue": "Conversa complexa em português brasileiro com múltiplas interações e sobreposições."
-    },
-    "en": {
-        "neutral": "Accurate English transcription with proper punctuation.",
-        "lecture": "Individual presentation or lecture in English with correct punctuation.",
-        "conversation": "Dialogue or conversation in English between speakers with precise identification.",
-        "complex_dialogue": "Complex conversation in English with multiple interactions and overlaps."
-    },
-    "es": {
-        "neutral": "Transcripción precisa en español con puntuación correcta.",
-        "lecture": "Presentación individual en español con puntuación correcta.",
-        "conversation": "Diálogo o conversación en español entre hablantes.",
-        "complex_dialogue": "Conversación compleja en español con múltiples interacciones."
-    }
+    "general": "Português brasileiro. Pontuação, acentuação e maiúsculas corretas. Transcrição precisa.",
+    "finance": "Português brasileiro financeiro. Termos: balanço, lucro, receita, despesa, EBITDA, ROI, fluxo de caixa, juros, investimento, ativo, passivo.",
+    "it": "Português brasileiro técnico. Termos: API, banco de dados, SQL, Python, JavaScript, servidor, nuvem, AWS, Azure, Docker, deploy, commit, merge.",
+    "medical": "Português brasileiro médico. Termos: diagnóstico, tratamento, paciente, sintoma, medicação, anatomia, exame, prescrição, patologia.",
+    "legal": "Português brasileiro jurídico. Termos: petição, contrato, jurisprudência, liminar, acórdão, legislação, processo, réu, autor, sentença.",
+    "lecture": "Palestra em português brasileiro. Discurso formal. Pontuação clara. Nomes próprios com maiúsculas.",
+    "conversation": "Conversa em português brasileiro. Múltiplos falantes. Linguagem coloquial. Identificação precisa.",
+    "complex_dialogue": "Diálogo complexo em português brasileiro. Sobreposições. Interrupções. Transições rápidas entre falantes."
 }
 
 # Real-time processing configuration
@@ -100,7 +63,7 @@ REALTIME_CONFIG = {
     "performance": {
         "chunk_duration": 1.5,  # Reduced for faster processing
         "max_processing_time": 20.0,  # Reduced time limit
-        "memory_limit_mb": 512
+        "memory_limit_mb": 256  # Reduzido para hardware limitado
     },
     "quality": {
         "sample_rate": 16000,
@@ -109,38 +72,15 @@ REALTIME_CONFIG = {
     }
 }
 
-# CRITICAL FIX: Processing profiles for different use cases
-PROCESSING_PROFILES = {
-    "realtime": {
-        "target_latency": 0.3,  # Ultra-fast response
-        "quality_priority": "speed",
-        "transcription_model": "medium",
-        "diarization_method": "simple",
-        "preprocessing": "minimal",
-        "whisper_beam_size": 1,
-        "whisper_patience": 0.3,
-        "diarization_window": 0.6
-    },
-    "balanced": {
-        "target_latency": 1.0,  # Improved balance
-        "quality_priority": "balanced", 
-        "transcription_model": "medium",
-        "diarization_method": "standard",
-        "preprocessing": "standard",
-        "whisper_beam_size": 1,
-        "whisper_patience": 0.5,
-        "diarization_window": 0.8
-    },
-    "quality": {
-        "target_latency": 2.0,  # Still faster than before
-        "quality_priority": "accuracy",
-        "transcription_model": "medium",
-        "diarization_method": "advanced",
-        "preprocessing": "advanced",
-        "whisper_beam_size": 2,
-        "whisper_patience": 1.0,
-        "diarization_window": 1.0
-    }
+# Processing configuration - Fixed optimized settings for PT-BR medium model
+PROCESSING_CONFIG = {
+    "transcription_model": "medium",  # Fixed medium model
+    "language": "pt",  # Fixed Portuguese Brazilian
+    "whisper_beam_size": 1,  # Optimized for speed
+    "whisper_patience": 0.5,  # Balanced setting
+    "diarization_method": "standard",  # Standard diarization
+    "preprocessing": "standard",  # Standard preprocessing
+    "target_latency": 1.0  # Balanced latency
 }
 
 # Audio processing configuration
@@ -169,6 +109,14 @@ DIARIZATION_CONFIG = {
         "multi_speaker": 0.4,        # REVERTED from 0.6
         "short_audio_threshold": 5.0  # REVERTED from 10.0
     }
+}
+
+# VAD (Voice Activity Detection) configuration
+VAD_CONFIG = {
+    "threshold": 0.3,               # FASE 10: Mais sensível (0.5→0.3) para detectar fala suave
+    "min_speech_duration_ms": 100,  # FASE 10: Reduzido (250→100) para aceitar falas curtas
+    "min_silence_duration_ms": 300, # FASE 10: Reduzido (1000→300) menos pausa necessária
+    "speech_pad_ms": 200            # Padding around detected speech
 }
 
 # Logging configuration

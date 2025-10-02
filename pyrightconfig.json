@@ -1,0 +1,14 @@
+{
+    "exclude": [
+        "backups",
+        "venv",
+        "__pycache__",
+        "**/*.pyc"
+    ],
+    "ignore": [
+        "backups/**",
+        "venv/**"
+    ],
+    "pythonVersion": "3.11",
+    "typeCheckingMode": "basic"
+}

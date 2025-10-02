@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TranscrevAI - Simple Transcription</title>
+    <title>TranscrevAI - Transcrição e Diarização Inteligente</title>
     <style>
         * {
             margin: 0;
@@ -26,7 +26,7 @@
             border-radius: 20px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.1);
             padding: 40px;
-            max-width: 600px;
+            max-width: 700px;
             width: 100%;
         }
 
@@ -45,6 +45,35 @@
             font-size: 1.1rem;
         }
 
+        .tabs {
+            display: flex;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #e1e5e9;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .tab.active {
+            border-bottom-color: #667eea;
+            color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
         .controls {
             display: flex;
             flex-direction: column;
@@ -57,6 +86,7 @@
             gap: 15px;
             justify-content: center;
             flex-wrap: wrap;
+            align-items: center;
         }
 
         .select {
@@ -65,7 +95,6 @@
             border-radius: 8px;
             font-size: 1rem;
             background: white;
-            margin: 0 0.5rem;
         }
 
         .button {
@@ -76,7 +105,7 @@
             cursor: pointer;
             transition: all 0.3s ease;
             font-weight: 600;
-            min-width: 100px;
+            min-width: 120px;
         }
 
         .button:hover {
@@ -84,13 +113,14 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
 
-        .record-btn {
-            background: linear-gradient(45deg, #66bb6a, #43a047);
-            color: white;
+        .button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
         }
 
-        .pause-btn {
-            background: linear-gradient(45deg, #ffa726, #fb8c00);
+        .record-btn {
+            background: linear-gradient(45deg, #66bb6a, #43a047);
             color: white;
         }
 
@@ -99,59 +129,65 @@
             color: white;
         }
 
-        .button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
+        .upload-btn {
+            background: linear-gradient(45deg, #42a5f5, #1e88e5);
+            color: white;
+        }
+
+        .download-btn {
+            background: linear-gradient(45deg, #ab47bc, #8e24aa);
+            color: white;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .file-drop-zone {
+            border: 3px dashed #e1e5e9;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+
+        .file-drop-zone:hover {
+            border-color: #667eea;
+            background-color: rgba(102, 126, 234, 0.05);
+        }
+
+        .file-drop-zone.dragover {
+            border-color: #667eea;
+            background-color: rgba(102, 126, 234, 0.1);
         }
 
         .status {
-            text-align: center;
-            padding: 15px;
             background: #f8f9fa;
-            border-radius: 8px;
-            margin: 20px 0;
-            font-weight: 500;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: none;
         }
 
-        .waveform {
-            height: 80px;
-            background: #f1f3f4;
-            border-radius: 8px;
-            margin: 20px 0;
-            position: relative;
-            overflow: hidden;
+        .status.show {
+            display: block;
         }
 
-        .waveform-content {
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #666;
-        }
-
-        .progress {
-            margin: 20px 0;
-        }
-
-        .progress-item {
-            margin-bottom: 15px;
-        }
-
-        .progress-label {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 5px;
-            font-weight: 500;
+        .status h3 {
+            margin-bottom: 10px;
+            color: #333;
         }
 
         .progress-bar {
             width: 100%;
-            height: 8px;
+            height: 20px;
             background: #e1e5e9;
             border-radius: 4px;
-            overflow: hidden;
+            overflow: visible;
+            margin: 10px 0;
+            position: relative;
         }
 
         .progress-fill {
@@ -161,529 +197,533 @@
             transition: width 0.3s ease;
         }
 
-        .results {
-            max-height: 300px;
-            overflow-y: auto;
-            background: #f8f9fa;
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            right: 10px;
+            transform: translateY(-50%);
+            font-size: 0.8rem;
+            font-weight: bold;
+            color: #333;
+            z-index: 1;
+        }
+
+        .status-main {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        .status-details {
+            font-size: 0.9rem;
+            color: #666;
+            line-height: 1.4;
+        }
+
+        .first-time-notice {
+            background: linear-gradient(135deg, #e3f2fd, #f3e5f5);
+            border: 1px solid #667eea;
             border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+            font-size: 0.9rem;
+            color: #333;
+        }
+
+        .first-time-notice .notice-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #667eea;
+        }
+
+        .results {
+            background: #f8f9fa;
+            border-radius: 10px;
             padding: 20px;
             margin-top: 20px;
-            opacity: 0;
-            transform: translateY(20px);
-            transition: all 0.3s ease;
+            display: none;
         }
 
-        .results.visible {
-            opacity: 1;
-            transform: translateY(0);
+        .results.show {
+            display: block;
         }
 
-        .notification {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: #4caf50;
-            color: white;
-            padding: 15px 20px;
+        .segment {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
             border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            opacity: 0;
-            transform: translateX(100%);
-            transition: all 0.3s ease;
-            z-index: 1000;
-            max-width: 400px;
+            border-left: 4px solid #667eea;
         }
 
-        .notification.show {
-            opacity: 1;
-            transform: translateX(0);
+        .speaker {
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
         }
 
-        .notification.error {
-            background: #f44336;
+        .text {
+            color: #333;
+            line-height: 1.6;
         }
 
-        /* Responsive design */
-        @media (max-width: 768px) {
-            .container {
-                padding: 20px;
-                margin: 10px;
-            }
-            
-            h1 {
-                font-size: 2rem;
-            }
-            
-            .control-row {
-                flex-direction: column;
-            }
-            
-            .select, .button {
-                width: 100%;
-            }
+        .timestamp {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>TranscrevAI</h1>
-        <p class="subtitle">Transcrição de Áudio com Diarização de Falantes</p>
-        
-        <div class="controls">
-            <div class="control-row">
-                <select id="language" class="select">
-                    <option value="" disabled selected>[Select Language]</option>
-                    <option value="en">English</option>
-                    <option value="pt">Portuguese</option>
-                    <option value="es">Spanish</option>
-                </select>
+        <p class="subtitle">Transcrição e Diarização Inteligente em Português, Inglês e Espanhol</p>
+
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('recording')">
+                Gravação Ao Vivo
+            </div>
+            <div class="tab" onclick="switchTab('upload')">
+                Upload de Arquivo
+            </div>
+        </div>
+
+        <!-- Tab de Gravação -->
+        <div id="recording-tab" class="tab-content active">
+            <div class="controls">
+                <div class="control-row">
+                    <select class="select" id="recording-language">
+                        <option value="pt">Português Brasileiro</option>
+                        <option value="en">English</option>
+                        <option value="es">Español</option>
+                    </select>
+                </div>
                 
-                <select id="format" class="select">
-                    <option value="wav">.WAV</option>
-                    <option value="mp4">.MP4</option>
-                </select>
+                <div class="control-row">
+                    <button class="button record-btn" id="record-btn" onclick="startRecording()">
+                        🎤 Iniciar Gravação
+                    </button>
+                    <button class="button stop-btn" id="stop-btn" onclick="stopRecording()" disabled>
+                        ⏹️ Parar Gravação
+                    </button>
+                </div>
             </div>
+        </div>
+
+        <!-- Tab de Upload -->
+        <div id="upload-tab" class="tab-content">
+            <div class="controls">
+                <div class="control-row">
+                    <select class="select" id="upload-language">
+                        <option value="pt">Português Brasileiro</option>
+                        <option value="en">English</option>
+                        <option value="es">Español</option>
+                    </select>
+                </div>
+
+                <div class="control-row">
+                    <label for="upload-domain">Favor selecionar assunto geral do áudio a ser processado:</label>
+                    <select class="select" id="upload-domain">
+                        <option value="general">Geral</option>
+                        <option value="finance">Finanças / Corporativo</option>
+                        <option value="it">IT / Tecnologia</option>
+                        <option value="medical">Médico</option>
+                        <option value="legal">Jurídico</option>
+                        <option value="lecture">Palestra</option>
+                        <option value="conversation">Conversa</option>
+                    </select>
+                </div>
+
+                <div class="file-drop-zone" onclick="document.getElementById('file-input').click()">
+                    <p><strong>Clique aqui ou arraste um arquivo de áudio</strong></p>
+                    <p>Formatos suportados: WAV, MP3, M4A, FLAC, OGG</p>
+                    <input type="file" id="file-input" class="file-input" accept=".wav,.mp3,.m4a,.flac,.ogg">
+                </div>
+
+                <div class="control-row">
+                    <button class="button upload-btn" id="upload-btn" onclick="processUpload()" disabled>
+                        📁 Processar Arquivo
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status de Processamento -->
+        <div class="status" id="status">
+            <h3>Status do Processamento</h3>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <p id="status-text">Aguardando...</p>
+        </div>
+
+        <!-- Resultados -->
+        <div class="results" id="results">
+            <div class="stats" id="stats"></div>
             
             <div class="control-row">
-                <button id="recordBtn" class="button record-btn">Record</button>
-                <button id="pauseBtn" class="button pause-btn" disabled>Pause</button>
-                <button id="stopBtn" class="button stop-btn" disabled>Stop</button>
+                <button class="button download-btn" id="download-btn" onclick="downloadSRT()" disabled>
+                    📥 Baixar SRT
+                </button>
             </div>
-        </div>
-        
-        <div id="status" class="status">Ready to record</div>
-        
-        <div id="waveform" class="waveform">
-            <div id="waveform-content" class="waveform-content">Audio visualization will appear here</div>
-        </div>
-        
-        <div id="progress" class="progress">
-            <div class="progress-item">
-                <div class="progress-label">
-                    <span>Transcription</span>
-                    <span id="transcription-percent">0%</span>
-                </div>
-                <div class="progress-bar">
-                    <div id="transcription-progress" class="progress-fill"></div>
-                </div>
-            </div>
-            
-            <div class="progress-item">
-                <div class="progress-label">
-                    <span>Diarization</span>
-                    <span id="diarization-percent">0%</span>
-                </div>
-                <div class="progress-bar">
-                    <div id="diarization-progress" class="progress-fill"></div>
-                </div>
-            </div>
-        </div>
-        
-        <div id="results" class="results">
-            <h3>Results will appear here</h3>
+
+            <div id="transcription-results"></div>
         </div>
     </div>
-    
-    <div id="notification" class="notification"></div>
 
     <script>
-        class TranscrevAI {
-            constructor() {
-                this.ws = null;
-                this.sessionId = this.generateSessionId();
-                this.isRecording = false;
-                this.isPaused = false;
-                
-                // Get DOM elements
-                this.recordBtn = document.getElementById('recordBtn');
-                this.pauseBtn = document.getElementById('pauseBtn');
-                this.stopBtn = document.getElementById('stopBtn');
-                this.languageEl = document.getElementById('language');
-                
-                // CRITICAL FIX: Safe format element initialization
-                this.formatEl = document.getElementById('format');
-                if (!this.formatEl) {
-                    console.warn('Format selector not found, using default WAV format');
-                    // Create a mock element to prevent further errors
-                    this.formatEl = { value: 'wav' };
-                }
-                
-                this.waveformEl = document.getElementById('waveform');
-                this.waveformContent = document.getElementById('waveform-content');
-                this.progressEl = document.getElementById('progress');
-                this.transcriptionProgress = document.getElementById('transcription-progress');
-                this.diarizationProgress = document.getElementById('diarization-progress');
-                this.transcriptionPercent = document.getElementById('transcription-percent');
-                this.diarizationPercent = document.getElementById('diarization-percent');
-                this.statusEl = document.getElementById('status');
-                this.resultsEl = document.getElementById('results');
-                this.notificationEl = document.getElementById('notification');
-                
-                this.setupEventListeners();
-                this.connect();
+        let currentSessionId = null;
+        let websocket = null;
+        let currentFile = null;
+
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // File upload handling
+        const fileInput = document.getElementById('file-input');
+        const fileDropZone = document.querySelector('.file-drop-zone');
+        const uploadBtn = document.getElementById('upload-btn');
+
+        fileInput.addEventListener('change', function(e) {
+            currentFile = e.target.files[0];
+            if (currentFile) {
+                fileDropZone.querySelector('p').innerHTML = `<strong>Arquivo selecionado: ${currentFile.name}</strong><br>Clique em "Processar Arquivo" para continuar`;
+                uploadBtn.disabled = false;
             }
+        });
+
+        // Drag and drop
+        fileDropZone.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            fileDropZone.classList.add('dragover');
+        });
+
+        fileDropZone.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            fileDropZone.classList.remove('dragover');
+        });
+
+        fileDropZone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            fileDropZone.classList.remove('dragover');
+            currentFile = e.dataTransfer.files[0];
             
-            generateSessionId() {
-                return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            if (currentFile) {
+                fileDropZone.querySelector('p').innerHTML = `<strong>Arquivo selecionado: ${currentFile.name}</strong><br>Clique em "Processar Arquivo" para continuar`;
+                uploadBtn.disabled = false;
             }
-            
-            setupEventListeners() {
-                this.recordBtn.addEventListener('click', () => this.startRecording());
-                this.pauseBtn.addEventListener('click', () => this.togglePause());
-                this.stopBtn.addEventListener('click', () => this.stopRecording());
-            }
-            
-            connect() {
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}/ws/${this.sessionId}`;
-                
-                this.ws = new WebSocket(wsUrl);
-                
-                this.ws.onopen = () => {
-                    console.log('Connected to server');
-                    this.updateStatus('Connected - Ready to record');
-                };
-                
-                this.ws.onclose = () => {
-                    console.log('Disconnected from server');
-                    this.updateStatus('Disconnected - Please refresh the page');
-                    setTimeout(() => this.connect(), 3000);
-                };
-                
-                this.ws.onerror = (error) => {
-                    console.error('WebSocket error:', error);
-                    this.showError('Connection error. Please refresh the page.');
-                };
-                
-                this.ws.onmessage = (event) => {
-                    const message = JSON.parse(event.data);
-                    this.handleMessage(message);
-                };
-            }
-            
-            handleMessage(message) {
-                switch (message.type) {
-                    case 'recording_started':
-                        this.isRecording = true;
-                        this.updateButtons();
-                        this.updateStatus('Recording...');
-                        break;
-                        
-                    case 'recording_stopped':
-                        this.isRecording = false;
-                        this.isPaused = false;
-                        this.updateButtons();
-                        this.updateStatus('Processing audio...');
-                        break;
-                        
-                    case 'recording_paused':
-                        this.isPaused = true;
-                        this.updateButtons();
-                        this.updateStatus('Recording paused');
-                        break;
-                        
-                    case 'recording_resumed':
-                        this.isPaused = false;
-                        this.updateButtons();
-                        this.updateStatus('Recording...');
-                        break;
-                        
-                    case 'audio_level':
-                        this.updateWaveform(message.level);
-                        break;
-                        
-                    case 'progress':
-                        this.updateProgress(message.transcription || 0, message.diarization || 0);
-                        // Add percentage to status message during processing
-                        const transcriptionPercent = Math.round(message.transcription || 0);
-                        if (transcriptionPercent > 0 && transcriptionPercent < 100) {
-                            this.updateStatus(`Processing audio... ${transcriptionPercent}%`);
-                        }
-                        break;
-                        
-                    case 'model_download_start':
-                        this.updateStatus(`Downloading ${message.model} model for ${message.language}...`);
-                        break;
-                        
-                    case 'model_download_complete':
-                        this.updateStatus('Model ready - Processing audio...');
-                        break;
-                        
-                    case 'model_download_error':
-                        this.showError(`Model download failed: ${message.message}`);
-                        this.resetState();
-                        break;
-                        
-                    case 'system_download_start':
-                        this.updateStatus(`${message.message || 'Downloading required components...'}`);
-                        break;
-                        
-                    case 'system_download_progress':
-                        if (message.progress) {
-                            this.updateStatus(`${message.message || 'Downloading...'} (${message.progress}%)`);
-                        } else {
-                            this.updateStatus(message.message || 'Downloading...');
-                        }
-                        break;
-                        
-                    case 'system_download_complete':
-                        this.updateStatus(`${message.message || 'Download completed'}`);
-                        setTimeout(() => {
-                            if (!this.isRecording) {
-                                this.updateStatus('Connected - Ready to record');
-                            }
-                        }, 2000);
-                        break;
-                        
-                    case 'processing_complete':
-                        this.handleResults(message);
-                        break;
-                        
-                    case 'error':
-                        this.showError(message.message);
-                        this.resetState();
-                        break;
-                        
-                    default:
-                        console.log('Unknown message type:', message.type);
-                }
-            }
-            
-            updateButtons() {
-                this.recordBtn.disabled = this.isRecording;
-                this.pauseBtn.disabled = !this.isRecording;
-                this.stopBtn.disabled = !this.isRecording;
-                
-                if (this.isPaused) {
-                    this.pauseBtn.textContent = 'Resume';
-                } else {
-                    this.pauseBtn.textContent = 'Pause';
-                }
-            }
-            
-            updateStatus(text) {
-                this.statusEl.textContent = text;
-            }
-            
-            updateWaveform(level) {
-                if (this.isRecording && !this.isPaused) {
-                    const intensity = Math.floor(level * 255);
-                    const color = `rgb(${intensity}, ${Math.floor(intensity * 0.7)}, ${Math.floor(intensity * 0.3)})`;
-                    this.waveformContent.style.background = `linear-gradient(90deg, ${color} ${level * 100}%, #f1f3f4 ${level * 100}%)`;
-                    this.waveformContent.textContent = `Recording... (Level: ${Math.floor(level * 100)}%)`;
-                }
-            }
-            
-            updateProgress(transcription, diarization) {
-                this.transcriptionProgress.style.width = `${transcription}%`;
-                this.diarizationProgress.style.width = `${diarization}%`;
-                this.transcriptionPercent.textContent = `${transcription}%`;
-                this.diarizationPercent.textContent = `${diarization}%`;
-            }
-            
-            handleResults(data) {
-                this.updateStatus('Processing complete!');
-                this.resetState();
-                
-                let resultsHTML = '<h3>Transcription Results</h3>';
-                
-                if (data.transcription_data && data.transcription_data.length > 0) {
-                    resultsHTML += '<div style="margin: 15px 0;"><strong>Transcription:</strong></div>';
-                    
-                    // ENHANCED: Group transcription text by speaker for better readability
-                    const groupedBySpeaker = {};
-                    
-                    // Group segments by speaker with temporal proximity
-                    data.transcription_data.forEach(item => {
-                        const speakerName = (item.speaker || 'Speaker_1').replace('_', ' ');
-                        const text = item.text || item.content || '';
-                        
-                        if (text.trim()) {
-                            if (!groupedBySpeaker[speakerName]) {
-                                groupedBySpeaker[speakerName] = {
-                                    texts: [],
-                                    firstTime: item.start || 0,
-                                    lastTime: item.end || 0
-                                };
-                            }
-                            
-                            groupedBySpeaker[speakerName].texts.push(text.trim());
-                            
-                            // Update timing info
-                            if (item.start !== undefined && item.start < groupedBySpeaker[speakerName].firstTime) {
-                                groupedBySpeaker[speakerName].firstTime = item.start;
-                            }
-                            if (item.end !== undefined && item.end > groupedBySpeaker[speakerName].lastTime) {
-                                groupedBySpeaker[speakerName].lastTime = item.end;
-                            }
-                        }
-                    });
-                    
-                    // Display grouped results
-                    Object.keys(groupedBySpeaker).sort().forEach(speakerName => {
-                        const speakerData = groupedBySpeaker[speakerName];
-                        const combinedText = speakerData.texts.join(' ').trim();
-                        
-                        if (combinedText) {
-                            const duration = speakerData.lastTime - speakerData.firstTime;
-                            const timeInfo = duration > 0 ? ` (${speakerData.firstTime.toFixed(1)}s -> ${speakerData.lastTime.toFixed(1)}s)` : '';
-                            
-                            resultsHTML += `<div style="margin: 10px 0; padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #007bff;">
-                                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                                    <strong style="color: #007bff; font-size: 1.1em;">${speakerName}:</strong>
-                                    <span style="font-size: 0.9em; color: #666;">${timeInfo}</span>
-                                </div>
-                                <div style="margin-top: 8px; line-height: 1.4; font-size: 1em;">
-                                    ${combinedText}
-                                </div>
-                            </div>`;
-                        }
-                    });
-                    
-                    // Fallback: if no grouped text found, show original format
-                    if (Object.keys(groupedBySpeaker).length === 0) {
-                        data.transcription_data.forEach(item => {
-                            const text = item.text || item.content || 'No text';
-                            if (text.trim() !== 'No text' && text.trim()) {
-                                resultsHTML += `<div style="margin: 10px 0; padding: 10px; background: white; border-radius: 5px;">
-                                    <strong>${(item.speaker || 'Speaker_1').replace('_', ' ')}:</strong> ${text}
-                                </div>`;
-                            }
-                        });
-                    }
-                } else {
-                    resultsHTML += '<div>No transcription data available.</div>';
-                }
-                
-                if (data.speakers_detected > 0) {
-                    resultsHTML += `<div style="margin: 15px 0;"><strong>Speakers detected:</strong> ${data.speakers_detected}</div>`;
-                }
-                
-                if (data.duration) {
-                    resultsHTML += `<div><strong>Duration:</strong> ${Math.round(data.duration)} seconds</div>`;
-                }
-                
-                this.resultsEl.innerHTML = resultsHTML;
-                this.resultsEl.classList.add('visible');
-                
-                // Show file notification if paths are available
-                if (data.audio_file || data.srt_file) {
-                    this.showFileNotification(data.audio_file, data.srt_file);
-                }
+        });
+
+        async function processUpload() {
+            if (!currentFile) return;
+
+            const language = document.getElementById('upload-language').value;
+            const domain = document.getElementById('upload-domain').value; // Read domain value
+            const formData = new FormData();
+            formData.append('file', currentFile);
+            formData.append('language', language);
+            formData.append('domain', domain); // Append domain to form data
+
+            // Check if this might be first-time usage
+            const isFirstTime = await checkFirstTimeUsage();
+
+            if (isFirstTime) {
+                showFirstTimeNotice();
             }
 
-            showFileNotification(audioPath, srtPath) {
-                let content = `Files saved successfully!\n`;
-                
-                // Detect format from file extension
-                const formatType = audioPath.toLowerCase().endsWith('.mp4') ? 'MP4 Video' : 'WAV Audio';
-                content += `${formatType}: ${audioPath}\n`;
-                
-                if (srtPath) {
-                    content += `Subtitles: ${srtPath}`;
-                }
-                
-                this.showNotification(content, 'success');
-            }
-            
-            showNotification(message, type = 'success') {
-                this.notificationEl.textContent = message;
-                this.notificationEl.className = `notification ${type}`;
-                this.notificationEl.classList.add('show');
-                
-                setTimeout(() => {
-                    this.notificationEl.classList.remove('show');
-                }, 5000);
-            }
-            
-            showError(message) {
-                this.showNotification(message, 'error');
-                console.error('Error:', message);
-            }
-            
-            resetState() {
-                this.isRecording = false;
-                this.isPaused = false;
-                this.updateButtons();
-                this.waveformContent.style.background = '#f1f3f4';
-                this.waveformContent.textContent = 'Audio visualization will appear here';
-                this.updateProgress(0, 0);
-            }
-            
-            // CRITICAL FIX: Safe format access with fallback
-            async startRecording() {
-                this.resultsEl.classList.remove('visible');
-                
-                // Validate language selection
-                if (!this.languageEl.value) {
-                    this.showError('Please select a language before recording');
-                    return;
-                }
-                
-                // Immediate button state update
-                this.recordBtn.disabled = true;
-                this.pauseBtn.disabled = true;
-                this.stopBtn.disabled = true;
-                
-                try {
-                    // 3-second countdown
-                    for (let i = 3; i > 0; i--) {
-                        this.updateStatus(`Get ready... ${i}`);
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
-                    
-                    this.updateStatus('Recording!');
-                    
-                    // Safe format access with fallback
-                    const formatValue = this.formatEl && this.formatEl.value ? this.formatEl.value : 'wav';
-                    
-                    this.send('start_recording', { 
-                        language: this.languageEl.value,
-                        format: formatValue
-                    });
-                } catch (error) {
-                    console.error('Countdown error:', error);
-                    this.showError('Failed to start recording');
-                    this.recordBtn.disabled = false;
-                    this.updateStatus('Ready to record');
-                }
-            }
-            
-            togglePause() {
-                if (this.isPaused) {
-                    this.send('resume_recording');
+            showStatus('Enviando arquivo...', 5);
+
+            try {
+                // Set up WebSocket for progress updates
+                await setupWebSocketConnection();
+
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    currentSessionId = result.session_id;
+                    showResults(result.result);
+                    document.getElementById('download-btn').disabled = false;
+                    showStatus('Processamento concluído!', 100);
                 } else {
-                    this.send('pause_recording');
+                    showStatus('Erro: ' + (result.error || 'Erro desconhecido'), 0);
                 }
-            }
-            
-            stopRecording() {
-                this.send('stop_recording');
-            }
-            
-            // CRITICAL FIX: Enhanced error handling for WebSocket send
-            send(type, data = {}) {
-                try {
-                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                        this.ws.send(JSON.stringify({
-                            type: type,
-                            data: data
-                        }));
-                    } else {
-                        throw new Error('WebSocket is not connected');
-                    }
-                } catch (error) {
-                    console.error('WebSocket send error:', error);
-                    this.showError('Connection error. Please refresh the page.');
-                    this.resetState();
-                }
+            } catch (error) {
+                showStatus('Erro no upload: ' + error.message, 0);
             }
         }
-        
-        // Initialize the application
-        document.addEventListener('DOMContentLoaded', () => {
-            new TranscrevAI();
-        });
+
+        async function checkFirstTimeUsage() {
+            try {
+                const response = await fetch('/check-first-time');
+                const result = await response.json();
+                return result.is_first_time;
+            } catch (error) {
+                console.log('Could not check first-time status:', error);
+                return false;
+            }
+        }
+
+        function showFirstTimeNotice() {
+            const notice = document.createElement('div');
+            notice.className = 'first-time-notice';
+            notice.innerHTML = `
+                <div class="notice-title">📥 Primeira utilização detectada</div>
+                <div>
+                    O sistema precisará baixar o modelo de IA (1.4GB) na primeira vez.<br>
+                    Este processo pode levar 3-5 minutos dependendo da sua conexão.<br>
+                    <strong>Nas próximas utilizações será muito mais rápido!</strong>
+                </div>
+            `;
+
+            // Insert notice before status
+            const statusElement = document.getElementById('status');
+            statusElement.parentNode.insertBefore(notice, statusElement);
+
+            // Remove notice after 10 seconds or when processing starts
+            setTimeout(() => {
+                if (notice.parentNode) {
+                    notice.remove();
+                }
+            }, 15000);
+        }
+
+        async function setupWebSocketConnection() {
+            if (!currentSessionId) {
+                currentSessionId = 'temp_' + Date.now();
+            }
+
+            try {
+                websocket = new WebSocket(`ws://localhost:8001/ws/${currentSessionId}`);
+
+                websocket.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    handleWebSocketMessage(data);
+                };
+
+                websocket.onerror = function(error) {
+                    console.log('WebSocket error:', error);
+                };
+
+                websocket.onclose = function() {
+                    console.log('WebSocket connection closed');
+                };
+
+                // Wait for connection to open
+                await new Promise((resolve) => {
+                    websocket.onopen = resolve;
+                });
+
+            } catch (error) {
+                console.log('WebSocket setup failed:', error);
+            }
+        }
+
+        function handleWebSocketMessage(data) {
+            const { type, message, progress, details } = data;
+
+            switch (type) {
+                case 'model_check':
+                    showFirstTimeSetup('model_check', progress || 15, details);
+                    break;
+                case 'model_download':
+                    const downloadDetails = `
+                        Baixando: ${details?.downloaded || '0MB'} / ${details?.total || '1.4GB'}<br>
+                        Velocidade: ${details?.speed || 'calculando...'}<br>
+                        Tempo restante: ${details?.eta || 'calculando...'}
+                    `;
+                    showFirstTimeSetup('model_download', progress || 50, downloadDetails);
+                    break;
+                case 'model_load':
+                    showFirstTimeSetup('model_load', progress || 85, details || 'Carregando modelo na memória...');
+                    break;
+                case 'processing':
+                    showStatus(message || 'Processando transcrição...', progress || 90, details);
+                    break;
+                case 'completed':
+                    showStatus('Processamento concluído!', 100);
+                    break;
+                case 'error':
+                    showStatus('Erro: ' + (message || 'Erro desconhecido'), 0);
+                    break;
+                default:
+                    if (message) {
+                        showStatus(message, progress || 50, details);
+                    }
+            }
+        }
+
+        function showStatus(text, progress, details = null) {
+            const status = document.getElementById('status');
+            const statusText = document.getElementById('status-text');
+            const progressFill = document.getElementById('progress-fill');
+
+            status.classList.add('show');
+
+            // Enhanced status display with details for first-time setup
+            if (details) {
+                const detailsHtml = `
+                    <div class="status-main">${text}</div>
+                    <div class="status-details">${details}</div>
+                `;
+                statusText.innerHTML = detailsHtml;
+            } else {
+                statusText.textContent = text;
+            }
+
+            progressFill.style.width = progress + '%';
+
+            // Add progress percentage display
+            const progressText = document.getElementById('progress-text') || createProgressText();
+            progressText.textContent = `${Math.round(progress)}%`;
+        }
+
+        function createProgressText() {
+            const progressText = document.createElement('div');
+            progressText.id = 'progress-text';
+            progressText.className = 'progress-text';
+            document.querySelector('.progress-bar').appendChild(progressText);
+            return progressText;
+        }
+
+        function showFirstTimeSetup(phase, progress, details) {
+            const messages = {
+                'model_check': 'Verificando modelos de IA...',
+                'model_download': 'Baixando modelo de IA (primeira vez)',
+                'model_load': 'Carregando modelo otimizado',
+                'model_ready': 'Preparando sistema para processamento'
+            };
+
+            const message = messages[phase] || 'Preparando sistema...';
+            showStatus(message, progress, details);
+        }
+
+        function showResults(data) {
+            const results = document.getElementById('results');
+            const stats = document.getElementById('stats');
+            const transcriptionResults = document.getElementById('transcription-results');
+
+            // Mostrar estatísticas
+            stats.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${data.speakers_detected}</div>
+                    <div class="stat-label">Falantes</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${data.segments_count}</div>
+                    <div class="stat-label">Segmentos</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${data.processing_time}s</div>
+                    <div class="stat-label">Tempo</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${data.processing_ratio}</div>
+                    <div class="stat-label">Ratio</div>
+                </div>
+            `;
+
+            // Mostrar transcrição
+            transcriptionResults.innerHTML = '';
+
+            // STARTUP FIX: Add null/undefined checks before forEach
+            if (data.transcription && Array.isArray(data.transcription)) {
+                data.transcription.forEach(segment => {
+                    const segmentDiv = document.createElement('div');
+                    segmentDiv.className = 'segment';
+                    segmentDiv.innerHTML = `
+                        <div class="speaker">${segment.speaker || 'Speaker_1'}</div>
+                        <div class="text">${segment.text || ''}</div>
+                        <div class="timestamp">${formatTime(segment.start || 0)} - ${formatTime(segment.end || 0)}</div>
+                    `;
+                    transcriptionResults.appendChild(segmentDiv);
+                });
+            } else {
+                // Handle case where transcription is not available
+                transcriptionResults.innerHTML = '<div class="segment"><div class="text">Transcrição não disponível</div></div>';
+            }
+
+            results.classList.add('show');
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        async function downloadSRT() {
+            if (!currentSessionId) return;
+            
+            try {
+                const response = await fetch(`/download-srt/${currentSessionId}`);
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `transcricao_${currentSessionId}.srt`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                } else {
+                    alert('Erro ao baixar arquivo SRT');
+                }
+            } catch (error) {
+                alert('Erro: ' + error.message);
+            }
+        }
+
+        // WebSocket functions for recording (simplified for now)
+        function startRecording() {
+            alert('Funcionalidade de gravação em tempo real será implementada na próxima versão');
+        }
+
+        function stopRecording() {
+            // Implementation for live recording
+        }
     </script>
 </body>
 </html>
