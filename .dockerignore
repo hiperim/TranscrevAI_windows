@@ -38,6 +38,8 @@ ENV/
 *.swp
 *.swo
 *~
+transcrevai-windows-3089b18f1ba0.json
+.claude/
 
 # Test files
 .pytest_cache/

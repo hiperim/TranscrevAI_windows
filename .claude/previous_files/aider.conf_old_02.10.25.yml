@@ -1,0 +1,418 @@
+# Aider Configuration for TranscrevAI Production Development
+
+# Strategy 2: Enhanced Iterative Development Process with Compliance Framework
+
+# Updated for 0.75s/1s processing target and 2GB RAM optimization
+
+# Model Configuration - Gemini 2.5 Pro Primary with DeepSeek R1-0528 Fallback
+
+model: gemini-2.5-pro # Primary model: Gemini 2.5 Pro
+
+weak-model: gemini-2.5-flash # Light operations model
+
+# Enhanced Model Configuration with Proper DeepSeek R1-0528 Setup
+models:
+  # Primary model (default)
+  #gemini-2.5-pro:
+    #api_key: env:GOOGLE_API_KEY
+    #max_tokens: 12288
+    #temperature: 0.1
+
+  # DeepSeek R1-0528
+  deepseek-r1-0528:
+    api_key: env:DEEPSEEK_API_KEY
+    max_tokens: 12288
+    temperature: 0.1
+    context_window: 12288
+    
+  # Light model for simple operations
+  gemini-2.5-flash:
+    api_key: env:GOOGLE_API_KEY
+    max_tokens: 4096
+    temperature: 0.1
+
+# FIXED: Updated fallback model reference
+fallback-model: deepseek-r1-0528
+
+# Fallback Configuration - Enhanced with UTC Reset Schedule
+auto-fallback: true # Automatically fallback when primary model fails
+
+retry-primary: true # Retry primary model after cooldown
+
+# ADDED: Gemini Token Reset Schedule (5:00 AM UTC)
+quota-reset:
+  gemini-2.5-pro:
+    reset_time_utc: "05:00"  # 5:00 AM UTC daily reset
+    timezone: "UTC"
+    auto_switch_back: true   # Auto-switch back to primary after reset
+
+# Enhanced Token Management with UTC Reset Awareness
+
+
+fallback-threshold: 0.99 # Fallback when 80% tokens used
+
+# UTC Reset Integration - Check quota reset daily at 5:00 AM UTC
+reset-check-interval: 3600 # Check every hour for quota reset
+
+# Git Integration - Production Ready Commits with Documentation
+
+auto-commits: true # Auto-commit with descriptive messages
+
+commit-message-template: "TranscrevAI: {message} [Compliance: Rules Updated]"
+
+git-push: false # Manual push for review control
+
+# Enhanced Development Workflow
+
+pretty: true # Enhanced formatting for readability
+
+stream: true # Real-time response streaming
+
+edit-format: diff # Clear change visualization
+
+show-diffs: true # Show changes before applying
+
+confirm: false # Skip confirmation for faster iteration
+
+# Portuguese Language Support (Rule 5)
+
+encoding: utf-8 # Ensure proper PT-BR character handling
+
+# Production Quality Settings (Rule 10.5)
+
+lint: true # Enable code linting
+
+test-cmd: "python -m pytest tests/test_unit.py -v --tb=short"
+
+auto-test: false # Manual test execution for compliance validation
+
+# Enhanced TranscrevAI File Patterns (Rule 13)
+
+include-patterns:
+
+- "*.py" # All Python source files
+
+- "*.yml" # Configuration files
+
+- "*.yaml" # Configuration files
+
+- "*.json" # Data and config files
+
+- "*.md" # Documentation including compliance
+
+- "*.txt" # Requirements and compliance files
+
+- "requirements.txt" # Dependencies
+
+- ".env.example" # Environment templates
+
+- "main.py" # Main application entry point
+
+- "compliance.txt" # Compliance rules (CRITICAL)
+
+- "Dockerfile" # Docker configuration (Rule 18)
+
+- "docker-compose.yml" # Docker orchestration
+
+# Enhanced Exclusion Patterns (Memory Optimization - Rule 4)
+
+exclude-patterns:
+
+- "*.wav" # Audio files (too large for context)
+
+- "*.mp3" # Audio files (too large for context)
+
+- "*.m4a" # Audio files (too large for context)
+
+- "*.flac" # Audio files (too large for context)
+
+- "*.onnx" # Model files (binary) - NOT USED
+
+- "*.pkl" # Pickle files (binary)
+
+- "*.bin" # Binary model files
+
+- "__pycache__/" # Python cache
+
+- ".pytest_cache/" # Test cache
+
+- "venv/" # Virtual environment
+
+- ".venv/" # Virtual environment
+
+- "logs/" # Log files
+
+- "temp_audio/" # Temporary processing files
+
+- "data/recordings/" # Test audio files (reference only)
+
+- ".claude/CHANGES_MADE/" # Documentation files (managed separately)
+
+# Enhanced TranscrevAI Development Aliases (Compliance-Focused)
+
+# Core Components (Rule 13)
+
+transcription: "/add src/transcription.py src/model_parameters.py"
+
+diarization: "/add src/diarization.py src/performance_optimizer.py"
+
+audio: "/add src/audio_processing.py src/performance_optimizer.py"
+
+files: "/add src/file_manager.py src/subtitle_generator.py"
+
+# System Components
+
+server: "/add main.py config/app_config.py"
+
+config: "/add config/app_config.py compliance.txt"
+
+tests: "/add tests/test_unit.py tests/conftest.py"
+
+# Issue Categories (Based on analysis)
+
+easy-fixes: "/add src/subtitle_generator.py src/diarization.py src/transcription.py"
+
+medium-fixes: "/add src/audio_processing.py src/file_manager.py src/performance_optimizer.py"
+
+hard-fixes: "/add src/diarization.py main.py config/app_config.py"
+
+# Enhanced Compliance-Focused Aliases (New)
+
+compliance-check: "/add compliance.txt config/app_config.py main.py"
+
+performance-focus: "/add src/performance_optimizer.py src/audio_processing.py src/transcription.py compliance.txt"
+
+memory-optimize: "/add src/performance_optimizer.py src/audio_processing.py src/file_manager.py compliance.txt"
+
+websocket-stable: "/add main.py config/app_config.py compliance.txt"
+
+docker-ready: "/add Dockerfile docker-compose.yml requirements.txt main.py"
+
+# Testing & Validation (Rule 15)
+
+test-audio-files: "/add tests/test_unit.py tests/conftest.py"
+
+memory-check: "/add src/performance_optimizer.py tests/test_unit.py"
+
+speed-benchmark: "/add src/audio_processing.py src/transcription.py src/diarization.py tests/test_unit.py"
+
+# Multi-Platform Foundation (Rule 19)
+
+platform-ready: "/add main.py config/app_config.py src/performance_optimizer.py"
+
+# PT-BR Optimization (Rule 5)
+
+ptbr-focus: "/add src/transcription.py src/model_parameters.py config/app_config.py"
+
+# Session Management with Documentation Tracking (Rule 14)
+
+chat-history-file: ".aider.chat.history.md"
+
+restore-chat: true # Restore previous context
+
+# Development Environment Integration
+
+editor: "code" # VS Code integration
+
+browser: false # Minimize distractions during development
+
+verbose: false # Reduce noise unless debugging
+
+debug: false # Enable only when troubleshooting
+
+# Enhanced Error Recovery Settings
+
+auto-retry: true # Retry failed operations
+
+max-retries: 3 # Limit retry attempts
+
+# Code Quality Enforcement (Rule 10.5)
+
+ask-to-confirm: false # Faster iteration for development workflow
+
+review-mode: true # Enable detailed code review
+
+# Integration Settings with Performance Focus
+
+map-tokens: 3072 # Repository mapping token limit
+
+edit-format: diff # Use diff format for changes
+
+# Memory Monitoring Integration (Rule 4)
+
+monitor-memory: true # Track memory usage during development
+
+memory-threshold: 2560 # 2.5GB target threshold (MB)
+
+# Model Switching and Fallback Logging
+
+log-model-switches: true # Log when switching between models
+
+model-usage-stats: true # Track usage statistics
+
+# Advanced Fallback Configuration with DeepSeek R1-0528
+
+fallback-triggers:
+  - model_unavailable
+  - timeout_exceeded
+  - quota_exhausted
+
+primary-recovery-strategy: "exponential_backoff" # Recovery strategy for primary model
+
+fallback-performance-tracking: true # Track performance differences between models
+
+# DeepSeek R1-0528 Specific Configuration
+deepseek-settings:
+  model-name: "deepseek-r1-0528"
+  context-window: 12288
+  cost-per-token: 0.001  # Estimated cost
+  fallback-priority: 1   # Primary fallback
+
+# Enhanced TranscrevAI Compliance Instructions with Model Management
+
+instructions: |
+
+You are working on TranscrevAI, a production-ready Portuguese transcription and diarization service.
+
+MODEL USAGE STRATEGY:
+- PRIMARY: Gemini 2.5 Pro for complex analysis and coding tasks
+- FALLBACK: DeepSeek R1-0528 for token exhaustion scenarios  
+- WEAK-MODEL: Gemini 2.5 Flash for simple tasks (file listings, basic operations)
+- AUTOMATIC: Switch to DeepSeek when Gemini reaches 99% token limit
+- RECOVERY: Return to Gemini at daily 5:00 AM UTC reset
+
+QUOTA MANAGEMENT:
+- Gemini 2.5 Pro quota resets daily at 5:00 AM UTC
+- Automatic switch back to primary model after quota reset
+- DeepSeek R1-0528 provides reliable fallback 
+- Monitor model switching for cost optimization
+
+CRITICAL COMPLIANCE REQUIREMENTS (Updated Framework):
+
+## PERFORMANCE TARGETS (Rules 1, 8):
+
+- Processing Speed: Target ~0.75s per 1s audio (average cold/warm starts)
+
+- Memory Optimization: Target ~2.5GB RAM usage (maximum RAM usage 3.5GB)
+
+- Accuracy Target: 90%+ transcription and diarization operations
+
+- Model Restriction: "medium" model only (faster-whisper, openai-whisper)
+
+- Language Focus: PT-BR (Portuguese Brazilian) EXCLUSIVE optimization
+
+## SYSTEM REQUIREMENTS (Rules 4, 11, 12):
+
+- RAM Limit: Maximum 3.5GB RAM usage for PT-BR medium model operations
+
+- Hardware Minimum: 4 physical CPU cores (8 threads), 8GB RAM DDR3, 5GB HDD
+
+- WebSocket Stability: Prevent browser freezing, real-time progress updates
+
+- Unicode Handling: Proper Windows Unicode support without emoticons
+
+- Memory Efficiency: Efficient recycling and process termination
+
+## QUALITY STANDARDS (Rules 10, 10.5, 16):
+
+- Type Safety: Full Pylance compliance and type checking
+
+- Zero Errors: No Pylance errors or warnings throughout codebase
+
+- System Integration: All files work in unison with robust programming
+
+- Testing Consolidation: All tests in test_unit.py with conftest.py configuration
+
+## DOCUMENTATION REQUIREMENTS (Rule 14 - MANDATORY):
+
+- Document ALL changes in timestamped files: C:\TranscrevAI_windows\.claude\CHANGES_MADE\
+
+- File naming: implementation_DD.MM.YY_HH.MM.SS.md
+
+- Include: changes made, compliance rules addressed, performance impact, validation results
+
+## VALIDATION PROTOCOL (Rule 15 - MANDATORY):
+
+- Test with real audio files in C:\TranscrevAI_windows\data\recordings\
+
+- Compare with expected results files:
+
+* t.speakers.wav ↔ expected_results_t.speakers.txt
+
+* t2.speakers.wav ↔ expected_results_t2.speakers.txt
+
+* d.speakers.wav ↔ expected_results_d.speakers.txt
+
+* q.speakers.wav ↔ expected_results_q.speakers.txt
+
+## DOCKER & DEPLOYMENT (Rule 18):
+
+- Package complete application into Docker container
+
+- Ensure full functionality within Docker environment
+
+- Enable easy reviewer access and evaluation
+
+## ARCHITECTURE REQUIREMENTS (Rules 2, 3, 19):
+
+- Dynamic Speaker Detection: NEVER hardcode speaker counts
+
+- Dynamic audio: NEVER hardcode audio transcription expectations
+
+- Incremental Implementation: Test at each step, avoid over-implementation
+
+- Multi-Platform Foundation: Windows priority, prepare for Linux/mobile future
+
+- Performance Priority: Core metrics > additional features
+
+## DEVELOPMENT PRIORITIES (Strategy 2 Enhanced):
+
+1. PLAN: Analyze compliance impact (~0.75s speed, ~2.5GB memory, PT-BR accuracy)
+
+2. IMPLEMENT: Focus on production-ready, tested code with documentation
+
+3. REVIEW: Validate against compliance.txt rules and performance targets
+
+4. REFINE: Optimize based on performance metrics and compliance validation
+
+## SPECIALIZED CONTEXTS:
+
+- src/transcription.py: PT-BR corrections, confidence calculation, performance tracking
+
+- src/diarization.py: Dynamic speaker detection (no hardcoded values), remove unused methods
+
+- src/audio_processing.py: Memory-efficient processing toward ~2.5GB target
+
+- src/file_manager.py: Efficient storage management, architectural improvements
+
+- src/performance_optimizer.py: CPU optimization, memory efficiency, parallel processing
+
+- main.py: WebSocket stability, progress updates, multiprocessing optimization
+
+- config/app_config.py: PT-BR exclusive configuration, memory optimization settings
+
+## VALIDATION CHECKPOINTS (Every Implementation):
+
+- Memory usage monitoring (target: ~2.5GB)
+
+- Processing speed validation (target: ~0.75s/1s)
+
+- PT-BR accuracy testing with reference files
+
+- WebSocket stability in browsers
+
+- Docker containerization functionality
+
+- Pylance compliance verification
+
+## SUCCESS METRICS:
+
+- Speed: ~0.75s processing per 1s audio (100% compliance target)
+
+- Memory: ~2.5GB RAM usage - maximum RAM usage 3.5GB (100% compliance target)
+
+- Accuracy: >90% PT-BR transcription/diarization (100% compliance target)
+
+- Stability: Zero crashes during normal operation (100% compliance target)
+
+- Hardware: Functional on Windows minimum specifications (100% compliance target)

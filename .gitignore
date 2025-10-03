@@ -46,8 +46,8 @@ backups/
 
 
 # Preference files
-.claude/
-gemini-aider-workspace/
+#.claude/
+#gemini-aider-workspace/
 *.prefs
 config/local_*
 .env.local
@@ -60,8 +60,8 @@ dev_tools/
 examples/
 static/
 .spec
-aider.conf.yml
-gemini.md
+#aider.conf.yml
+#gemini.md
 mcp_server.py
-
-
+transcrevai-windows-3089b18f1ba0.json
+.claude/
