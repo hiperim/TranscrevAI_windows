@@ -46,7 +46,6 @@ backups/
 
 
 # Preference files
-#.claude/
 #gemini-aider-workspace/
 *.prefs
 config/local_*
@@ -65,3 +64,4 @@ static/
 mcp_server.py
 transcrevai-windows-3089b18f1ba0.json
 .claude/
+
