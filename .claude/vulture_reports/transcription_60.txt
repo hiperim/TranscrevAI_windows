@@ -1,7 +1,0 @@
-src\transcription.py:11: unused import 'Path' (90% confidence)
-src\transcription.py:75: unused method 'cleanup' (60% confidence)
-src\transcription.py:93: unused method 'transcribe_parallel' (60% confidence)
-src\transcription.py:115: unused method 'transcribe_with_process_isolation' (60% confidence)
-src\transcription.py:129: unused function 'create_transcription_service' (60% confidence)
-src\transcription.py:133: unused function 'create_optimized_transcriber' (60% confidence)
-src\transcription.py:137: unused function 'create_transcription_process' (60% confidence)

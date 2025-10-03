@@ -1,8 +1,0 @@
-src\performance_optimizer.py:5: unused import 'json' (90% confidence)
-src\performance_optimizer.py:17: unused import 'Path' (90% confidence)
-src\performance_optimizer.py:18: unused import 'Tuple' (90% confidence)
-src\performance_optimizer.py:18: unused import 'TYPE_CHECKING' (90% confidence)
-src\performance_optimizer.py:20: unused import 'np' (90% confidence)
-src\performance_optimizer.py:86: unused import 'Path' (90% confidence)
-src\performance_optimizer.py:197: unused import 'glob' (90% confidence)
-src\performance_optimizer.py:198: unused import 'Path' (90% confidence)
