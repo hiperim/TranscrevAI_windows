@@ -1,590 +1,579 @@
+# FIXED - Enhanced Subtitle Generator with UTF-8 Windows Support
 """
-Enhanced Subtitle Generator - Fixed Type Hints and Improved Implementation
+Enhanced Subtitle Generator Module for TranscrevAI
+Production-ready SRT generation with comprehensive UTF-8 support for Windows
 
-All type hints properly specified and segment handling optimized for production use.
+FIXES APPLIED:
+- Complete UTF-8 encoding support for Windows SRT files
+- UTF-8 BOM for maximum Windows compatibility
+- Proper Portuguese character handling
+- Enhanced error handling with encoding fallbacks
+- Thread-safe file operations
 """
 
-import aiofiles
-import aiofiles.tempfile
 import logging
+import asyncio
 import os
 import time
-import uuid
 import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple, Union
-from .file_manager import FileManager
-from .logging_setup import setup_app_logging
-import numpy as np
+from typing import Dict, Any, List, Optional, Union, Callable, cast
+from dataclasses import dataclass
+import threading
 
-# Use proper logging setup
-logger = setup_app_logging(logger_name="transcrevai.subtitle_generator")
+logger = logging.getLogger(__name__)
 
-def format_time_srt(seconds: float) -> str:
-    """Convert seconds to SRT time format (HH:MM:SS,mmm) with type safety"""
-    try:
+@dataclass
+class SubtitleSegment:
+    """Enhanced subtitle segment with proper typing and encoding support"""
+    start_time: float
+    end_time: float
+    text: str
+    speaker: Optional[str] = None
+    confidence: Optional[float] = None
+
+class SRTGenerator:
+    """Enhanced SRT generator with comprehensive UTF-8 Windows support"""
+    
+    def __init__(self):
+        # Thread safety for concurrent subtitle generation
+        self._generation_lock = threading.RLock()
+        
+        # SRT formatting parameters
+        self.max_line_length = 42  # Characters per line for readability
+        self.max_lines_per_subtitle = 2
+        self.min_subtitle_duration = 0.5  # Minimum subtitle display time
+        self.max_subtitle_duration = 6.0  # Maximum subtitle display time
+        
+        # Portuguese-specific character handling
+        self._init_portuguese_formatting()
+
+    def _init_portuguese_formatting(self):
+        """Initialize Portuguese-specific formatting rules"""
+        
+        # Common Portuguese punctuation and formatting
+        self.portuguese_punctuation = {
+            '"': '"',  # Smart quotes
+            '"': '"',
+            ''': "'",
+            ''': "'",
+            '…': '...',  # Ellipsis normalization
+            '–': '-',   # En dash to hyphen
+            '—': '-',   # Em dash to hyphen
+        }
+        
+        # Portuguese abbreviations that shouldn't be split
+        self.portuguese_abbreviations = {
+            'Dr.', 'Dra.', 'Sr.', 'Sra.', 'Jr.', 'Prof.', 'Profa.',
+            'etc.', 'ex.', 'obs.', 'p.', 'pp.', 'vol.', 'cap.',
+            'art.', 'inc.', 'ltd.', 'ltda.', 'S.A.', 'LTDA.'
+        }
+
+    def _format_time_srt(self, seconds: float) -> str:
+        """Format time for SRT format (HH:MM:SS,mmm)"""
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
         secs = int(seconds % 60)
-        millis = int((seconds % 1) * 1000)
-        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
-    except (TypeError, ValueError, OverflowError):
-        logger.warning(f"Invalid time value for SRT formatting: {seconds}")
-        return "00:00:00,000"
+        milliseconds = int((seconds - int(seconds)) * 1000)
+        
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
-def generate_srt_simple(transcription_segments: List[Dict[str, Any]]) -> str:
-    """
-    Generate SRT content from transcription segments - ENHANCED VERSION
-    
-    Args:
-        transcription_segments: List of segments with start, end, text, and speaker
-        
-    Returns:
-        str: SRT formatted content
-        
-    Type hints fixed: Explicit List[Dict[str, Any]] for segments
-    """
-    logger.info(f"generate_srt_simple called with: {type(transcription_segments)}")
-    
-    if not transcription_segments:
-        logger.warning("Empty transcription_segments received")
-        return ""
-    
-    if not isinstance(transcription_segments, list):
-        logger.error(f"Expected list, got {type(transcription_segments)}")
-        return ""
-    
-    logger.info(f"Processing {len(transcription_segments)} segments")
-    
-    srt_content: List[str] = []
-    segment_counter = 0
-    
-    for i, segment in enumerate(transcription_segments, 1):
-        if not isinstance(segment, dict):
-            logger.warning(f"Segment {i} is not a dict, skipping: {type(segment)}")
-            continue
-            
-        start_time = segment.get('start', 0.0)
-        end_time = segment.get('end', 0.0)
-        text = segment.get('text', '').strip()
-        speaker = segment.get('speaker', 'Speaker_1')
-        
-        # Validate segment data
-        if not isinstance(start_time, (int, float)) or not isinstance(end_time, (int, float)):
-            logger.warning(f"Invalid time values in segment {i}, skipping")
-            continue
-            
-        if end_time <= start_time:
-            logger.warning(f"Invalid time range in segment {i}: {start_time}-{end_time}")
-            continue
-        
-        logger.debug(f"Segment {i}: {start_time:.2f}s-{end_time:.2f}s, '{text[:50]}...', {speaker}")
-        
+    def _clean_text_for_subtitle(self, text: str) -> str:
+        """Clean and format text for subtitle display with Portuguese support"""
         if not text:
-            logger.debug(f"Skipping segment {i} - empty text")
-            continue
+            return ""
         
-        segment_counter += 1
+        # Normalize Unicode for consistent Portuguese character handling
+        import unicodedata
+        text = unicodedata.normalize('NFC', text)
         
-        # Format: segment number
-        srt_content.append(str(segment_counter))
+        # Replace problematic punctuation
+        for old, new in self.portuguese_punctuation.items():
+            text = text.replace(old, new)
         
-        # Format: start --> end (with type-safe time formatting)
-        start_srt = format_time_srt(float(start_time))
-        end_srt = format_time_srt(float(end_time))
-        srt_content.append(f"{start_srt} --> {end_srt}")
+        # Clean up extra whitespace
+        text = ' '.join(text.split())
         
-        # Format: speaker: text (with proper escaping)
-        clean_text = text.replace('\n', ' ').replace('\r', '').strip()
-        srt_content.append(f"{speaker}: {clean_text}")
+        # Ensure proper capitalization
+        text = text.strip()
+        if text:
+            text = text[0].upper() + text[1:]
         
-        # Empty line between segments
-        srt_content.append("")
-    
-    result = "\n".join(srt_content)
-    logger.info(f"Generated SRT: {len(result)} characters, {segment_counter} segments")
-    return result
+        # Fix common transcription artifacts
+        text = self._fix_transcription_artifacts(text)
+        
+        return text
 
-async def generate_srt(
-    transcription_data: List[Dict[str, Any]], 
-    diarization_segments: Optional[List[Dict[str, Any]]], 
-    filename: str = "output.srt"
-) -> Optional[str]:
-    """
-    Generate SRT subtitle file from transcription and diarization data
-    
-    Args:
-        transcription_data: List of transcription segments with text and timing
-        diarization_segments: List of speaker diarization segments (can be None)
-        filename: Output filename for the SRT file
+    def _fix_transcription_artifacts(self, text: str) -> str:
+        """Fix common transcription artifacts in Portuguese"""
         
-    Returns:
-        str: Path to the generated SRT file, or None if failed
+        # Helper callback with proper typing for Pylance/mypy
+        def _capitalize_after_sentence(m: re.Match[str]) -> str:
+            return m.group(1) + ' ' + m.group(2).upper()
         
-    Enhanced error handling and type safety
-    """
-    temp_path: Optional[str] = None
-    
-    try:
-        # Validate input parameters with explicit type checking
-        if not transcription_data or not isinstance(transcription_data, list):
-            raise ValueError("Invalid transcription data: must be non-empty list")
-        
-        # Handle None diarization_segments gracefully
-        if diarization_segments is None:
-            diarization_segments = []
-        elif not isinstance(diarization_segments, list):
-            raise ValueError("Diarization segments must be a list or None")
-        
-        # Enhanced logging
-        logger.info(f"SRT Generation - Transcription: {len(transcription_data)} items")
-        logger.info(f"SRT Generation - Diarization: {len(diarization_segments)} items")
-        
-        # Determine output path with proper validation
-        output_path = _determine_output_path(filename)
-        
-        combined_segments: List[Dict[str, Any]] = []
-        
-        # Use aiofiles.tempfile for async temp file handling
-        async with aiofiles.tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as tmp:
-            temp_path = tmp.name
+        # Annotate the fixes list so the type checker knows replacement may be a string or a callable
+        fixes: List[tuple[str, Union[str, Callable[[re.Match[str]], str]]]] = [
+            # Fix repeated words
+            (r'\b(\w+)\s+\1\b', r'\1'),
             
-            try:
-                # Enhanced segment processing
-                if diarization_segments:
-                    combined_segments = await _align_transcription_with_diarization(
-                        transcription_data, diarization_segments
-                    )
+            # Fix spacing around punctuation
+            (r'\s+([,.!?;:])', r'\1'),
+            (r'([,.!?;:])\s*([a-zA-ZÀ-ÿ])', r'\1 \2'),
+            
+            # Fix multiple spaces
+            (r'\s{2,}', ' '),
+            
+            # Fix common Portuguese transcription errors
+            (r'\bé\s+([aeiou])', r'é \1'),  # Fix accent spacing
+            (r'\bão\s+([bcdfgjklmnpqrstvwxyz])', r'ão \1'),  # Fix nasal spacing
+            
+            # Fix sentence boundaries
+            (r'\.{2,}', '.'),  # Multiple periods to single
+            (r'([.!?])\s*([a-z])', _capitalize_after_sentence),  # Capitalize after sentence end
+        ]
+        
+        for pattern, replacement in fixes:
+            if callable(replacement):
+                # Cast replacement to the precise callable signature so the type checker accepts it
+                text = re.sub(pattern, cast(Callable[[re.Match[str]], str], replacement), text)
+            else:
+                text = re.sub(pattern, replacement, text)
+        
+        return text
+
+    def _split_text_into_lines(self, text: str) -> List[str]:
+        """Split text into appropriate subtitle lines respecting Portuguese word boundaries"""
+        if len(text) <= self.max_line_length:
+            return [text]
+        
+        words = text.split()
+        lines = []
+        current_line = ""
+        
+        for word in words:
+            # Check if adding this word would exceed line length
+            test_line = f"{current_line} {word}".strip()
+            
+            if len(test_line) <= self.max_line_length:
+                current_line = test_line
+            else:
+                # Current line is full, start new line
+                if current_line:
+                    lines.append(current_line)
+                    current_line = word
                 else:
-                    # Process transcription data without diarization
-                    combined_segments = _process_transcription_only(transcription_data)
+                    # Single word is too long, force it on a line
+                    lines.append(word)
+                    current_line = ""
+        
+        # Add the last line
+        if current_line:
+            lines.append(current_line)
+        
+        # Limit to maximum lines per subtitle
+        if len(lines) > self.max_lines_per_subtitle:
+            # Try to combine lines intelligently
+            lines = self._optimize_line_breaks(lines)
+        
+        return lines[:self.max_lines_per_subtitle]
+
+    def _optimize_line_breaks(self, lines: List[str]) -> List[str]:
+        """Optimize line breaks for better readability in Portuguese"""
+        if len(lines) <= self.max_lines_per_subtitle:
+            return lines
+        
+        # Strategy: combine shorter lines while respecting max line length
+        optimized = []
+        i = 0
+        
+        while i < len(lines):
+            current_line = lines[i]
+            
+            # Try to combine with next line if possible
+            if i + 1 < len(lines):
+                next_line = lines[i + 1]
+                combined = f"{current_line} {next_line}"
                 
-                # Filter and validate segments
-                valid_segments = _validate_segments(combined_segments)
+                if len(combined) <= self.max_line_length:
+                    optimized.append(combined)
+                    i += 2  # Skip next line as it's been combined
+                    continue
+            
+            optimized.append(current_line)
+            i += 1
+        
+        return optimized
+
+    def _create_srt_content(self, segments: List[Dict[str, Any]]) -> str:
+        """Create SRT content from segments with proper UTF-8 encoding"""
+        srt_entries = []
+        subtitle_index = 1
+        
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            
+            text = segment.get("text", "").strip()
+            if not text:
+                continue
+            
+            start_time = float(segment.get("start", 0))
+            end_time = float(segment.get("end", start_time + 2.0))
+            speaker = segment.get("speaker")
+            
+            # Ensure minimum and maximum subtitle duration
+            duration = end_time - start_time
+            if duration < self.min_subtitle_duration:
+                end_time = start_time + self.min_subtitle_duration
+            elif duration > self.max_subtitle_duration:
+                end_time = start_time + self.max_subtitle_duration
+            
+            # Clean and format text
+            clean_text = self._clean_text_for_subtitle(text)
+            if not clean_text:
+                continue
+            
+            # Add speaker label if available
+            if speaker and speaker.strip():
+                clean_text = f"[{speaker}] {clean_text}"
+            
+            # Split into appropriate lines
+            lines = self._split_text_into_lines(clean_text)
+            subtitle_text = "\n".join(lines)
+            
+            # Format time stamps
+            start_formatted = self._format_time_srt(start_time)
+            end_formatted = self._format_time_srt(end_time)
+            
+            # Create SRT entry
+            srt_entry = f"{subtitle_index}\n{start_formatted} --> {end_formatted}\n{subtitle_text}\n"
+            srt_entries.append(srt_entry)
+            
+            subtitle_index += 1
+        
+        return "\n".join(srt_entries)
+
+    async def generate_srt_file(self, segments: List[Dict[str, Any]], 
+                               output_path: Optional[Union[str, Path]] = None,
+                               filename: Optional[str] = None) -> Optional[str]:
+        """
+        Generate SRT file with comprehensive UTF-8 Windows support
+        
+        Args:
+            segments: List of transcription segments
+            output_path: Output directory path
+            filename: Output filename
+            
+        Returns:
+            Path to generated SRT file or None if failed
+        """
+        with self._generation_lock:
+            try:
+                # Determine output path
+                if output_path is None:
+                    output_path = Path("data/subtitles")
+                else:
+                    output_path = Path(output_path)
                 
-                if not valid_segments:
-                    logger.warning("No valid segments after processing, creating fallback")
-                    valid_segments = _create_fallback_segments(transcription_data)
+                # Create output directory
+                output_path.mkdir(parents=True, exist_ok=True)
                 
-                # Write SRT content with proper formatting
-                await _write_srt_content(tmp, valid_segments)
+                # Determine filename
+                if filename is None:
+                    timestamp = int(time.time())
+                    filename = f"transcript_{timestamp}.srt"
+                elif not filename.endswith('.srt'):
+                    filename = f"{filename}.srt"
+                
+                # Full file path
+                srt_file_path = output_path / filename
+                
+                # Generate SRT content
+                srt_content = self._create_srt_content(segments)
+                
+                if not srt_content.strip():
+                    logger.warning("No valid segments to generate SRT file")
+                    return None
+                
+                # Write SRT file with UTF-8 encoding and BOM for Windows compatibility
+                await self._write_srt_file_safe(srt_file_path, srt_content)
+                
+                logger.info(f"SRT file generated successfully: {srt_file_path}")
+                return str(srt_file_path)
                 
             except Exception as e:
-                logger.error(f"Error processing segments: {e}")
-                raise RuntimeError(f"Failed to process SRT content: {str(e)}") from e
+                logger.error(f"Failed to generate SRT file: {e}")
+                return None
+
+    async def _write_srt_file_safe(self, file_path: Path, content: str):
+        """Write SRT file safely with UTF-8 encoding and Windows compatibility"""
         
-        # Move temp file to final location atomically
-        try:
-            os.replace(temp_path, output_path)
-            temp_path = None  # Successfully moved, don't cleanup
-        except OSError as e:
-            logger.error(f"Failed to move temp file to final location: {e}")
-            raise RuntimeError(f"Failed to write SRT file to {output_path}: {e}") from e
+        # Multiple encoding strategies for maximum Windows compatibility
+        encoding_strategies = [
+            ('utf-8-sig', 'UTF-8 with BOM (best Windows compatibility)'),
+            ('utf-8', 'UTF-8 without BOM'),
+            ('cp1252', 'Windows-1252 fallback'),
+            ('latin-1', 'Latin-1 fallback')
+        ]
         
-        logger.info(f"SRT file generated successfully: {output_path}")
-        return output_path
+        last_error = None
         
-    except Exception as e:
-        logger.error(f"SRT generation failed: {str(e)}")
-        
-        # Enhanced cleanup with explicit temp_path handling
-        if temp_path and os.path.exists(temp_path):
+        for encoding, description in encoding_strategies:
             try:
-                os.remove(temp_path)
-            except Exception as cleanup_error:
-                logger.warning(f"Temp file cleanup failed: {cleanup_error}")
+                # Run file write in thread pool to avoid blocking
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None, 
+                    self._write_file_with_encoding,
+                    file_path, content, encoding
+                )
+                
+                logger.info(f"SRT file written successfully using {description}")
+                return
+                
+            except UnicodeEncodeError as e:
+                last_error = e
+                logger.warning(f"Encoding {encoding} failed: {e}")
+                
+                # Try to clean problematic characters and retry
+                if encoding == 'utf-8-sig':
+                    try:
+                        cleaned_content = self._clean_content_for_encoding(content)
+                        await loop.run_in_executor(
+                            None,
+                            self._write_file_with_encoding,
+                            file_path, cleaned_content, encoding
+                        )
+                        logger.info(f"SRT file written with cleaned content using {description}")
+                        return
+                    except Exception:
+                        continue
+                        
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Failed to write with {encoding}: {e}")
+                continue
         
-        raise RuntimeError(f"Subtitle creation error: {str(e)}") from e
+        # If all strategies failed, raise the last error
+        if last_error:
+            raise RuntimeError(f"Failed to write SRT file with any encoding strategy: {last_error}")
 
-def _determine_output_path(filename: str) -> str:
-    """Determine and validate output path for SRT file"""
-    try:
-        dirname = str(Path(filename).parent)
+    def _write_file_with_encoding(self, file_path: Path, content: str, encoding: str):
+        """Write file with specific encoding (blocking operation)"""
+        with open(file_path, 'w', encoding=encoding, newline='\r\n') as f:
+            f.write(content)
+
+    def _clean_content_for_encoding(self, content: str) -> str:
+        """Clean content to be compatible with various encodings"""
+        import unicodedata
         
-        if dirname and dirname != "." and dirname != "":
-            # Use provided path
-            Path(dirname).mkdir(parents=True, exist_ok=True)
-            return filename
-        else:
-            # Use default directory with unique naming
-            output_dir = FileManager.get_data_path("transcripts")
-            base_name = Path(filename).stem
-            unique_id = str(uuid.uuid4())[:8]
-            timestamp = int(time.time())
-            unique_name = f"{base_name}_{timestamp}_{unique_id}.srt"
-            return str(Path(output_dir) / unique_name)
-            
-    except Exception as e:
-        logger.error(f"Failed to determine output path: {e}")
-        raise RuntimeError(f"Cannot determine output path: {e}") from e
-
-def _process_transcription_only(transcription_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Process transcription data without diarization"""
-    segments: List[Dict[str, Any]] = []
-    
-    for i, t_data in enumerate(transcription_data):
-        if not isinstance(t_data, dict):
-            continue
-            
-        text = t_data.get("text", "").strip()
-        if not text:
-            continue
-            
-        start_time = t_data.get("start", i * 2.0)
-        end_time = t_data.get("end", start_time + 2.0)
+        # Normalize unicode
+        content = unicodedata.normalize('NFKD', content)
         
-        segments.append({
-            "start": float(start_time),
-            "end": float(end_time),
-            "speaker": "Speaker_1",
-            "text": text,
-            "confidence": t_data.get("confidence", 0.8)
-        })
-    
-    return segments
-
-def _validate_segments(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Validate and filter segments"""
-    valid_segments: List[Dict[str, Any]] = []
-    
-    for segment in segments:
-        if not isinstance(segment, dict):
-            continue
-            
-        text = segment.get("text", "").strip()
-        start = segment.get("start")
-        end = segment.get("end")
+        # Replace problematic characters
+        problematic_chars = {
+            'ắ': 'á', 'ằ': 'à', 'ẵ': 'ã', 'ẳ': 'ả', 'ặ': 'ạ',
+            'ế': 'é', 'ề': 'è', 'ễ': 'ẽ', 'ể': 'ẻ', 'ệ': 'ẹ',
+            'ố': 'ó', 'ồ': 'ò', 'ỗ': 'õ', 'ổ': 'ỏ', 'ộ': 'ọ',
+            'ứ': 'ú', 'ừ': 'ù', 'ữ': 'ũ', 'ử': 'ủ', 'ự': 'ụ',
+            'ý': 'ý', 'ỳ': 'ỳ', 'ỹ': 'ỹ', 'ỷ': 'ỷ', 'ỵ': 'ỵ',
+        }
         
-        # Validate required fields
-        if not text:
-            continue
-        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
-            continue
-        if end <= start:
-            continue
-            
-        valid_segments.append(segment)
-    
-    return valid_segments
-
-def _create_fallback_segments(transcription_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Create fallback segments when processing fails"""
-    all_text = " ".join([
-        t.get("text", "") for t in transcription_data
-        if isinstance(t, dict) and t.get("text", "").strip()
-    ])
-    
-    if all_text.strip():
-        return [{
-            "start": 0.0,
-            "end": 5.0,
-            "speaker": "Speaker_1",
-            "text": all_text.strip(),
-            "confidence": 0.5
-        }]
-    
-    return []
-
-async def _write_srt_content(tmp: Any, segments: List[Dict[str, Any]]) -> None:
-    """Write SRT content to temporary file"""
-    for idx, segment in enumerate(segments, 1):
-        start_time = format_time_srt(segment['start'])
-        end_time = format_time_srt(segment['end'])
-        speaker = segment.get('speaker', 'Speaker_1')
-        text = segment['text']
+        for old, new in problematic_chars.items():
+            content = content.replace(old, new)
         
-        await tmp.write(f"{idx}\n")
-        await tmp.write(f"{start_time} --> {end_time}\n")
-        await tmp.write(f"{speaker}: {text}\n\n")
-    
-    await tmp.flush()
+        # Remove or replace any remaining non-ASCII characters as last resort
+        # This is only for extreme compatibility cases
+        content = content.encode('ascii', 'replace').decode('ascii')
+        content = content.replace('?', '')  # Remove replacement characters
+        
+        return content
 
-def format_time(seconds: float) -> str:
+    def validate_srt_content(self, segments: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate segments before SRT generation"""
+        
+        validation_result = {
+            "valid": True,
+            "total_segments": len(segments),
+            "valid_segments": 0,
+            "issues": [],
+            "estimated_duration": 0.0
+        }
+        
+        if not segments:
+            validation_result["valid"] = False
+            validation_result["issues"].append("No segments provided")
+            return validation_result
+        
+        valid_count = 0
+        max_end_time = 0.0
+        
+        for i, segment in enumerate(segments):
+            segment_issues = []
+            
+            if not isinstance(segment, dict):
+                segment_issues.append(f"Segment {i}: Not a dictionary")
+                continue
+            
+            # Check required fields
+            if "text" not in segment:
+                segment_issues.append(f"Segment {i}: Missing 'text' field")
+            elif not segment["text"].strip():
+                segment_issues.append(f"Segment {i}: Empty text")
+            
+            if "start" not in segment:
+                segment_issues.append(f"Segment {i}: Missing 'start' time")
+            elif not isinstance(segment["start"], (int, float)):
+                segment_issues.append(f"Segment {i}: Invalid start time type")
+            
+            if "end" not in segment:
+                segment_issues.append(f"Segment {i}: Missing 'end' time")
+            elif not isinstance(segment["end"], (int, float)):
+                segment_issues.append(f"Segment {i}: Invalid end time type")
+            
+            # Check timing logic
+            if "start" in segment and "end" in segment:
+                start_time = float(segment["start"])
+                end_time = float(segment["end"])
+                
+                if start_time >= end_time:
+                    segment_issues.append(f"Segment {i}: Start time >= end time")
+                
+                if start_time < 0:
+                    segment_issues.append(f"Segment {i}: Negative start time")
+                
+                max_end_time = max(max_end_time, end_time)
+            
+            if segment_issues:
+                validation_result["issues"].extend(segment_issues)
+            else:
+                valid_count += 1
+        
+        validation_result["valid_segments"] = valid_count
+        validation_result["estimated_duration"] = max_end_time
+        
+        if valid_count == 0:
+            validation_result["valid"] = False
+            validation_result["issues"].append("No valid segments found")
+        
+        return validation_result
+
+
+# Global SRT generator instance
+srt_generator = SRTGenerator()
+
+async def generate_srt(segments: List[Dict[str, Any]], 
+                      output_path: Optional[Union[str, Path]] = None,
+                      filename: Optional[str] = None) -> Optional[str]:
     """
-    Format time in seconds to SRT time format (HH:MM:SS,mmm)
+    Convenience function to generate SRT file
     
     Args:
-        seconds: Time in seconds (float)
+        segments: List of transcription segments
+        output_path: Output directory path
+        filename: Output filename
         
     Returns:
-        str: Formatted time string for SRT format
+        Path to generated SRT file or None if failed
     """
     try:
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        sec = seconds % 60
-        return f"{hours:02}:{minutes:02}:{sec:06.3f}".replace('.', ',')[:12]
-    except (TypeError, ValueError):
-        raise ValueError(f"Invalid time value: {seconds}")
-
-def validate_srt_format(content: str) -> bool:
-    """Validate SRT file format with enhanced checks"""
-    if not content.strip():
-        return False
+        # Validate segments first
+        validation = srt_generator.validate_srt_content(segments)
         
-    lines = content.split('\n')
-    
-    # Basic structure validation
-    segment_count = 0
-    i = 0
-    
-    while i < len(lines):
-        # Skip empty lines
-        if not lines[i].strip():
-            i += 1
-            continue
-            
-        # Check segment number
-        if not lines[i].strip().isdigit():
-            return False
+        if not validation["valid"]:
+            logger.error(f"SRT validation failed: {validation['issues']}")
+            return None
         
-        # Check time range format
-        i += 1
-        if i >= len(lines) or '-->' not in lines[i]:
-            return False
-            
-        # Validate time format
-        time_line = lines[i].strip()
-        time_parts = time_line.split(' --> ')
-        if len(time_parts) != 2:
-            return False
-            
-        for time_part in time_parts:
-            if not _validate_time_format(time_part):
-                return False
+        if validation["valid_segments"] < validation["total_segments"]:
+            logger.warning(f"Only {validation['valid_segments']}/{validation['total_segments']} segments are valid")
         
-        # Check text line exists and is not empty
-        i += 1
-        if i >= len(lines) or not lines[i].strip():
-            return False
-            
-        segment_count += 1
-        i += 1
-    
-    return segment_count > 0
-
-def _validate_time_format(time_str: str) -> bool:
-    """Validate SRT time format HH:MM:SS,mmm"""
-    pattern = r'^\d{2}:\d{2}:\d{2},\d{3}$'
-    return bool(re.match(pattern, time_str))
-
-async def _align_transcription_with_diarization(
-    transcription_data: List[Dict[str, Any]], 
-    diarization_segments: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
-    """
-    Enhanced alignment of transcription data with diarization segments
-    
-    This function provides sophisticated synchronization by:
-    1. Using overlap-based matching with weighted scoring
-    2. Handling partial overlaps intelligently  
-    3. Grouping words/phrases by speaker
-    4. Maintaining temporal coherence
-    """
-    try:
-        combined_segments: List[Dict[str, Any]] = []
-        
-        # Sort both datasets by start time for efficient processing
-        sorted_transcription = sorted([
-            t for t in transcription_data 
-            if isinstance(t, dict) and "start" in t and "text" in t
-        ], key=lambda x: x.get("start", 0))
-        
-        sorted_diarization = sorted([
-            d for d in diarization_segments 
-            if isinstance(d, dict) and "start" in d and "end" in d  
-        ], key=lambda x: x.get("start", 0))
-        
-        if not sorted_diarization:
-            logger.warning("No valid diarization segments for alignment")
-            return _process_transcription_only(transcription_data)
-        
-        logger.info(f"Aligning {len(sorted_transcription)} transcription segments with {len(sorted_diarization)} diarization segments")
-        
-        used_transcription_ids: set = set()
-        
-        # Process each diarization segment
-        for d_segment in sorted_diarization:
-            d_start = float(d_segment["start"])
-            d_end = float(d_segment["end"])
-            speaker = d_segment.get("speaker", "Speaker_1")
-            
-            # Find overlapping transcription segments with enhanced matching
-            overlapping_segments: List[Dict[str, Any]] = []
-            
-            for t_idx, t_segment in enumerate(sorted_transcription):
-                if t_idx in used_transcription_ids:
-                    continue
-                    
-                t_start = float(t_segment.get("start", 0))
-                t_end = float(t_segment.get("end", t_start + 1))
-                
-                # Calculate overlap with extended tolerance window
-                overlap_start = max(d_start - 0.2, t_start)  # 200ms tolerance
-                overlap_end = min(d_end + 0.2, t_end)
-                overlap_duration = max(0, overlap_end - overlap_start)
-                
-                # Multiple matching criteria
-                t_duration = max(t_end - t_start, 0.1)
-                overlap_ratio = overlap_duration / t_duration
-                
-                # Temporal proximity scoring
-                center_d = (d_start + d_end) / 2
-                center_t = (t_start + t_end) / 2
-                distance = abs(center_d - center_t)
-                proximity_score = max(0, 1.0 - (distance / max(d_end - d_start, 1.0)))
-                
-                # Combined scoring
-                confidence = t_segment.get("confidence", 1.0)
-                weighted_score = (overlap_ratio * 0.6 + proximity_score * 0.4) * confidence
-                
-                # Include if meets threshold
-                if weighted_score >= 0.3 or overlap_duration > 0:
-                    overlapping_segments.append({
-                        "segment": t_segment,
-                        "weighted_score": weighted_score,
-                        "transcription_idx": t_idx
-                    })
-            
-            # Sort by score and combine text
-            overlapping_segments.sort(key=lambda x: x["weighted_score"], reverse=True)
-            
-            segment_texts: List[str] = []
-            total_confidence = 0.0
-            
-            for overlap_info in overlapping_segments:
-                if overlap_info["weighted_score"] >= 0.25:  # Quality threshold
-                    segment = overlap_info["segment"]
-                    text = segment["text"].strip()
-                    
-                    if text and len(text) > 1:
-                        segment_texts.append(text)
-                        total_confidence += segment.get("confidence", 1.0)
-                        used_transcription_ids.add(overlap_info["transcription_idx"])
-            
-            # Create combined segment if we have text
-            if segment_texts:
-                combined_text = " ".join(segment_texts)
-                avg_confidence = total_confidence / len(segment_texts) if segment_texts else 0
-                
-                combined_segments.append({
-                    "start": d_start,
-                    "end": d_end,
-                    "speaker": speaker,
-                    "text": combined_text,
-                    "confidence": avg_confidence,
-                    "word_count": len(segment_texts),
-                    "alignment_method": "enhanced_temporal"
-                })
-                
-                logger.debug(f"Aligned segment: {speaker} ({d_start:.2f}-{d_end:.2f}s): '{combined_text[:50]}...'")
-            else:
-                # Keep timing but mark as no speech detected
-                combined_segments.append({
-                    "start": d_start,
-                    "end": d_end,
-                    "speaker": speaker,
-                    "text": "[No speech detected]",
-                    "confidence": 0.0,
-                    "word_count": 0
-                })
-        
-        # Post-process: merge consecutive segments from same speaker
-        merged_segments = _merge_consecutive_speaker_segments(combined_segments)
-        
-        logger.info(f"Alignment complete: {len(combined_segments)} segments -> {len(merged_segments)} after merging")
-        return merged_segments
+        # Generate SRT file
+        return await srt_generator.generate_srt_file(segments, output_path, filename)
         
     except Exception as e:
-        logger.error(f"Enhanced alignment failed: {e}")
-        return _simple_alignment_fallback(transcription_data, diarization_segments)
+        logger.error(f"SRT generation failed: {e}")
+        return None
 
-def _merge_consecutive_speaker_segments(
-    segments: List[Dict[str, Any]], 
-    max_gap: float = 2.0, 
-    min_duration: float = 0.5
-) -> List[Dict[str, Any]]:
-    """Merge consecutive segments from the same speaker if they're close together"""
-    if not segments:
-        return segments
+def create_subtitle_segment(start_time: float, end_time: float, text: str, 
+                          speaker: Optional[str] = None, 
+                          confidence: Optional[float] = None) -> Dict[str, Any]:
+    """
+    Create a properly formatted subtitle segment
     
-    merged: List[Dict[str, Any]] = []
-    current_segment: Optional[Dict[str, Any]] = None
+    Args:
+        start_time: Start time in seconds
+        end_time: End time in seconds
+        text: Subtitle text
+        speaker: Optional speaker identifier
+        confidence: Optional confidence score
+        
+    Returns:
+        Formatted segment dictionary
+    """
+    segment = {
+        "start": float(start_time),
+        "end": float(end_time),
+        "text": str(text).strip()
+    }
+    
+    if speaker is not None:
+        segment["speaker"] = str(speaker).strip()
+    
+    if confidence is not None:
+        segment["confidence"] = float(confidence)
+    
+    return segment
+
+def merge_subtitle_segments(segments: List[Dict[str, Any]], 
+                          max_gap: float = 0.5) -> List[Dict[str, Any]]:
+    """
+    Merge consecutive segments with small gaps for better subtitle flow
+    
+    Args:
+        segments: List of subtitle segments
+        max_gap: Maximum gap between segments to merge (seconds)
+        
+    Returns:
+        List of merged segments
+    """
+    if not segments:
+        return []
+    
+    merged = []
+    current_segment = None
     
     for segment in segments:
+        if not isinstance(segment, dict) or "start" not in segment or "end" not in segment:
+            continue
+        
         if current_segment is None:
             current_segment = segment.copy()
-        elif (segment["speaker"] == current_segment["speaker"] and
-              segment["start"] - current_segment["end"] <= max_gap):
-            # Merge with current segment
+            continue
+        
+        # Check if segments can be merged
+        gap = segment["start"] - current_segment["end"]
+        same_speaker = (
+            current_segment.get("speaker") == segment.get("speaker") or
+            (not current_segment.get("speaker") and not segment.get("speaker"))
+        )
+        
+        if gap <= max_gap and same_speaker:
+            # Merge segments
             current_segment["end"] = segment["end"]
             current_segment["text"] = f"{current_segment['text']} {segment['text']}".strip()
             
-            # Average confidence
-            curr_conf = current_segment.get("confidence", 0)
-            seg_conf = segment.get("confidence", 0)
-            current_segment["confidence"] = (curr_conf + seg_conf) / 2
-            
-            # Sum word count
-            current_segment["word_count"] = (
-                current_segment.get("word_count", 0) + segment.get("word_count", 0)
-            )
+            # Update confidence (average)
+            if "confidence" in current_segment and "confidence" in segment:
+                curr_conf = current_segment["confidence"]
+                new_conf = segment["confidence"]
+                current_segment["confidence"] = (curr_conf + new_conf) / 2
         else:
-            # Different speaker or gap too large - finalize current segment
-            if current_segment["end"] - current_segment["start"] >= min_duration:
-                merged.append(current_segment)
+            # Can't merge, add current segment and start new one
+            merged.append(current_segment)
             current_segment = segment.copy()
     
-    # Don't forget the last segment
-    if current_segment and current_segment["end"] - current_segment["start"] >= min_duration:
+    # Add the last segment
+    if current_segment is not None:
         merged.append(current_segment)
     
     return merged
-
-def _simple_alignment_fallback(
-    transcription_data: List[Dict[str, Any]], 
-    diarization_segments: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
-    """Simple fallback alignment when enhanced method fails"""
-    try:
-        combined_segments: List[Dict[str, Any]] = []
-        
-        for d_segment in diarization_segments:
-            if not isinstance(d_segment, dict) or "start" not in d_segment or "end" not in d_segment:
-                continue
-            
-            # Simple overlap check
-            matched_text: List[str] = []
-            for t in transcription_data:
-                if (isinstance(t, dict) and "text" in t and "start" in t and
-                    d_segment["start"] <= t["start"] < d_segment["end"]):
-                    text = t["text"].strip()
-                    if text:
-                        matched_text.append(text)
-            
-            combined_segments.append({
-                "start": d_segment["start"],
-                "end": d_segment["end"],
-                "speaker": d_segment.get("speaker", "Speaker_1"),
-                "text": " ".join(matched_text) if matched_text else "[No speech detected]"
-            })
-        
-        return combined_segments
-        
-    except Exception as e:
-        logger.error(f"Simple alignment fallback failed: {e}")
-        return []
-
-def create_test_data() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Create test data for SRT generation with proper type hints"""
-    transcription_data: List[Dict[str, Any]] = [
-        {"start": 0.0, "end": 1.5, "text": "First test segment", "confidence": 0.9},
-        {"start": 2.0, "end": 3.5, "text": "Second test segment", "confidence": 0.8}
-    ]
-    
-    diarization_segments: List[Dict[str, Any]] = [
-        {"start": 0.0, "end": 1.5, "speaker": "Speaker_1"},
-        {"start": 2.0, "end": 3.5, "speaker": "Speaker_2"}
-    ]
-    
-    return transcription_data, diarization_segments
