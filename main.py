@@ -151,7 +151,6 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'diarization', 'percentage': 80, 'message': 'Identificação de falantes concluída.'}, MessagePriority.NORMAL)
         final_segments = force_transcription_segmentation(transcription_result.segments, diarization_result["segments"])
         srt_path = generate_srt(final_segments, output_path=os.path.join(app_state.file_manager.get_data_path("temp"), f"{session_id}.srt"))
-        srt_path = generate_srt(final_segments, output_path=os.path.join(app_state.file_manager.get_data_path("temp"), f"{session_id}.srt"))
 
         final_result = {
             "text": transcription_result.text,
@@ -194,6 +193,25 @@ async def download_srt(session_id: str):
     if not session or not session.get("srt_file_path") or not os.path.exists(session["srt_file_path"]):
         return JSONResponse(status_code=404, content={"error": "SRT file not found."})
     return FileResponse(path=session["srt_file_path"], filename=f"transcription_{session_id}.srt")
+
+@app.get("/check-first-time")
+async def check_first_time():
+    """Check if this is the first time the app is being used (model not downloaded yet)."""
+    try:
+        model_path = Path("data/models_cache")
+
+        # Check if faster-whisper models exist
+        is_first_time = True
+        if model_path.exists():
+            # Check for downloaded model files
+            model_files = list(model_path.glob("**/model.bin")) + list(model_path.glob("**/pytorch_model.bin"))
+            if model_files:
+                is_first_time = False
+
+        return JSONResponse(content={"is_first_time": is_first_time})
+    except Exception as e:
+        logger.error(f"Error checking first-time status: {e}")
+        return JSONResponse(content={"is_first_time": False})
 
 @app.websocket("/ws/live/{session_id}")
 async def live_audio_websocket(websocket: WebSocket, session_id: str):
