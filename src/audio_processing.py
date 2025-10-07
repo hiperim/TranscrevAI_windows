@@ -193,3 +193,154 @@ class RobustAudioLoader:
             data = librosa.resample(y=data, orig_sr=sr, target_sr=target_sr)
             sr = target_sr
         return data.astype(np.float32), int(sr)
+# --- Live Audio Processor with Disk Buffering --- #
+
+class RecordingState(Enum):
+    IDLE = "idle"
+    RECORDING = "recording"
+    PAUSED = "paused"
+    PROCESSING = "processing"
+    COMPLETE = "complete"
+
+class LiveAudioProcessor:
+    """
+    Manages live audio recording with disk buffering (Option A - Compliance validated).
+    Uses temporary file storage to maintain low RAM usage during recording.
+    """
+    def __init__(self, temp_dir: str = "data/temp"):
+        self.temp_dir = Path(temp_dir)
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.sessions: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.RLock()
+        logger.info("LiveAudioProcessor initialized with disk buffering strategy")
+
+    async def start_recording(self, session_id: str, sample_rate: int = 16000) -> Dict[str, str]:
+        """Start a new recording session with disk buffering"""
+        with self._lock:
+            if session_id in self.sessions:
+                current_state = self.sessions[session_id].get("state")
+                if current_state != RecordingState.IDLE:
+                    raise ValueError(f"Session {session_id} already active with state: {current_state.value}")
+
+            temp_file = self.temp_dir / f"{session_id}_{int(time.time())}.wav"
+
+            self.sessions[session_id] = {
+                "state": RecordingState.RECORDING,
+                "temp_file": temp_file,
+                "sample_rate": sample_rate,
+                "start_time": time.time(),
+                "chunks_received": 0,
+                "total_bytes": 0
+            }
+
+            logger.info(f"Recording started for session {session_id}, buffering to: {temp_file}")
+            return {"status": "recording", "session_id": session_id, "temp_file": str(temp_file)}
+
+    async def pause_recording(self, session_id: str) -> Dict[str, str]:
+        """Pause active recording"""
+        with self._lock:
+            if session_id not in self.sessions:
+                raise ValueError(f"Session {session_id} not found")
+
+            session = self.sessions[session_id]
+            if session["state"] != RecordingState.RECORDING:
+                raise ValueError(f"Cannot pause session in state: {session['state'].value}")
+
+            session["state"] = RecordingState.PAUSED
+            session["pause_time"] = time.time()
+            logger.info(f"Recording paused for session {session_id}")
+            return {"status": "paused", "session_id": session_id}
+
+    async def resume_recording(self, session_id: str) -> Dict[str, str]:
+        """Resume paused recording"""
+        with self._lock:
+            if session_id not in self.sessions:
+                raise ValueError(f"Session {session_id} not found")
+
+            session = self.sessions[session_id]
+            if session["state"] != RecordingState.PAUSED:
+                raise ValueError(f"Cannot resume session in state: {session['state'].value}")
+
+            session["state"] = RecordingState.RECORDING
+            session["resume_time"] = time.time()
+            logger.info(f"Recording resumed for session {session_id}")
+            return {"status": "recording", "session_id": session_id}
+
+    async def process_audio_chunk(self, session_id: str, audio_chunk: bytes) -> Dict[str, Any]:
+        """
+        Write audio chunk to disk buffer (low memory operation).
+        Compliance: Keeps RAM usage minimal during recording.
+        """
+        with self._lock:
+            if session_id not in self.sessions:
+                raise ValueError(f"Session {session_id} not found")
+
+            session = self.sessions[session_id]
+            if session["state"] not in [RecordingState.RECORDING, RecordingState.PAUSED]:
+                raise ValueError(f"Cannot process chunk in state: {session['state'].value}")
+
+            # Write to disk buffer (not RAM)
+            with open(session["temp_file"], "ab") as f:
+                f.write(audio_chunk)
+
+            session["chunks_received"] += 1
+            session["total_bytes"] += len(audio_chunk)
+
+            return {
+                "status": "chunk_saved",
+                "chunks_received": session["chunks_received"],
+                "total_bytes": session["total_bytes"]
+            }
+
+    async def stop_recording(self, session_id: str) -> str:
+        """
+        Stop recording and return path to complete audio file for processing.
+        Transitions to PROCESSING state.
+        """
+        with self._lock:
+            if session_id not in self.sessions:
+                raise ValueError(f"Session {session_id} not found")
+
+            session = self.sessions[session_id]
+            if session["state"] not in [RecordingState.RECORDING, RecordingState.PAUSED]:
+                raise ValueError(f"Cannot stop session in state: {session['state'].value}")
+
+            session["state"] = RecordingState.PROCESSING
+            session["stop_time"] = time.time()
+            duration = session["stop_time"] - session["start_time"]
+
+            temp_file_path = str(session["temp_file"])
+            logger.info(f"Recording stopped for session {session_id}. Duration: {duration:.2f}s, File: {temp_file_path}")
+
+            return temp_file_path
+
+    async def complete_session(self, session_id: str) -> None:
+        """Mark session as complete and cleanup temporary file"""
+        with self._lock:
+            if session_id not in self.sessions:
+                return
+
+            session = self.sessions[session_id]
+            session["state"] = RecordingState.COMPLETE
+
+            # Cleanup temp file
+            if session["temp_file"].exists():
+                session["temp_file"].unlink()
+                logger.info(f"Temporary file deleted for session {session_id}")
+
+            # Remove session after brief retention
+            del self.sessions[session_id]
+
+    def get_session_state(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get current session state"""
+        with self._lock:
+            session = self.sessions.get(session_id)
+            if not session:
+                return None
+
+            return {
+                "state": session["state"].value,
+                "chunks_received": session.get("chunks_received", 0),
+                "total_bytes": session.get("total_bytes", 0),
+                "duration": time.time() - session["start_time"] if "start_time" in session else 0
+            }

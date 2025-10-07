@@ -46,7 +46,6 @@ backups/
 
 
 # Preference files
-#gemini-aider-workspace/
 *.prefs
 config/local_*
 .env.local
@@ -57,11 +56,10 @@ archive/
 backup_src_cleanup_20250924_121143/
 dev_tools/
 examples/
-static/
 .spec
-#aider.conf.yml
 #gemini.md
 mcp_server.py
+mcp_settings.json
 transcrevai-windows-3089b18f1ba0.json
 .claude/
 
