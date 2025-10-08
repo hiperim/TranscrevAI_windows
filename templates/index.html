@@ -162,10 +162,9 @@
             if (!currentFile) return;
 
             const domain = document.getElementById('upload-domain').value;
-            const formData = new FormData();
-            formData.append('file', currentFile);
-            formData.append('language', 'pt');
-            formData.append('domain', domain);
+
+            // CRITICAL FIX: Generate session_id FIRST, then connect WebSocket
+            currentSessionId = 'upload_' + Date.now();
 
             const isFirstTime = await checkFirstTimeUsage();
             if (isFirstTime) {
@@ -175,7 +174,15 @@
             showStatus('Enviando arquivo...', 5);
 
             try {
+                // Connect WebSocket FIRST with correct session_id
                 await setupWebSocketConnection();
+
+                // Send file with session_id included
+                const formData = new FormData();
+                formData.append('file', currentFile);
+                formData.append('session_id', currentSessionId);
+                formData.append('language', 'pt');
+                formData.append('domain', domain);
 
                 const response = await fetch('/upload', {
                     method: 'POST',
@@ -185,10 +192,8 @@
                 const result = await response.json();
 
                 if (result.success) {
-                    currentSessionId = result.session_id;
-                    showResults(result.result);
-                    document.getElementById('download-btn').disabled = false;
-                    showStatus('Processamento concluído!', 100);
+                    showStatus('Arquivo enviado. Processando...', 10);
+                    // Result will come via WebSocket 'complete' message
                 } else {
                     showStatus('Erro: ' + (result.error || 'Erro desconhecido'), 0);
                 }
@@ -274,11 +279,45 @@
                 case 'model_load':
                     showFirstTimeSetup('model_load', progress || 85, details || 'Carregando modelo na memória...');
                     break;
+                case 'progress':
+                    const stage = data.stage || 'processing';
+                    const percentage = data.percentage || 50;
+                    let progressMessage = data.message || 'Processando...';
+
+                    // Add estimated time if available
+                    if (data.estimated_time && percentage < 20) {
+                        progressMessage += `<br><span style="font-size: 0.85rem; color: #A0A0A0;">Tempo estimado: ${data.estimated_time}s</span>`;
+                    } else if (data.estimated_time_remaining && percentage >= 20) {
+                        progressMessage += `<br><span style="font-size: 0.85rem; color: #A0A0A0;">Tempo restante: ~${data.estimated_time_remaining}s</span>`;
+                    }
+
+                    showStatus(progressMessage, percentage);
+                    break;
                 case 'processing':
                     showStatus(message || 'Processando transcrição...', progress || 90, details);
                     break;
+                case 'complete':
+                    // Backend sends 'complete' with result data
+                    if (data.result) {
+                        showStatus('Processamento concluído!', 100);
+                        const formattedResult = {
+                            speakers_detected: data.result.num_speakers || 0,
+                            segments_count: data.result.segments ? data.result.segments.length : 0,
+                            processing_time: data.result.processing_time || 'N/A',
+                            processing_ratio: data.result.processing_ratio ? data.result.processing_ratio + 'x' : 'N/A',
+                            transcription: data.result.segments || []
+                        };
+                        showResults(formattedResult);
+                        document.getElementById('download-btn').disabled = false;
+                    } else {
+                        showStatus('Processamento concluído!', 100);
+                    }
+                    break;
                 case 'completed':
                     showStatus('Processamento concluído!', 100);
+                    break;
+                case 'warning':
+                    showStatus('Aviso: ' + (message || 'Aviso'), progress || 90);
                     break;
                 case 'error':
                     showStatus('Erro: ' + (message || 'Erro desconhecido'), 0);
@@ -297,7 +336,10 @@
 
             status.classList.add('show');
 
-            if (details) {
+            // Check if text already contains HTML (from progress case with time estimates)
+            if (text.includes('<br>') || text.includes('<span>')) {
+                statusText.innerHTML = text;
+            } else if (details) {
                 statusText.innerHTML = '<strong>' + text + '</strong><br><span style="font-size: 0.9rem; color: #A0A0A0;">' + details + '</span>';
             } else {
                 statusText.textContent = text;

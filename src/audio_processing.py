@@ -9,13 +9,15 @@ import asyncio
 import logging
 import os
 import queue
+import subprocess
+import tempfile
 import threading
 import time
 import wave
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import soundfile as sf
@@ -74,8 +76,8 @@ class VADPreprocessor:
         try:
             audio_data, _ = librosa.load(audio_path, sr=self.sample_rate, mono=True)
             # Use librosa's built-in effect to split by non-silent parts.
-            # This is a robust way to simulate a VAD.
-            speech_chunks = librosa.effects.split(audio_data, top_db=30) # 30dB is a reasonable threshold
+            # Optimized parameters for PT-BR: lower top_db for better sensitivity
+            speech_chunks = librosa.effects.split(audio_data, top_db=20, frame_length=512, hop_length=128)
             timestamps = [{'start': start / self.sample_rate, 'end': end / self.sample_rate} for start, end in speech_chunks]
             
             logger.info(f"VAD processing found {len(timestamps)} speech segments.")
@@ -94,25 +96,114 @@ class QuantizationLevel(Enum):
 class AudioQualityMetrics:
     clarity_score: float
     recommended_quantization: QuantizationLevel
+    has_issues: bool = False
+    warnings: List[str] = field(default_factory=list)
+    rms_level: float = 0.0
+    snr_estimate: float = 0.0
+    clipping_detected: bool = False
 
 class AudioQualityAnalyzer:
-    """Analyzes audio quality to recommend an optimal quantization level."""
+    """
+    Analyzes audio quality and provides warnings to users about potential issues.
+
+    Detects:
+    - Low audio volume (RMS < threshold)
+    - Excessive noise (poor SNR)
+    - Audio clipping (peak detection)
+    - Poor spectral clarity
+    """
+
+    def __init__(self):
+        self.low_volume_threshold = 0.01  # RMS below this indicates very low volume
+        self.normal_volume_threshold = 0.05  # RMS below this indicates low volume
+        self.clipping_threshold = 0.95  # Peak amplitude above this indicates clipping
+        self.poor_clarity_threshold = 0.4  # Clarity below this indicates poor quality
+
     def analyze_audio_quality(self, audio_path: str) -> AudioQualityMetrics:
+        """
+        Comprehensive audio quality analysis with user-facing warnings.
+
+        Returns:
+            AudioQualityMetrics with quality scores and user warnings
+        """
         librosa = _get_librosa()
         if not librosa:
-            logger.warning("Librosa not available, defaulting to INT8 quantization.")
-            return AudioQualityMetrics(clarity_score=0.5, recommended_quantization=QuantizationLevel.INT8)
+            logger.warning("Librosa not available, skipping quality analysis.")
+            return AudioQualityMetrics(
+                clarity_score=0.5,
+                recommended_quantization=QuantizationLevel.INT8,
+                has_issues=False,
+                warnings=[]
+            )
 
         try:
-            y, sr = librosa.load(audio_path, sr=16000, duration=30)
+            # Load first 30 seconds for analysis (sufficient for quality assessment)
+            y, sr = librosa.load(audio_path, sr=16000, duration=30, mono=True)
+
+            warnings = []
+            has_issues = False
+
+            # 1. RMS (Root Mean Square) - Volume level analysis
+            rms = np.sqrt(np.mean(y**2))
+
+            if rms < self.low_volume_threshold:
+                warnings.append("⚠️ Volume muito baixo detectado. Considere aumentar o volume da gravação.")
+                has_issues = True
+            elif rms < self.normal_volume_threshold:
+                warnings.append("⚠️ Volume baixo detectado. A qualidade da transcrição pode ser afetada.")
+                has_issues = True
+
+            # 2. Clipping detection - Audio distortion
+            peak_amplitude = np.max(np.abs(y))
+            clipping_detected = peak_amplitude >= self.clipping_threshold
+
+            if clipping_detected:
+                warnings.append("⚠️ Distorção de áudio detectada (clipping). Reduza o volume da entrada.")
+                has_issues = True
+
+            # 3. Spectral clarity - Overall audio quality
             spectral_centroids = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
             centroid_mean = np.mean(spectral_centroids)
             clarity = 1.0 - min(1.0, np.std(spectral_centroids) / centroid_mean) if centroid_mean > 0 else 0.5
-            quantization = QuantizationLevel.FLOAT16 if clarity > 0.8 else QuantizationLevel.INT8
-            return AudioQualityMetrics(clarity_score=clarity, recommended_quantization=quantization)
+
+            if clarity < self.poor_clarity_threshold:
+                warnings.append("⚠️ Qualidade de áudio ruim detectada. Verifique o ambiente e o microfone.")
+                has_issues = True
+
+            # 4. Noise estimation (simple SNR estimate using energy ratio)
+            # Calculate energy in high-frequency bands (noise) vs low-frequency (speech)
+            frame_length = 2048
+            hop_length = 512
+            spectral_rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr, roll_percent=0.85)[0]
+            snr_estimate = np.mean(spectral_rolloff) / (sr / 2)  # Normalized estimate
+
+            if snr_estimate < 0.3:  # Poor SNR indicates excessive noise
+                warnings.append("⚠️ Ruído de fundo excessivo detectado. A transcrição pode ter erros.")
+                has_issues = True
+
+            # Determine quantization based on overall quality
+            quantization = QuantizationLevel.FLOAT16 if clarity > 0.7 and not has_issues else QuantizationLevel.INT8
+
+            logger.info(f"Audio quality analysis: RMS={rms:.4f}, Clarity={clarity:.2f}, SNR_Est={snr_estimate:.2f}, Clipping={clipping_detected}, Issues={has_issues}")
+
+            return AudioQualityMetrics(
+                clarity_score=clarity,
+                recommended_quantization=quantization,
+                has_issues=has_issues,
+                warnings=warnings,
+                rms_level=float(rms),
+                snr_estimate=float(snr_estimate),
+                clipping_detected=clipping_detected
+            )
+
         except Exception as e:
             logger.error(f"Audio quality analysis failed: {e}")
-            return AudioQualityMetrics(clarity_score=0.5, recommended_quantization=QuantizationLevel.INT8)
+            return AudioQualityMetrics(
+                clarity_score=0.5,
+                recommended_quantization=QuantizationLevel.INT8,
+                has_issues=False,
+                warnings=[]
+            )
 
 # --- Real-time Audio Recording --- #
 
@@ -207,7 +298,7 @@ class LiveAudioProcessor:
     Manages live audio recording with disk buffering (Option A - Compliance validated).
     Uses temporary file storage to maintain low RAM usage during recording.
     """
-    def __init__(self, temp_dir: str = None):
+    def __init__(self, temp_dir: Optional[str] = None):
         if temp_dir is None:
             from src.file_manager import FileManager
             temp_dir = FileManager.get_data_path("temp")
@@ -222,7 +313,7 @@ class LiveAudioProcessor:
         with self._lock:
             if session_id in self.sessions:
                 current_state = self.sessions[session_id].get("state")
-                if current_state != RecordingState.IDLE:
+                if current_state and current_state != RecordingState.IDLE:
                     raise ValueError(f"Session {session_id} already active with state: {current_state.value}")
 
             temp_file = self.temp_dir / f"{session_id}_{int(time.time())}.wav"
@@ -246,8 +337,9 @@ class LiveAudioProcessor:
                 raise ValueError(f"Session {session_id} not found")
 
             session = self.sessions[session_id]
-            if session["state"] != RecordingState.RECORDING:
-                raise ValueError(f"Cannot pause session in state: {session['state'].value}")
+            current_state = session.get("state")
+            if current_state and current_state != RecordingState.RECORDING:
+                raise ValueError(f"Cannot pause session in state: {current_state.value}")
 
             session["state"] = RecordingState.PAUSED
             session["pause_time"] = time.time()
@@ -261,8 +353,9 @@ class LiveAudioProcessor:
                 raise ValueError(f"Session {session_id} not found")
 
             session = self.sessions[session_id]
-            if session["state"] != RecordingState.PAUSED:
-                raise ValueError(f"Cannot resume session in state: {session['state'].value}")
+            current_state = session.get("state")
+            if current_state and current_state != RecordingState.PAUSED:
+                raise ValueError(f"Cannot resume session in state: {current_state.value}")
 
             session["state"] = RecordingState.RECORDING
             session["resume_time"] = time.time()
@@ -276,19 +369,24 @@ class LiveAudioProcessor:
         """
         with self._lock:
             if session_id not in self.sessions:
-                raise ValueError(f"Session {session_id} not found")
+                # Session already completed/deleted - ignore late chunks from frontend
+                logger.debug(f"Ignoring chunk for completed/deleted session {session_id}")
+                return {"status": "session_completed", "chunks_received": 0}
 
             session = self.sessions[session_id]
-            if session["state"] not in [RecordingState.RECORDING, RecordingState.PAUSED]:
-                raise ValueError(f"Cannot process chunk in state: {session['state'].value}")
+            current_state = session.get("state")
+            if current_state and current_state not in [RecordingState.RECORDING, RecordingState.PAUSED]:
+                # Session in PROCESSING/COMPLETE state - ignore late chunks
+                logger.debug(f"Ignoring chunk for session {session_id} in state {current_state.value}")
+                return {"status": "session_not_recording", "chunks_received": session.get("chunks_received", 0)}
 
             # Store chunks in memory buffer
             if "audio_buffer" not in session:
                 session["audio_buffer"] = []
 
             session["audio_buffer"].append(audio_chunk)
-            session["chunks_received"] += 1
-            session["total_bytes"] += len(audio_chunk)
+            session["chunks_received"] = session.get("chunks_received", 0) + 1
+            session["total_bytes"] = session.get("total_bytes", 0) + len(audio_chunk)
 
             return {
                 "status": "chunk_buffered",
@@ -298,7 +396,7 @@ class LiveAudioProcessor:
 
     async def stop_recording(self, session_id: str) -> str:
         """
-        Stop recording, generate valid WAV file, and return path for processing.
+        Stop recording, convert WebM to WAV, and return path for processing.
         Transitions to PROCESSING state.
         """
         with self._lock:
@@ -306,35 +404,105 @@ class LiveAudioProcessor:
                 raise ValueError(f"Session {session_id} not found")
 
             session = self.sessions[session_id]
-            if session["state"] not in [RecordingState.RECORDING, RecordingState.PAUSED]:
-                raise ValueError(f"Cannot stop session in state: {session['state'].value}")
+            current_state = session.get("state")
+            if current_state and current_state not in [RecordingState.RECORDING, RecordingState.PAUSED]:
+                raise ValueError(f"Cannot stop session in state: {current_state.value}")
 
             session["state"] = RecordingState.PROCESSING
             session["stop_time"] = time.time()
-            duration = session["stop_time"] - session["start_time"]
+            duration = session["stop_time"] - session.get("start_time", session["stop_time"])
 
-            # Generate valid WAV file from in-memory buffer
+            # Get audio chunks from buffer
             audio_buffer = session.get("audio_buffer", [])
             if not audio_buffer:
                 logger.warning(f"Session {session_id} has no audio data")
                 raise ValueError("No audio data recorded")
 
             audio_data = b''.join(audio_buffer)
-            temp_file_path = str(session["temp_file"])
+            temp_file_path = str(session.get("temp_file"))
 
-            # Write complete WAV file with proper headers
-            with wave.open(temp_file_path, 'wb') as wav_file:
-                wav_file.setnchannels(1)  # Mono
-                wav_file.setsampwidth(2)  # 16-bit (2 bytes)
-                wav_file.setframerate(session["sample_rate"])
-                wav_file.writeframes(audio_data)
+            # Write raw WebM data to temporary file
+            webm_temp = temp_file_path.replace('.wav', '_raw.webm')
+            with open(webm_temp, 'wb') as f:
+                f.write(audio_data)
+
+            logger.info(f"WebM data written: {len(audio_data)} bytes to {webm_temp}")
+
+            # Convert WebM to WAV using FFMPEG
+            try:
+                await self._convert_webm_to_wav(webm_temp, temp_file_path, session.get("sample_rate", 16000))
+                logger.info(f"Successfully converted WebM to WAV: {temp_file_path}")
+
+                # Clean up temporary WebM file
+                Path(webm_temp).unlink(missing_ok=True)
+
+            except Exception as e:
+                logger.error(f"Failed to convert WebM to WAV: {e}")
+                # Clean up
+                Path(webm_temp).unlink(missing_ok=True)
+                raise ValueError(f"Audio conversion failed: {e}")
 
             # Clear buffer to free memory
-            session["audio_buffer"].clear()
+            if "audio_buffer" in session:
+                session["audio_buffer"].clear()
 
-            logger.info(f"Recording stopped for session {session_id}. Duration: {duration:.2f}s, Audio size: {len(audio_data)} bytes, File: {temp_file_path}")
+            logger.info(f"Recording stopped for session {session_id}. Duration: {duration:.2f}s, File: {temp_file_path}")
 
             return temp_file_path
+
+    async def _convert_webm_to_wav(self, input_path: str, output_path: str, sample_rate: int = 16000):
+        """
+        Convert WebM audio to WAV using FFMPEG.
+        Uses ffmpeg from static_ffmpeg package or system installation.
+        """
+        try:
+            # Try using static_ffmpeg first (bundled with app)
+            try:
+                from static_ffmpeg import run
+                ffmpeg_cmd = run.get_or_fetch_platform_executables_else_raise()
+                ffmpeg_path = ffmpeg_cmd[0]  # Get ffmpeg executable path
+                logger.debug(f"Using static_ffmpeg from: {ffmpeg_path}")
+            except Exception as e:
+                # Fallback to system ffmpeg
+                ffmpeg_path = "ffmpeg"
+                logger.debug(f"Using system ffmpeg: {e}")
+
+            # FFMPEG command to convert WebM → WAV (mono, 16kHz, 16-bit PCM)
+            cmd = [
+                ffmpeg_path,
+                '-i', input_path,           # Input file
+                '-vn',                       # No video
+                '-acodec', 'pcm_s16le',     # 16-bit PCM
+                '-ar', str(sample_rate),    # Sample rate
+                '-ac', '1',                  # Mono channel
+                '-y',                        # Overwrite output
+                output_path                  # Output file
+            ]
+
+            logger.debug(f"Running FFMPEG: {' '.join(cmd)}")
+
+            # Run ffmpeg synchronously (but within async context)
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,  # 30 second timeout
+                check=True
+            )
+
+            logger.info(f"FFMPEG conversion successful: {input_path} → {output_path}")
+
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("FFMPEG conversion timed out (>30s)")
+        except subprocess.CalledProcessError as e:
+            stderr_bytes = e.stderr
+            if stderr_bytes:
+                stderr = stderr_bytes.decode('utf-8', errors='ignore')
+            else:
+                stderr = 'No error output'
+            raise RuntimeError(f"FFMPEG failed: {stderr}")
+        except FileNotFoundError:
+            raise RuntimeError("FFMPEG not found. Please install ffmpeg or check static_ffmpeg installation.")
 
     async def complete_session(self, session_id: str) -> None:
         """Mark session as complete and cleanup temporary file"""
@@ -346,8 +514,9 @@ class LiveAudioProcessor:
             session["state"] = RecordingState.COMPLETE
 
             # Cleanup temp file
-            if session["temp_file"].exists():
-                session["temp_file"].unlink()
+            temp_file = session.get("temp_file")
+            if temp_file and temp_file.exists():
+                temp_file.unlink()
                 logger.info(f"Temporary file deleted for session {session_id}")
 
             # Remove session after brief retention
@@ -360,9 +529,10 @@ class LiveAudioProcessor:
             if not session:
                 return None
 
+            state = session.get("state")
             return {
-                "state": session["state"].value,
+                "state": state.value if state else None,
                 "chunks_received": session.get("chunks_received", 0),
                 "total_bytes": session.get("total_bytes", 0),
-                "duration": time.time() - session["start_time"] if "start_time" in session else 0
+                "duration": time.time() - session.get("start_time", time.time())
             }
