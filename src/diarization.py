@@ -26,13 +26,6 @@ from sklearn.metrics.pairwise import cosine_similarity
 logger = logging.getLogger(__name__)
 
 @dataclass
-class SpeakerEmbedding:
-    embedding: np.ndarray
-    confidence: float
-    segment_start: float
-    segment_end: float
-
-@dataclass
 class DiarizationSegment:
     start_time: float
     end_time: float
@@ -41,105 +34,87 @@ class DiarizationSegment:
     text: Optional[str] = None
 
 
-class SpeakerEmbeddingExtractor:
-    """Speaker embedding extraction for diarization"""
-    
-    def __init__(self, device: str = "cpu"):
-        self.model = None
-        self.model_loaded = False
-        self._load_lock = threading.Lock()
-
-    async def load_embedding_model(self):
-        """Load the speaker embedding model"""
-        with self._load_lock:
-            if self.model_loaded: 
-                return
-            
-            logger.info("Simulating speaker embedding model load...")
-            await asyncio.sleep(0.1)  # Simulate load time
-            self.model = lambda seg: np.random.randn(1, 192)  # Mock model
-            self.model_loaded = True
-            logger.info("Speaker embedding model ready.")
-
-    async def extract_embeddings(self, audio_path: str, segments: List[Dict[str, Any]]) -> List[SpeakerEmbedding]:
-        """Extract speaker embeddings from audio segments"""
-        if not self.model_loaded:
-            await self.load_embedding_model()
-        
-        # This is a mock implementation. A real one would use a proper model.
-        return [
-            SpeakerEmbedding(
-                np.random.rand(192), 
-                0.9, 
-                s.get('start', 0.0), 
-                s.get('end', 0.0)
-            ) 
-            for s in segments
-        ]
-
-
 class TwoPassDiarizer:
-    """Two-pass speaker diarization system"""
-    
+    """Simplified diarization system - placeholder implementation"""
+
     def __init__(self, device: str = "cpu"):
-        self.embedding_extractor = SpeakerEmbeddingExtractor(device)
+        logger.debug("TwoPassDiarizer initialized (simplified)")
 
     async def diarize(self, audio_path: str, transcription_segments: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Perform two-pass speaker diarization"""
-        logger.info(f"Starting two-pass diarization for {audio_path}")
-        
-        embeddings = await self.embedding_extractor.extract_embeddings(audio_path, transcription_segments)
-        
-        if not embeddings:
-            logger.warning("No embeddings extracted, returning single speaker result.")
+        """Pause-based diarization with adaptive threshold"""
+        logger.info(f"Pause-based diarization for {audio_path}")
+
+        try:
+            import librosa
+
+            # 1. Load audio
+            y, sr = librosa.load(audio_path, sr=16000, mono=True)
+
+            # 2. Detect non-silent segments
+            segments = librosa.effects.split(y, top_db=30)
+
+            if len(segments) == 0:
+                logger.warning("No speech segments detected, defaulting to single speaker")
+                for seg in transcription_segments:
+                    seg['speaker'] = 'SPEAKER_00'
+                return {"segments": transcription_segments, "num_speakers": 1}
+
+            # 3. Calculate adaptive pause threshold
+            pause_durations = []
+            for i in range(1, len(segments)):
+                prev_end = segments[i-1][1] / sr
+                curr_start = segments[i][0] / sr
+                pause_durations.append(curr_start - prev_end)
+
+            if pause_durations:
+                # Threshold = 75th percentile of pauses (adaptive)
+                pause_threshold = float(np.percentile(pause_durations, 75))
+                pause_threshold = max(pause_threshold, 0.3)  # Minimum 300ms
+                pause_threshold = min(pause_threshold, 1.0)  # Maximum 1s
+            else:
+                pause_threshold = 0.5  # Fallback
+
+            logger.info(f"Adaptive pause threshold: {pause_threshold:.2f}s")
+
+            # 4. Detect speaker changes on long pauses
+            diarization_segments = []
+            current_speaker = 'SPEAKER_00'
+
+            for i, (start_sample, end_sample) in enumerate(segments):
+                start_time = float(start_sample / sr)
+                end_time = float(end_sample / sr)
+
+                # Check pause before this segment
+                if i > 0:
+                    prev_end = float(segments[i-1][1] / sr)
+                    pause_duration = start_time - prev_end
+
+                    if pause_duration > pause_threshold:
+                        # Alternate speaker on long pause
+                        current_speaker = 'SPEAKER_01' if current_speaker == 'SPEAKER_00' else 'SPEAKER_00'
+
+                diarization_segments.append({
+                    'start': start_time,
+                    'end': end_time,
+                    'speaker': current_speaker
+                })
+
+            # 5. Detect number of unique speakers
+            unique_speakers = len(set(seg['speaker'] for seg in diarization_segments))
+
+            logger.info(f"Detected {unique_speakers} speakers via pause analysis")
+
+            return {
+                "segments": diarization_segments,
+                "num_speakers": unique_speakers
+            }
+
+        except Exception as e:
+            logger.error(f"Pause-based diarization failed: {e}", exc_info=True)
+            # Fallback to single speaker
             for seg in transcription_segments:
-                seg['speaker'] = 'Speaker_1'
+                seg['speaker'] = 'SPEAKER_00'
             return {"segments": transcription_segments, "num_speakers": 1}
-
-        embedding_matrix = np.array([e.embedding for e in embeddings]).squeeze()
-        num_speakers = self._estimate_speaker_count(embedding_matrix)
-        
-        clustering = AgglomerativeClustering(
-            n_clusters=num_speakers, 
-            linkage='average', 
-            metric='cosine'
-        )
-        labels = clustering.fit_predict(embedding_matrix)
-        
-        # Create speaker profiles
-        speaker_profiles = {}
-        for i in range(num_speakers):
-            cluster_embeddings = [embedding_matrix[j] for j, label in enumerate(labels) if label == i]
-            speaker_profiles[i] = np.mean(cluster_embeddings, axis=0)
-        
-        # Normalize speaker profiles
-        for profile in speaker_profiles.values():
-            profile /= np.linalg.norm(profile)
-
-        final_segments = []
-        for i, segment in enumerate(transcription_segments):
-            embedding = embedding_matrix[i]
-            
-            # FIXED: Proper use of max() function with key parameter using lambda
-            similarities = {}
-            for speaker_id, profile in speaker_profiles.items():
-                similarity = cosine_similarity(
-                    embedding.reshape(1, -1), 
-                    profile.reshape(1, -1)
-                )[0][0]
-                similarities[speaker_id] = similarity
-            
-            # Use max with proper key function - FIXED PYLANCE ERROR
-            best_speaker_id = max(similarities.keys(), key=lambda x: similarities[x])
-            
-            segment['speaker'] = f"Speaker_{best_speaker_id + 1}"
-            final_segments.append(segment)
-
-        return {"segments": final_segments, "num_speakers": num_speakers}
-
-    def _estimate_speaker_count(self, embeddings: np.ndarray) -> int:
-        """Estimate the number of speakers from embeddings"""
-        return 2  # Mocking 2 speakers for consistency
 
 
 # --- Critical Alignment Function (Preserved and Corrected) ---

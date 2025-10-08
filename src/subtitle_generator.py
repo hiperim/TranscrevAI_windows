@@ -271,7 +271,8 @@ class SRTGenerator:
             try:
                 # Determine output path
                 if output_path is None:
-                    output_path = Path("data/subtitles")
+                    from src.file_manager import FileManager
+                    output_path = Path(FileManager.get_data_path("subtitles"))
                 else:
                     output_path = Path(output_path)
                 
@@ -364,29 +365,26 @@ class SRTGenerator:
             f.write(content)
 
     def _clean_content_for_encoding(self, content: str) -> str:
-        """Clean content to be compatible with various encodings"""
+        """Clean content to preserve PT-BR characters with UTF-8 encoding"""
         import unicodedata
-        
-        # Normalize unicode
-        content = unicodedata.normalize('NFKD', content)
-        
-        # Replace problematic characters
+
+        # Normalize unicode to NFC (composed form) for better compatibility
+        content = unicodedata.normalize('NFC', content)
+
+        # Replace only truly problematic Vietnamese-style characters with PT-BR equivalents
         problematic_chars = {
             'ắ': 'á', 'ằ': 'à', 'ẵ': 'ã', 'ẳ': 'ả', 'ặ': 'ạ',
             'ế': 'é', 'ề': 'è', 'ễ': 'ẽ', 'ể': 'ẻ', 'ệ': 'ẹ',
             'ố': 'ó', 'ồ': 'ò', 'ỗ': 'õ', 'ổ': 'ỏ', 'ộ': 'ọ',
             'ứ': 'ú', 'ừ': 'ù', 'ữ': 'ũ', 'ử': 'ủ', 'ự': 'ụ',
-            'ý': 'ý', 'ỳ': 'ỳ', 'ỹ': 'ỹ', 'ỷ': 'ỷ', 'ỵ': 'ỵ',
         }
-        
+
         for old, new in problematic_chars.items():
             content = content.replace(old, new)
-        
-        # Remove or replace any remaining non-ASCII characters as last resort
-        # This is only for extreme compatibility cases
-        content = content.encode('ascii', 'replace').decode('ascii')
-        content = content.replace('?', '')  # Remove replacement characters
-        
+
+        # NO ASCII ENCODING - Preserve PT-BR characters (á, é, í, ó, ú, ã, õ, ç, etc.)
+        # UTF-8 encoding (used in _write_file_with_encoding) handles all PT-BR characters correctly
+
         return content
 
     def validate_srt_content(self, segments: List[Dict[str, Any]]) -> Dict[str, Any]:

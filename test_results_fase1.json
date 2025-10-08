@@ -1,0 +1,57 @@
+{
+  "model": "Systran/faster-whisper-medium (language=pt)",
+  "timestamp": "2025-10-07 17:12:08",
+  "summary": {
+    "avg_speed_ratio": 1.088747705532809,
+    "avg_confidence": 0.6458396556726429,
+    "avg_accuracy": 14.457902457585709,
+    "speed_pass": true,
+    "accuracy_pass": false
+  },
+  "individual_results": [
+    {
+      "file": "d.speakers.wav",
+      "duration": 21.056,
+      "processing_time": 17.55269742012024,
+      "speed_ratio": 0.833619748295984,
+      "confidence": 0.8048059021438224,
+      "accuracy": 22.093023255813954,
+      "num_speakers": 1,
+      "num_segments": 5,
+      "transcribed_text": "então, rogério, eu sei que é o seu primeiro dia aqui na empresa.  mas eu não gostaria que você me chamasse de você na empresa.  sabe, acho que é um pouco informal demais.  a gente têm uma hierarquia a..."
+    },
+    {
+      "file": "q.speakers.wav",
+      "duration": 14.506666666666666,
+      "processing_time": 18.11594581604004,
+      "speed_ratio": 1.2488014119512896,
+      "confidence": 0.7297458927775808,
+      "accuracy": 16.99346405228758,
+      "num_speakers": 1,
+      "num_segments": 7,
+      "transcribed_text": "eu acho que assustou um pouco os homens, sabe?  tipo, eles têm um pouco assim, com o pé atrás, não sei.  você têm medo?  mas séria, séria eu não tenho, não.  você têm medo dela, confuso?  eu não sei, ..."
+    },
+    {
+      "file": "t.speakers.wav",
+      "duration": 9.258666666666667,
+      "processing_time": 12.601468324661255,
+      "speed_ratio": 1.3610456859873188,
+      "confidence": 0.6534014060646428,
+      "accuracy": 14.093959731543624,
+      "num_speakers": 1,
+      "num_segments": 3,
+      "transcribed_text": "opa, caramba! o que você acha que aconteceu com o tapa que ele deu?  o cara mexeu com a mulher dele, mano.  você faria o mesmo?"
+    },
+    {
+      "file": "t2.speakers.wav",
+      "duration": 10.602666666666666,
+      "processing_time": 9.664584875106812,
+      "speed_ratio": 0.9115239758966435,
+      "confidence": 0.3954054217045251,
+      "accuracy": 4.651162790697675,
+      "num_speakers": 1,
+      "num_segments": 1,
+      "transcribed_text": "o gelo funciona essas luvas muito elegante o sapato"
+    }
+  ]
+}

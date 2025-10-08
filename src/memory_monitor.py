@@ -1,6 +1,6 @@
-# memory_monitor.py - FINAL AND CORRECTED
+# memory_monitor.py - Simplified implementation
 """
-Advanced Memory Monitor and Leak Detection for TranscrevAI
+Memory Monitor with Intelligent Cache for TranscrevAI
 """
 
 import logging
@@ -40,7 +40,7 @@ class IntelligentCache:
                 self._access_times[key] = time.time()
                 return self._cache[key]
             return None
-                
+
     def put(self, key: str, value: Any, size_mb: Optional[float] = None):
         with self._lock:
             size_mb = size_mb or (sys.getsizeof(value) / (1024 * 1024))
@@ -52,14 +52,13 @@ class IntelligentCache:
             self._access_times[key] = time.time()
             self._item_sizes[key] = size_mb
             self._total_size_mb += size_mb
-            
+
     def _evict_lru(self) -> bool:
         with self._lock:
             if not self._access_times: return False
-            # CORRECTED: Correctly find the key with the minimum timestamp value
             lru_key = min(self._access_times, key=lambda k: self._access_times[k])
             return self.remove(lru_key)
-        
+
     def remove(self, key: str) -> bool:
         with self._lock:
             if key in self._cache:
@@ -69,31 +68,18 @@ class IntelligentCache:
             return False
 
 class MemoryMonitor:
-    """Advanced memory monitor with leak detection and intelligent management"""
-    def __init__(self, max_memory_mb: float = 2048.0, interval: float = 5.0):
+    """Simplified memory monitor with intelligent cache management"""
+    def __init__(self, max_memory_mb: float = 2048.0):
         self.max_memory_mb = max_memory_mb
-        self.monitoring_interval = interval
-        self.is_monitoring = False
-        self.monitor_thread: Optional[threading.Thread] = None
-        self._stop_event = threading.Event()
         self.caches: Dict[str, IntelligentCache] = {}
 
     def start_monitoring(self):
-        if self.is_monitoring: return
-        self.is_monitoring = True
-        self._stop_event.clear()
-        self.monitor_thread = threading.Thread(target=self._monitoring_loop, name="MemoryMonitor", daemon=True)
-        self.monitor_thread.start()
-        
+        """Placeholder for compatibility - monitoring is passive"""
+        logger.debug("MemoryMonitor: passive monitoring mode")
+
     def stop_monitoring(self):
-        if not self.is_monitoring: return
-        self.is_monitoring = False
-        self._stop_event.set()
-        if self.monitor_thread: self.monitor_thread.join(timeout=5.0)
-            
-    def _monitoring_loop(self):
-        while not self._stop_event.wait(self.monitoring_interval):
-            pass # In a real implementation, would take snapshots
+        """Placeholder for compatibility"""
+        pass
 
     def register_cache(self, name: str, max_size_mb: float = 256.0) -> IntelligentCache:
         cache = IntelligentCache(max_size_mb)

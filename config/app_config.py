@@ -15,17 +15,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AppConfig:
-    """Application configuration with validation and defaults"""
-    
-    # === CORE DIRECTORIES ===
-    base_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent)
-    src_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent / "src")
-    data_dir: Path = field(default_factory=lambda: Path("c:/TranscrevAI_windows/data"))
-    recordings_dir: Path = field(default_factory=lambda: Path("c:/TranscrevAI_windows/data/recordings"))
-    temp_dir: Path = field(default_factory=lambda: Path("c:/TranscrevAI_windows/temp"))
-    logs_dir: Path = field(default_factory=lambda: Path("c:/TranscrevAI_windows/logs"))
-    models_dir: Path = field(default_factory=lambda: Path("c:/TranscrevAI_windows/models"))
-    changes_dir: Path = field(default_factory=lambda: Path("C:/TranscrevAI_windows/.claude/CHANGES_MADE"))
+    """Application configuration with validation and defaults - portable paths"""
+
+    # === CORE DIRECTORIES (portable, relative to project root) ===
+    base_dir: Path = field(init=False)
+    src_dir: Path = field(init=False)
+    data_dir: Path = field(init=False)
+    recordings_dir: Path = field(init=False)
+    temp_dir: Path = field(init=False)
+    logs_dir: Path = field(init=False)
+    models_dir: Path = field(init=False)
+    changes_dir: Path = field(init=False)
     
     # === MODEL CONFIGURATION ===
     model_name: str = "medium"
@@ -59,6 +59,16 @@ class AppConfig:
     enable_memory_profiling: bool = False
     
     def __post_init__(self):
+        # Initialize portable paths (relative to project root)
+        self.base_dir = Path(__file__).parent.parent.resolve()
+        self.src_dir = self.base_dir / "src"
+        self.data_dir = self.base_dir / "data"
+        self.recordings_dir = self.data_dir / "recordings"
+        self.temp_dir = self.base_dir / "temp"
+        self.logs_dir = self.base_dir / "logs"
+        self.models_dir = self.base_dir / "models"
+        self.changes_dir = self.base_dir / ".claude" / "CHANGES_MADE"
+
         self._validate_and_create_directories()
         self._load_environment_overrides()
         self._validate_settings()
