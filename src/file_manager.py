@@ -56,17 +56,47 @@ class SecurityError(RuntimeError):
 
 
 class FileManager:
+    """Enhanced file manager with improved security and functionality"""
+
     @staticmethod
     def save_uploaded_file(file_obj, filename: str) -> str:
         """Save an uploaded file to the data directory and return its path."""
+        # SECURITY: Sanitize filename to prevent path traversal
+        safe_filename = FileManager._sanitize_filename(filename)
+
         save_dir = FileManager.get_data_path("inputs")
-        output_path = os.path.join(save_dir, filename)
+        output_path = os.path.join(save_dir, safe_filename)
         FileManager.ensure_directory_exists(save_dir)
         with open(output_path, "wb") as f:
             f.write(file_obj.read())
         logger.info(f"Uploaded file saved: {output_path}")
         return output_path
-    """Enhanced file manager with improved security and functionality"""
+
+    @staticmethod
+    def _sanitize_filename(filename: str) -> str:
+        """Sanitize filename to prevent path traversal and malicious filenames"""
+        import re
+
+        # Remove path separators and dangerous characters
+        # Keep only alphanumeric, dash, underscore, and dot
+        safe_name = re.sub(r'[^\w\-.]', '_', filename)
+
+        # Prevent hidden files and parent directory access
+        safe_name = safe_name.lstrip('.')
+
+        # Prevent empty filename
+        if not safe_name or safe_name == '_':
+            safe_name = f"file_{int(time.time())}"
+
+        # Limit filename length
+        if len(safe_name) > 255:
+            name_parts = safe_name.rsplit('.', 1)
+            if len(name_parts) == 2:
+                safe_name = name_parts[0][:240] + '.' + name_parts[1]
+            else:
+                safe_name = safe_name[:255]
+
+        return safe_name
     
     @staticmethod
     def sanitize_path(user_input: str, base_dir: str) -> str:
@@ -96,55 +126,42 @@ class FileManager:
     
     @staticmethod
     def get_data_path(subdir: str = "") -> str:
-        """Get data directory path with validation - FIXED ALL IMPORT ERRORS"""
+        """Get data directory path with simplified config access"""
+        data_dir = None
+
+        # Strategy 1: Direct import from config.app_config
         try:
-            # Multiple import strategies for robust config access
-            data_dir = None
-            
-            # Strategy 1: Direct import from config.app_config
+            from config.app_config import get_config
+            config = get_config()
+            data_dir = config.data_dir
+        except ImportError as e:
+            logger.debug(f"Direct config import failed: {e}")
+
+            # Strategy 2: Dynamic import as fallback
             try:
-                from config.app_config import get_config
-                config = get_config()
-                data_dir = config.data_dir
-            except ImportError:
-                # Strategy 2: Alternative config path
-                try:
-                    # Safely load config module directly from file path to avoid unresolved bare imports
-                    import importlib.util
-                    config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'app_config.py')
-                    if os.path.exists(config_path):
-                        spec = importlib.util.spec_from_file_location("app_config_from_path", os.path.abspath(config_path))
-                        if spec and spec.loader:
-                            mod = importlib.util.module_from_spec(spec)
-                            spec.loader.exec_module(mod)
-                            if hasattr(mod, 'get_config'):
-                                config = mod.get_config()
-                                data_dir = config.data_dir
-                            elif hasattr(mod, 'DATA_DIR'):
-                                data_dir = mod.DATA_DIR
-                except Exception:
-                    # Strategy 3: Direct DATA_DIR import (Corrected)
-                    try:
-                        from config.app_config import get_config
-                        config = get_config()
-                        data_dir = config.data_dir
-                    except ImportError:
-                        pass
-            
-            # If we successfully got data_dir from config, use it
-            if data_dir:
-                full_path = data_dir / subdir
-                if subdir:
-                    full_path.mkdir(parents=True, exist_ok=True)
-                return str(full_path.resolve())
-                
-        except Exception as e:
-            logger.warning(f"Configuration import failed: {e}")
-        
-        # Fallback to relative path
-        fallback_path = Path(__file__).parent.parent.parent / "data" / subdir
-        fallback_path.mkdir(parents=True, exist_ok=True)
-        return str(fallback_path.resolve())
+                import importlib.util
+                config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'app_config.py')
+                if os.path.exists(config_path):
+                    spec = importlib.util.spec_from_file_location("app_config_dynamic", os.path.abspath(config_path))
+                    if spec and spec.loader:
+                        mod = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(mod)
+                        if hasattr(mod, 'get_config'):
+                            config = mod.get_config()
+                            data_dir = config.data_dir
+            except Exception as e:
+                logger.warning(f"Dynamic config import failed: {e}")
+
+        # Return config path or fallback to relative path
+        if data_dir:
+            full_path = data_dir / subdir
+        else:
+            # Fallback: relative path from file location
+            full_path = Path(__file__).parent.parent / "data" / subdir
+            logger.info(f"Using fallback data path: {full_path}")
+
+        full_path.mkdir(parents=True, exist_ok=True)
+        return str(full_path.resolve())
     
     @staticmethod
     def get_unified_temp_dir() -> str:
@@ -367,7 +384,11 @@ class FileManager:
             except OSError as e:
                 logger.error(f"Failed to list temp directory: {e}")
                 return
-            
+
+            # Initialize counters
+            cleaned_count = 0
+            error_count = 0
+
             # Process each item with safety checks
             for item_path in temp_items:
                 try:
@@ -434,7 +455,7 @@ class IntelligentModelLoader:
     async def start_intelligent_preload(self) -> None:
         """Intelligent preloading with proper implementation"""
         try:
-            logger.info("🚀 Starting intelligent model preload for PT-BR medium model")
+            logger.info("Starting intelligent model preload for PT-BR medium model")
             
             language = "pt"
             model_key = f"medium_{language}"
@@ -489,7 +510,7 @@ class IntelligentModelLoader:
                 # Final progress update
                 self.download_progress[model_key] = 100.0
                 self.download_status[model_key] = "completed"
-                logger.info(f"✅ Model for {language.upper()} loaded successfully")
+                logger.info(f"Model for {language.upper()} loaded successfully")
                 
             except ImportError as e:
                 logger.error(f"Failed to import transcription service: {e}")

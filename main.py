@@ -10,6 +10,7 @@ import os
 import time
 import uuid
 import threading
+import psutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -96,8 +97,10 @@ async def model_cleanup_task():
     while True:
         await asyncio.sleep(300)  # Check every 5 minutes
         try:
-            if app_state.transcription_service and app_state.transcription_service.should_unload():
-                await app_state.transcription_service.unload_model()
+            with app_state._lock:
+                transcription_service = app_state.transcription_service
+            if transcription_service and transcription_service.should_unload():
+                await transcription_service.unload_model()
         except Exception as e:
             logger.error(f"Model cleanup task error: {e}")
 
@@ -130,27 +133,48 @@ templates = Jinja2Templates(directory="templates")
 # === Main Processing Pipeline ===
 async def process_audio_pipeline(audio_path: str, session_id: str):
     try:
+        # FASE 1.2: Memory Profiling - Track RAM usage at pipeline checkpoints
+        process = psutil.Process()
+        mem_baseline = process.memory_info().rss / (1024 * 1024)  # Convert to MB
+        logger.info(f"[MEMORY PROFILING] Baseline: {mem_baseline:.2f} MB")
+
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'start', 'percentage': 5, 'message': 'Iniciando processamento...'}, MessagePriority.HIGH)
-        
-        if not app_state.transcription_service:
+
+        with app_state._lock:
+            transcription_service = app_state.transcription_service
+            diarization_service = app_state.diarization_service
+
+        if not transcription_service:
             logger.error("Transcription service not initialized")
             await app_state.send_message(session_id, {'type': 'error', 'message': 'Transcription service not initialized'}, MessagePriority.CRITICAL)
             return
-        
-        transcription_result = await app_state.transcription_service.transcribe_with_enhancements(audio_path) # Reverted
+
+        transcription_result = await transcription_service.transcribe_with_enhancements(audio_path) # Reverted
+
+        # FASE 1.2: Memory checkpoint after transcription
+        mem_after_transcription = process.memory_info().rss / (1024 * 1024)
+        mem_delta_transcription = mem_after_transcription - mem_baseline
+        logger.info(f"[MEMORY PROFILING] After Transcription: {mem_after_transcription:.2f} MB (+{mem_delta_transcription:.2f} MB)")
+
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'transcription', 'percentage': 50, 'message': 'Transcrição concluída.'}, MessagePriority.NORMAL)
 
-        if not app_state.diarization_service:
+        if not diarization_service:
             logger.error("Diarization service not initialized")
             await app_state.send_message(session_id, {'type': 'error', 'message': 'Diarization service not initialized'}, MessagePriority.CRITICAL)
             return
-            
+
         loop = asyncio.get_event_loop()
-        diarization_coro = app_state.diarization_service.diarize(audio_path, transcription_result.segments)
+        diarization_coro = diarization_service.diarize(audio_path, transcription_result.segments)
         diarization_result = await diarization_coro
+
+        # FASE 1.2: Memory checkpoint after diarization
+        mem_after_diarization = process.memory_info().rss / (1024 * 1024)
+        mem_delta_diarization = mem_after_diarization - mem_after_transcription
+        logger.info(f"[MEMORY PROFILING] After Diarization: {mem_after_diarization:.2f} MB (+{mem_delta_diarization:.2f} MB)")
+
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'diarization', 'percentage': 80, 'message': 'Identificação de falantes concluída.'}, MessagePriority.NORMAL)
         final_segments = force_transcription_segmentation(transcription_result.segments, diarization_result["segments"])
-        srt_path = generate_srt(final_segments, output_path=os.path.join(app_state.file_manager.get_data_path("temp"), f"{session_id}.srt"))
+        srt_path = await generate_srt(final_segments, output_path=os.path.join(app_state.file_manager.get_data_path("temp"), f"{session_id}.srt"))
 
         final_result = {
             "text": transcription_result.text,
@@ -158,11 +182,17 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
             "srt_output_path": srt_path,
             "num_speakers": diarization_result["num_speakers"]
         }
-        
+
         with app_state._lock:
             if session_id not in app_state.sessions:
                 app_state.sessions[session_id] = {}
             app_state.sessions[session_id]['srt_file_path'] = srt_path
+
+        # FASE 1.2: Final memory checkpoint
+        mem_final = process.memory_info().rss / (1024 * 1024)
+        mem_total_delta = mem_final - mem_baseline
+        logger.info(f"[MEMORY PROFILING] Pipeline Complete: {mem_final:.2f} MB (Total Delta: +{mem_total_delta:.2f} MB)")
+        logger.info(f"[MEMORY PROFILING] Target: <3500 MB | Current: {mem_final:.2f} MB | Status: {'PASS' if mem_final < 3500 else 'FAIL'}")
 
         await app_state.send_message(session_id, {'type': 'complete', 'result': final_result}, MessagePriority.CRITICAL)
 
@@ -198,7 +228,7 @@ async def download_srt(session_id: str):
 async def check_first_time():
     """Check if this is the first time the app is being used (model not downloaded yet)."""
     try:
-        model_path = Path("data/models_cache")
+        model_path = Path(app_state.file_manager.get_data_path("models_cache"))
 
         # Check if faster-whisper models exist
         is_first_time = True
@@ -213,15 +243,92 @@ async def check_first_time():
         logger.error(f"Error checking first-time status: {e}")
         return JSONResponse(content={"is_first_time": False})
 
+def validate_websocket_message(data: Dict[str, Any]) -> bool:
+    """Validate WebSocket message to prevent DoS and injection attacks"""
+    # Whitelist of allowed actions
+    ALLOWED_ACTIONS = {"start", "pause", "resume", "audio_chunk", "stop", "get_state"}
+
+    # Maximum payload size: 5MB for audio chunks
+    MAX_PAYLOAD_SIZE = 5 * 1024 * 1024
+
+    # Validate action exists and is allowed
+    action = data.get("action")
+    if not action or action not in ALLOWED_ACTIONS:
+        logger.warning(f"Invalid action received: {action}")
+        return False
+
+    # Validate audio_chunk size
+    if action == "audio_chunk":
+        chunk_data = data.get("data", "")
+        # Estimate base64 decoded size (base64 is ~33% larger than binary)
+        estimated_size = len(chunk_data) * 3 // 4
+
+        if estimated_size > MAX_PAYLOAD_SIZE:
+            logger.warning(f"Audio chunk too large: {estimated_size} bytes")
+            return False
+
+        if len(chunk_data) == 0:
+            logger.warning("Empty audio chunk received")
+            return False
+
+    return True
+
+@app.websocket("/ws/{session_id}")
+async def file_upload_websocket(websocket: WebSocket, session_id: str):
+    """WebSocket endpoint for file upload progress updates"""
+    await websocket.accept()
+    logger.info(f"File upload WebSocket connected: {session_id}")
+
+    with app_state._lock:
+        app_state.connections[session_id] = websocket
+
+    try:
+        while True:
+            # Keep connection alive, wait for messages
+            await asyncio.sleep(0.1)
+
+    except WebSocketDisconnect:
+        logger.info(f"File upload WebSocket disconnected: {session_id}")
+    except Exception as e:
+        logger.error(f"File upload WebSocket error: {e}")
+    finally:
+        with app_state._lock:
+            if session_id in app_state.connections:
+                del app_state.connections[session_id]
+
 @app.websocket("/ws/live/{session_id}")
 async def live_audio_websocket(websocket: WebSocket, session_id: str):
     """WebSocket endpoint for live audio recording with state management"""
     await websocket.accept()
     logger.info(f"Live audio WebSocket connected: {session_id}")
 
+    # Rate limiting: track message count
+    message_count = 0
+    last_reset_time = time.time()
+    MAX_MESSAGES_PER_SECOND = 100
+
     try:
         while True:
+            # Rate limiting check
+            current_time = time.time()
+            if current_time - last_reset_time >= 1.0:
+                message_count = 0
+                last_reset_time = current_time
+
+            message_count += 1
+            if message_count > MAX_MESSAGES_PER_SECOND:
+                logger.warning(f"Rate limit exceeded for session {session_id}")
+                await websocket.send_json({"type": "error", "message": "Rate limit exceeded"})
+                await asyncio.sleep(1)
+                continue
+
             data = await websocket.receive_json()
+
+            # SECURITY: Validate message
+            if not validate_websocket_message(data):
+                await websocket.send_json({"type": "error", "message": "Invalid message format"})
+                continue
+
             action = data.get("action")
 
             if action == "start":
@@ -272,15 +379,7 @@ async def live_audio_websocket(websocket: WebSocket, session_id: str):
         logger.error(f"Live audio WebSocket error for {session_id}: {e}", exc_info=True)
         await websocket.send_json({"type": "error", "message": str(e)})
 
-@app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    await app_state.websocket_safety_manager.register_connection(websocket, session_id)
-    try:
-        while True:
-            data = await websocket.receive_json()
-            # Further message handling logic here
-    except WebSocketDisconnect:
-        await app_state.websocket_safety_manager.disconnect_websocket(session_id)
+# Removed empty WebSocket endpoint - use /ws/live/{session_id} instead
 
 if __name__ == "__main__":
     uvicorn.run(

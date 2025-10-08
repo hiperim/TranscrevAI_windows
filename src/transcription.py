@@ -50,8 +50,103 @@ class TranscriptionService:
 
     def _init_ptbr_corrections(self):
         self.ptbr_corrections = {
+            # Original (5)
             "nao": "não", "voce": "você", "esta": "está", "eh": "é", "ate": "até",
-            # (A full dictionary of corrections would be here)
+
+            # BATCH 1 (50) - Common PT-BR corrections
+            "tambem": "também", "so": "só", "ja": "já", "la": "lá", "ca": "cá",
+            "pra": "para", "pro": "para o", "ta": "está", "to": "estou", "ce": "você",
+            "cade": "cadê", "neh": "né", "ne": "né", "vc": "você", "tbm": "também",
+            "pq": "por que", "porque": "por que", "oque": "o que", "oq": "o que",
+            "voces": "vocês", "apos": "após", "sao": "são", "tem": "têm", "ha": "há",
+            "po": "pô", "assim": "assim", "mais": "mais", "mas": "mas", "ai": "aí",
+            "dai": "daí", "entao": "então", "tao": "tão", "mao": "mão", "maos": "mãos",
+            "irmao": "irmão", "irmaos": "irmãos", "acao": "ação", "acoes": "ações",
+            "atencao": "atenção", "opcao": "opção", "opcoes": "opções",
+            "informacao": "informação", "informacoes": "informações", "sera": "será",
+            "porem": "porém", "alem": "além", "proximo": "próximo", "proxima": "próxima",
+            "ultimo": "último",
+
+            # BATCH 2 (50)
+            "ultima": "última", "unico": "único", "unica": "única", "basico": "básico",
+            "basica": "básica", "publico": "público", "publica": "pública",
+            "logico": "lógico", "logica": "lógica", "pratico": "prático",
+            "pratica": "prática", "otimo": "ótimo", "otima": "ótima",
+            "pessimo": "péssimo", "pessima": "péssima", "facil": "fácil",
+            "dificil": "difícil", "util": "útil", "inutil": "inútil", "movel": "móvel",
+            "imovel": "imóvel", "avel": "ável", "nivel": "nível", "possivel": "possível",
+            "impossivel": "impossível", "incrivel": "incrível", "terrivel": "terrível",
+            "cafe": "café", "cha": "chá", "pe": "pé", "pes": "pés", "mes": "mês",
+            "meses": "meses", "pais": "país", "paises": "países",
+            "portugues": "português", "portuguesa": "portuguesa", "ingles": "inglês",
+            "inglesa": "inglesa", "frances": "francês", "francesa": "francesa",
+            "japones": "japonês", "japonesa": "japonesa", "aviao": "avião",
+            "avioes": "aviões", "cao": "cão", "caes": "cães", "paes": "pães",
+            "alemao": "alemão", "alema": "alemã",
+
+            # BATCH 3 (50)
+            "orgao": "órgão", "orgaos": "órgãos", "orfao": "órfão", "orfa": "órfã",
+            "cidadao": "cidadão", "cidadaos": "cidadãos", "capitao": "capitão",
+            "capitaes": "capitães", "segunda": "segunda-feira", "terca": "terça-feira",
+            "quarta": "quarta-feira", "quinta": "quinta-feira", "sexta": "sexta-feira",
+            "sabado": "sábado", "domingo": "domingo", "janeiro": "janeiro",
+            "fevereiro": "fevereiro", "marco": "março", "abril": "abril",
+            "maio": "maio", "junho": "junho", "julho": "julho", "agosto": "agosto",
+            "setembro": "setembro", "outubro": "outubro", "novembro": "novembro",
+            "dezembro": "dezembro", "manha": "manhã", "manhas": "manhãs",
+            "amanha": "amanhã", "hoje": "hoje", "ontem": "ontem", "agora": "agora",
+            "depois": "depois", "antes": "antes", "durante": "durante",
+            "sempre": "sempre", "nunca": "nunca", "talvez": "talvez", "quem": "quem",
+            "quando": "quando", "onde": "onde", "como": "como", "quanto": "quanto",
+            "qual": "qual", "quais": "quais", "algum": "algum", "alguma": "alguma",
+            "nenhum": "nenhum", "nenhuma": "nenhuma",
+
+            # BATCH 4 (50)
+            "tudo": "tudo", "nada": "nada", "algo": "algo", "alguem": "alguém",
+            "ninguem": "ninguém", "comigo": "comigo", "contigo": "contigo",
+            "conosco": "conosco", "convosco": "convosco", "consigo": "consigo",
+            "dele": "dele", "dela": "dela", "deles": "deles", "delas": "delas",
+            "meu": "meu", "minha": "minha", "teu": "teu", "tua": "tua", "seu": "seu",
+            "sua": "sua", "nosso": "nosso", "nossa": "nossa", "vosso": "vosso",
+            "vossa": "vossa", "esse": "esse", "essa": "essa", "isso": "isso",
+            "este": "este", "este": "este", "isto": "isto", "aquele": "aquele",
+            "aquela": "aquela", "aquilo": "aquilo", "mesmo": "mesmo",
+            "mesma": "mesma", "proprio": "próprio", "propria": "própria",
+            "outro": "outro", "outra": "outra", "varios": "vários", "varias": "várias",
+            "poucos": "poucos", "poucas": "poucas", "muitos": "muitos",
+            "muitas": "muitas", "todos": "todos", "todas": "todas", "ambos": "ambos",
+            "ambas": "ambas", "cada": "cada", "qualquer": "qualquer",
+
+            # BATCH 5 (50)
+            "quaisquer": "quaisquer", "certo": "certo", "certa": "certa",
+            "certos": "certos", "certas": "certas", "tal": "tal", "tais": "tais",
+            "bastante": "bastante", "bastantes": "bastantes", "demais": "demais",
+            "menos": "menos", "muito": "muito", "muita": "muita", "pouco": "pouco",
+            "pouca": "pouca", "tanto": "tanto", "tanta": "tanta", "quanto": "quanto",
+            "quanta": "quanta", "bem": "bem", "mal": "mal", "melhor": "melhor",
+            "pior": "pior", "maior": "maior", "menor": "menor", "maximo": "máximo",
+            "maxima": "máxima", "minimo": "mínimo", "minima": "mínima",
+            "medio": "médio", "media": "média", "superior": "superior",
+            "inferior": "inferior", "anterior": "anterior", "posterior": "posterior",
+            "exterior": "exterior", "interior": "interior", "distante": "distante",
+            "perto": "perto", "longe": "longe", "dentro": "dentro", "fora": "fora",
+            "acima": "acima", "abaixo": "abaixo", "cima": "cima", "baixo": "baixo",
+            "direita": "direita", "esquerda": "esquerda", "frente": "frente",
+            "tras": "trás",
+
+            # BATCH 6 (45)
+            "atras": "atrás", "lado": "lado", "meio": "meio", "centro": "centro",
+            "comeco": "começo", "fim": "fim", "final": "final", "inicial": "inicial",
+            "primeiro": "primeiro", "primeira": "primeira", "segundo": "segundo",
+            "terceiro": "terceiro", "terceira": "terceira", "quarto": "quarto",
+            "quinto": "quinto", "sexto": "sexto", "setimo": "sétimo",
+            "setima": "sétima", "oitavo": "oitavo", "oitava": "oitava", "nono": "nono",
+            "nona": "nona", "decimo": "décimo", "decima": "décima",
+            "centesimo": "centésimo", "centesima": "centésima", "milesimo": "milésimo",
+            "milesima": "milésima", "metade": "metade", "terco": "terço",
+            "dobro": "dobro", "triplo": "triplo", "simples": "simples",
+            "duplo": "duplo", "multiplo": "múltiplo", "multipla": "múltipla",
+            "diversos": "diversos", "diversas": "diversas"
         }
 
     def _apply_ptbr_corrections(self, text: str) -> str:

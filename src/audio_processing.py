@@ -207,7 +207,10 @@ class LiveAudioProcessor:
     Manages live audio recording with disk buffering (Option A - Compliance validated).
     Uses temporary file storage to maintain low RAM usage during recording.
     """
-    def __init__(self, temp_dir: str = "data/temp"):
+    def __init__(self, temp_dir: str = None):
+        if temp_dir is None:
+            from src.file_manager import FileManager
+            temp_dir = FileManager.get_data_path("temp")
         self.temp_dir = Path(temp_dir)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.sessions: Dict[str, Dict[str, Any]] = {}
@@ -268,8 +271,8 @@ class LiveAudioProcessor:
 
     async def process_audio_chunk(self, session_id: str, audio_chunk: bytes) -> Dict[str, Any]:
         """
-        Write audio chunk to disk buffer (low memory operation).
-        Compliance: Keeps RAM usage minimal during recording.
+        Store audio chunk in memory buffer for proper WAV file generation.
+        Compliance: Uses in-memory buffering for valid WAV structure.
         """
         with self._lock:
             if session_id not in self.sessions:
@@ -279,22 +282,23 @@ class LiveAudioProcessor:
             if session["state"] not in [RecordingState.RECORDING, RecordingState.PAUSED]:
                 raise ValueError(f"Cannot process chunk in state: {session['state'].value}")
 
-            # Write to disk buffer (not RAM)
-            with open(session["temp_file"], "ab") as f:
-                f.write(audio_chunk)
+            # Store chunks in memory buffer
+            if "audio_buffer" not in session:
+                session["audio_buffer"] = []
 
+            session["audio_buffer"].append(audio_chunk)
             session["chunks_received"] += 1
             session["total_bytes"] += len(audio_chunk)
 
             return {
-                "status": "chunk_saved",
+                "status": "chunk_buffered",
                 "chunks_received": session["chunks_received"],
                 "total_bytes": session["total_bytes"]
             }
 
     async def stop_recording(self, session_id: str) -> str:
         """
-        Stop recording and return path to complete audio file for processing.
+        Stop recording, generate valid WAV file, and return path for processing.
         Transitions to PROCESSING state.
         """
         with self._lock:
@@ -309,8 +313,26 @@ class LiveAudioProcessor:
             session["stop_time"] = time.time()
             duration = session["stop_time"] - session["start_time"]
 
+            # Generate valid WAV file from in-memory buffer
+            audio_buffer = session.get("audio_buffer", [])
+            if not audio_buffer:
+                logger.warning(f"Session {session_id} has no audio data")
+                raise ValueError("No audio data recorded")
+
+            audio_data = b''.join(audio_buffer)
             temp_file_path = str(session["temp_file"])
-            logger.info(f"Recording stopped for session {session_id}. Duration: {duration:.2f}s, File: {temp_file_path}")
+
+            # Write complete WAV file with proper headers
+            with wave.open(temp_file_path, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit (2 bytes)
+                wav_file.setframerate(session["sample_rate"])
+                wav_file.writeframes(audio_data)
+
+            # Clear buffer to free memory
+            session["audio_buffer"].clear()
+
+            logger.info(f"Recording stopped for session {session_id}. Duration: {duration:.2f}s, Audio size: {len(audio_data)} bytes, File: {temp_file_path}")
 
             return temp_file_path
 
