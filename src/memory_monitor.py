@@ -72,14 +72,16 @@ class MemoryMonitor:
     def __init__(self, max_memory_mb: float = 2048.0):
         self.max_memory_mb = max_memory_mb
         self.caches: Dict[str, IntelligentCache] = {}
+        self.is_monitoring = False  # Fix AttributeError on shutdown
 
     def start_monitoring(self):
         """Placeholder for compatibility - monitoring is passive"""
+        self.is_monitoring = True
         logger.debug("MemoryMonitor: passive monitoring mode")
 
     def stop_monitoring(self):
         """Placeholder for compatibility"""
-        pass
+        self.is_monitoring = False
 
     def register_cache(self, name: str, max_size_mb: float = 256.0) -> IntelligentCache:
         cache = IntelligentCache(max_size_mb)

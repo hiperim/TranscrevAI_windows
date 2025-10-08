@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
 # Core modules
-from src.audio_processing import AudioRecorder, LiveAudioProcessor, RecordingState
+from src.audio_processing import AudioRecorder, LiveAudioProcessor, RecordingState, AudioQualityAnalyzer
 from src.diarization import TwoPassDiarizer, force_transcription_segmentation  
 from src.transcription import TranscriptionService
 # import
@@ -59,6 +59,7 @@ class ThreadSafeEnhancedAppState:
         self.transcription_service: Optional[TranscriptionService] = None
         self.diarization_service: Optional[TwoPassDiarizer] = None
         self.live_audio_processor = LiveAudioProcessor()
+        self.audio_quality_analyzer = AudioQualityAnalyzer()
         self.websocket_safety_manager = get_websocket_safety_manager()
         self.hardware_validator = get_hardware_validator()
         self.memory_monitor = get_memory_monitor()
@@ -83,9 +84,12 @@ class ThreadSafeEnhancedAppState:
             logger.info(f"TranscrevAI Initialization Complete! Compatibility: {hw_report.compatibility_level.value.upper()}")
 
     async def send_message(self, session_id: str, message: Dict, priority: MessagePriority = MessagePriority.NORMAL):
-        with self._lock:
-            if session_id in self.connections:
-                await self.websocket_safety_manager.safe_send_message(self, session_id, message)
+        """Send message via safety manager with proper connection state"""
+        success = await self.websocket_safety_manager.safe_send_message(self, session_id, message, priority)
+        if success:
+            logger.debug(f"✓ Message sent to {session_id}: {message.get('type', 'unknown')}")
+        else:
+            logger.warning(f"✗ Message queued/failed for {session_id}: {message.get('type', 'unknown')}")
 
 app_state = ThreadSafeEnhancedAppState()
 
@@ -138,11 +142,52 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
         mem_baseline = process.memory_info().rss / (1024 * 1024)  # Convert to MB
         logger.info(f"[MEMORY PROFILING] Baseline: {mem_baseline:.2f} MB")
 
-        await app_state.send_message(session_id, {'type': 'progress', 'stage': 'start', 'percentage': 5, 'message': 'Iniciando processamento...'}, MessagePriority.HIGH)
+        # Calculate audio duration and estimated processing time
+        import librosa
+        import time
+        audio_duration = librosa.get_duration(path=audio_path)
+        pipeline_start_time = time.time()  # Track actual processing time
 
+        # Estimate processing time based on empirical metrics:
+        # - Transcription: ~1.2s per 1s of audio
+        # - Diarization: ~0.2s per 1s of audio
+        # - Model loading: ~10s (if cold start)
+        # Total: audio_duration * 1.5 + (10s if cold start)
         with app_state._lock:
             transcription_service = app_state.transcription_service
             diarization_service = app_state.diarization_service
+            model_loaded = transcription_service.model is not None if transcription_service else False
+
+        base_processing_time = audio_duration * 1.5
+        model_load_time = 0 if model_loaded else 10
+        estimated_time = int(base_processing_time + model_load_time)
+
+        logger.info(f"Audio duration: {audio_duration:.1f}s, Estimated processing: {estimated_time}s (model {'loaded' if model_loaded else 'not loaded'})")
+
+        # Audio quality analysis - warn user about potential issues
+        logger.info("Analyzing audio quality...")
+        quality_metrics = app_state.audio_quality_analyzer.analyze_audio_quality(audio_path)
+
+        if quality_metrics.has_issues and quality_metrics.warnings:
+            logger.warning(f"Audio quality issues detected: {len(quality_metrics.warnings)} warnings")
+            # Send quality warnings to user
+            for warning in quality_metrics.warnings:
+                await app_state.send_message(session_id, {
+                    'type': 'warning',
+                    'message': warning,
+                    'progress': 5
+                }, MessagePriority.NORMAL)
+            # Brief pause to let warnings be displayed
+            await asyncio.sleep(0.5)
+
+        await app_state.send_message(session_id, {
+            'type': 'progress',
+            'stage': 'start',
+            'percentage': 5,
+            'message': f'Iniciando processamento... Áudio: {audio_duration:.0f}s',
+            'estimated_time': estimated_time,
+            'audio_duration': audio_duration
+        }, MessagePriority.HIGH)
 
         if not transcription_service:
             logger.error("Transcription service not initialized")
@@ -156,7 +201,13 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
         mem_delta_transcription = mem_after_transcription - mem_baseline
         logger.info(f"[MEMORY PROFILING] After Transcription: {mem_after_transcription:.2f} MB (+{mem_delta_transcription:.2f} MB)")
 
-        await app_state.send_message(session_id, {'type': 'progress', 'stage': 'transcription', 'percentage': 50, 'message': 'Transcrição concluída.'}, MessagePriority.NORMAL)
+        await app_state.send_message(session_id, {
+            'type': 'progress',
+            'stage': 'transcription',
+            'percentage': 50,
+            'message': 'Transcrição concluída. Identificando falantes...',
+            'estimated_time_remaining': int(estimated_time * 0.5)
+        }, MessagePriority.NORMAL)
 
         if not diarization_service:
             logger.error("Diarization service not initialized")
@@ -172,21 +223,51 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
         mem_delta_diarization = mem_after_diarization - mem_after_transcription
         logger.info(f"[MEMORY PROFILING] After Diarization: {mem_after_diarization:.2f} MB (+{mem_delta_diarization:.2f} MB)")
 
-        await app_state.send_message(session_id, {'type': 'progress', 'stage': 'diarization', 'percentage': 80, 'message': 'Identificação de falantes concluída.'}, MessagePriority.NORMAL)
+        await app_state.send_message(session_id, {
+            'type': 'progress',
+            'stage': 'diarization',
+            'percentage': 80,
+            'message': f'Identificação de falantes concluída. Gerando legendas...',
+            'estimated_time_remaining': int(estimated_time * 0.2)
+        }, MessagePriority.NORMAL)
         final_segments = force_transcription_segmentation(transcription_result.segments, diarization_result["segments"])
-        srt_path = await generate_srt(final_segments, output_path=os.path.join(app_state.file_manager.get_data_path("temp"), f"{session_id}.srt"))
+
+        # Generate SRT file - may return None if no valid segments (e.g., very short/silent audio)
+        # CRITICAL FIX: output_path must be directory only, filename passed separately
+        srt_path = await generate_srt(final_segments,
+                                       output_path=app_state.file_manager.get_data_path("temp"),
+                                       filename=f"{session_id}.srt")
+
+        if srt_path is None:
+            logger.warning(f"SRT generation returned None for session {session_id} - audio may be too short or silent")
+            await app_state.send_message(session_id, {
+                'type': 'warning',
+                'message': 'Áudio muito curto ou silencioso. Não foi possível gerar legendas.'
+            }, MessagePriority.NORMAL)
+
+        # Calculate actual processing time and ratio
+        pipeline_end_time = time.time()
+        actual_processing_time = pipeline_end_time - pipeline_start_time
+        processing_ratio = actual_processing_time / audio_duration if audio_duration > 0 else 0
+
+        logger.info(f"Processing complete: {actual_processing_time:.2f}s for {audio_duration:.2f}s audio (ratio: {processing_ratio:.2f}x)")
 
         final_result = {
             "text": transcription_result.text,
             "segments": final_segments,
             "srt_output_path": srt_path,
-            "num_speakers": diarization_result["num_speakers"]
+            "num_speakers": diarization_result["num_speakers"],
+            "processing_time": round(actual_processing_time, 2),
+            "processing_ratio": round(processing_ratio, 2),
+            "audio_duration": round(audio_duration, 2)
         }
 
         with app_state._lock:
             if session_id not in app_state.sessions:
                 app_state.sessions[session_id] = {}
-            app_state.sessions[session_id]['srt_file_path'] = srt_path
+            # Only store srt_file_path if it was successfully generated
+            if srt_path is not None:
+                app_state.sessions[session_id]['srt_file_path'] = srt_path
 
         # FASE 1.2: Final memory checkpoint
         mem_final = process.memory_info().rss / (1024 * 1024)
@@ -207,22 +288,56 @@ async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/upload")
-async def upload_audio(file: UploadFile = File(...), session_id: str = Form(...)):
+async def upload_audio(
+    file: UploadFile = File(...),
+    session_id: Optional[str] = Form(None),
+    language: Optional[str] = Form(None),
+    domain: Optional[str] = Form(None)
+):
     try:
+        # Generate session_id if not provided
+        if not session_id:
+            session_id = f"upload_{int(time.time() * 1000)}"
+
         filename = file.filename if file.filename is not None else f"uploaded_{uuid.uuid4().hex}.wav"
         file_path = app_state.file_manager.save_uploaded_file(file.file, filename)
+
+        # Start async processing pipeline
         asyncio.create_task(process_audio_pipeline(str(file_path), session_id))
+
         return JSONResponse(content={"success": True, "session_id": session_id, "message": "Upload successful, processing started."})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/download/srt/{session_id}")
 async def download_srt(session_id: str):
+    """Download SRT subtitle file for a processed session."""
     with app_state._lock:
         session = app_state.sessions.get(session_id)
-    if not session or not session.get("srt_file_path") or not os.path.exists(session["srt_file_path"]):
-        return JSONResponse(status_code=404, content={"error": "SRT file not found."})
-    return FileResponse(path=session["srt_file_path"], filename=f"transcription_{session_id}.srt")
+
+    # Validate session exists
+    if not session:
+        logger.warning(f"SRT download failed: Session {session_id} not found")
+        return JSONResponse(status_code=404, content={"error": "Sessão não encontrada."})
+
+    # Validate SRT path exists in session
+    srt_path = session.get("srt_file_path")
+    if not srt_path:
+        logger.warning(f"SRT download failed: No SRT path for session {session_id}")
+        return JSONResponse(status_code=404, content={"error": "Arquivo SRT não foi gerado. Áudio pode ser muito curto ou silencioso."})
+
+    # Validate file exists on disk
+    if not os.path.exists(srt_path):
+        logger.warning(f"SRT download failed: File not found at {srt_path}")
+        return JSONResponse(status_code=404, content={"error": "Arquivo SRT não encontrado no servidor."})
+
+    # Return file with proper headers
+    return FileResponse(
+        path=srt_path,
+        filename=f"transcricao_{session_id}.srt",
+        media_type="application/x-subrip",
+        headers={"Content-Disposition": f'attachment; filename="transcricao_{session_id}.srt"'}
+    )
 
 @app.get("/check-first-time")
 async def check_first_time():
@@ -282,6 +397,9 @@ async def file_upload_websocket(websocket: WebSocket, session_id: str):
     with app_state._lock:
         app_state.connections[session_id] = websocket
 
+    # CRITICAL FIX: Mark connection as established for safety manager
+    await app_state.websocket_safety_manager.handle_connection_established(session_id)
+
     try:
         while True:
             # Keep connection alive, wait for messages
@@ -292,6 +410,7 @@ async def file_upload_websocket(websocket: WebSocket, session_id: str):
     except Exception as e:
         logger.error(f"File upload WebSocket error: {e}")
     finally:
+        await app_state.websocket_safety_manager.handle_connection_lost(session_id)
         with app_state._lock:
             if session_id in app_state.connections:
                 del app_state.connections[session_id]
@@ -355,11 +474,15 @@ async def live_audio_websocket(websocket: WebSocket, session_id: str):
                 audio_file_path = await app_state.live_audio_processor.stop_recording(session_id)
                 await websocket.send_json({"type": "processing", "message": "Processando áudio..."})
 
-                # Process complete audio file through existing pipeline
-                asyncio.create_task(process_audio_pipeline(audio_file_path, session_id))
+                # Process complete audio file through existing pipeline with cleanup after completion
+                async def process_with_cleanup():
+                    try:
+                        await process_audio_pipeline(audio_file_path, session_id)
+                    finally:
+                        # Cleanup session AFTER processing completes (or fails)
+                        await app_state.live_audio_processor.complete_session(session_id)
 
-                # Cleanup after processing
-                await app_state.live_audio_processor.complete_session(session_id)
+                asyncio.create_task(process_with_cleanup())
 
             elif action == "get_state":
                 state = app_state.live_audio_processor.get_session_state(session_id)

@@ -1,27 +1,22 @@
-# diarization.py - COMPLETE AND CORRECTED
-
+# diarization.py - Refactored with DBSCAN for Advanced Accuracy
 """
-Two-Pass Speaker Diarization with Embedding Refinement for TranscrevAI
-
-Complete implementation for high-accuracy speaker diarization with all Pylance errors fixed.
-
-FIXES APPLIED:
-- Fixed max() function call error by using proper key parameter with lambda function
-- Fixed all argument type issues with max() and min() functions
-- Corrected all type hints and function signatures
-- All Pylance errors resolved completely
-- Complete functional implementation
+Speaker Diarization using Silero-VAD, Librosa for MFCCs, and Scikit-learn for clustering.
+This implementation uses DBSCAN for robust, adaptive clustering that automatically determines
+the number of speakers and identifies noise. It runs the blocking diarization process in a 
+separate thread to avoid freezing the WebSocket event loop.
 """
 
 import logging
 import asyncio
-import time
 import numpy as np
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, cast
 from dataclasses import dataclass
-import threading
-from sklearn.cluster import AgglomerativeClustering
-from sklearn.metrics.pairwise import cosine_similarity
+import torch
+import librosa
+import soundfile as sf
+from sklearn.cluster import DBSCAN
+from sklearn.preprocessing import normalize
+from sklearn.neighbors import NearestNeighbors
 
 logger = logging.getLogger(__name__)
 
@@ -33,89 +28,172 @@ class DiarizationSegment:
     confidence: float
     text: Optional[str] = None
 
-
 class TwoPassDiarizer:
-    """Simplified diarization system - placeholder implementation"""
+    """Lightweight diarization system using Silero-VAD, MFCCs, and DBSCAN Clustering."""
 
     def __init__(self, device: str = "cpu"):
-        logger.debug("TwoPassDiarizer initialized (simplified)")
+        logger.info("Initializing Silero-VAD based diarizer...")
+        self.device = device
+        try:
+            self.vad_model, self.utils = cast(tuple, torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False))
+            logger.info("Silero-VAD model loaded successfully.")
+        except Exception as e:
+            logger.error(f"Failed to load Silero-VAD model: {e}", exc_info=True)
+            self.vad_model = None
+
+    def _estimate_dbscan_eps(self, mfccs_normalized: np.ndarray, min_samples: int) -> float:
+        """
+        Estimates the optimal eps value for DBSCAN using the K-distance graph method.
+        """
+        if len(mfccs_normalized) < min_samples:
+            return 0.5 # Return a default value if not enough samples
+
+        logger.info(f"Estimating DBSCAN eps with {len(mfccs_normalized)} samples and min_samples={min_samples}")
+        
+        # Calculate the distance to the k-th nearest neighbor for each point
+        k = min_samples - 1
+        neighbors = NearestNeighbors(n_neighbors=k)
+        neighbors_fit = neighbors.fit(mfccs_normalized)
+        distances, _ = neighbors_fit.kneighbors(mfccs_normalized)
+        
+        # Get the k-th distance for each point and sort them
+        distances = np.sort(distances[:, k-1], axis=0)
+        
+        # Find the point of maximum curvature (the "elbow")
+        try:
+            # This is a simple way to find the elbow of the curve
+            # We look for the point with the largest second derivative
+            second_derivative = np.diff(distances, 2)
+            if len(second_derivative) == 0:
+                # Fallback for very few points
+                return float(distances[-1] * 0.5) if len(distances) > 0 else 0.5
+
+            elbow_index = np.argmax(second_derivative) + 1 # +1 to adjust for diff index
+            optimal_eps = distances[elbow_index]
+        except IndexError:
+            # Fallback if something goes wrong
+            optimal_eps = np.median(distances)
+
+        # Ensure eps is within a reasonable range
+        optimal_eps = max(0.1, min(float(optimal_eps), 1.0))
+        logger.info(f"Estimated optimal DBSCAN eps: {optimal_eps:.4f}")
+        return float(optimal_eps)
 
     async def diarize(self, audio_path: str, transcription_segments: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Pause-based diarization with adaptive threshold"""
-        logger.info(f"Pause-based diarization for {audio_path}")
+        """
+        Asynchronously performs speaker diarization by running the synchronous
+        processing in a separate thread to avoid blocking the event loop.
+        """
+        if not self.vad_model:
+            logger.error("Silero-VAD model not available. Falling back to single speaker diarization.")
+            for seg in transcription_segments:
+                seg['speaker'] = 'SPEAKER_01'
+            return {"segments": transcription_segments, "num_speakers": 1}
 
         try:
-            import librosa
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, self._process_diarization_sync, audio_path, transcription_segments
+            )
+            return result
+        except Exception as e:
+            logger.error(f"Diarization failed in async wrapper: {e}", exc_info=True)
+            for seg in transcription_segments:
+                seg['speaker'] = 'SPEAKER_01'
+            return {"segments": transcription_segments, "num_speakers": 1}
 
-            # 1. Load audio
-            y, sr = librosa.load(audio_path, sr=16000, mono=True)
+    def _process_diarization_sync(self, audio_path: str, transcription_segments: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Synchronous diarization logic. Processes audio in chunks, performs VAD,
+        extracts features, clusters them with DBSCAN, and aligns with transcription.
+        """
+        logger.info(f"Starting synchronous diarization for {audio_path}")
+        
+        (get_speech_timestamps, _, _, _, _) = self.utils
+        
+        all_speech_timestamps = []
+        all_mfccs = []
+        
+        CHUNK_DURATION = 30  # seconds
+        
+        try:
+            with sf.SoundFile(audio_path, 'r') as audio_file:
+                sr = audio_file.samplerate
+                if sr != 16000:
+                    raise ValueError(f"Audio file has a sample rate of {sr}, but 16000 is required.")
 
-            # 2. Detect non-silent segments
-            segments = librosa.effects.split(y, top_db=30)
+                chunk_size = CHUNK_DURATION * sr
+                for i in range(0, audio_file.frames, chunk_size):
+                    chunk = audio_file.read(chunk_size, dtype='float32')
+                    if len(chunk.shape) > 1:
+                        chunk = np.mean(chunk, axis=1)
+                    
+                    audio_tensor = torch.from_numpy(chunk).float()
+                    speech_timestamps_chunk = get_speech_timestamps(audio_tensor, self.vad_model, sampling_rate=sr)
+                    
+                    for segment in speech_timestamps_chunk:
+                        segment['start'] += i
+                        segment['end'] += i
+                        
+                        segment_audio = chunk[segment['start'] - i : segment['end'] - i]
+                        if len(segment_audio) > 0:
+                            mfcc = librosa.feature.mfcc(y=segment_audio, sr=sr, n_mfcc=20)
+                            all_mfccs.append(np.mean(mfcc, axis=1))
+                            all_speech_timestamps.append(segment)
 
-            if len(segments) == 0:
-                logger.warning("No speech segments detected, defaulting to single speaker")
+            if not all_speech_timestamps:
+                logger.warning("No speech detected. Defaulting to a single speaker.")
                 for seg in transcription_segments:
-                    seg['speaker'] = 'SPEAKER_00'
+                    seg['speaker'] = 'SPEAKER_01'
                 return {"segments": transcription_segments, "num_speakers": 1}
 
-            # 3. Calculate adaptive pause threshold
-            pause_durations = []
-            for i in range(1, len(segments)):
-                prev_end = segments[i-1][1] / sr
-                curr_start = segments[i][0] / sr
-                pause_durations.append(curr_start - prev_end)
+            mfccs_normalized = normalize(np.array(all_mfccs))
 
-            if pause_durations:
-                # Threshold = 75th percentile of pauses (adaptive)
-                pause_threshold = float(np.percentile(pause_durations, 75))
-                pause_threshold = max(pause_threshold, 0.3)  # Minimum 300ms
-                pause_threshold = min(pause_threshold, 1.0)  # Maximum 1s
-            else:
-                pause_threshold = 0.5  # Fallback
+            # DBSCAN Clustering
+            min_samples = 5
+            eps = self._estimate_dbscan_eps(mfccs_normalized, min_samples)
+            
+            clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(mfccs_normalized)
+            final_labels = clustering.labels_
+            
+            # Number of clusters in labels, ignoring noise if present.
+            num_speakers = len(set(final_labels)) - (1 if -1 in final_labels else 0)
+            logger.info(f"DBSCAN found {num_speakers} speakers and {np.sum(final_labels == -1)} noise points.")
 
-            logger.info(f"Adaptive pause threshold: {pause_threshold:.2f}s")
+            if num_speakers == 0:
+                logger.warning("DBSCAN did not find any speakers. Defaulting to a single speaker.")
+                for seg in transcription_segments:
+                    seg['speaker'] = 'SPEAKER_01'
+                return {"segments": transcription_segments, "num_speakers": 1}
 
-            # 4. Detect speaker changes on long pauses
+            # Create diarization segments
             diarization_segments = []
-            current_speaker = 'SPEAKER_00'
-
-            for i, (start_sample, end_sample) in enumerate(segments):
-                start_time = float(start_sample / sr)
-                end_time = float(end_sample / sr)
-
-                # Check pause before this segment
-                if i > 0:
-                    prev_end = float(segments[i-1][1] / sr)
-                    pause_duration = start_time - prev_end
-
-                    if pause_duration > pause_threshold:
-                        # Alternate speaker on long pause
-                        current_speaker = 'SPEAKER_01' if current_speaker == 'SPEAKER_00' else 'SPEAKER_00'
-
+            for i, segment in enumerate(all_speech_timestamps):
+                speaker_label = final_labels[i]
+                if speaker_label == -1:
+                    speaker_id = 'SPEAKER_UNKNOWN'
+                else:
+                    speaker_id = f'SPEAKER_{speaker_label + 1:02d}'
+                
                 diarization_segments.append({
-                    'start': start_time,
-                    'end': end_time,
-                    'speaker': current_speaker
+                    'start': segment['start'] / sr,
+                    'end': segment['end'] / sr,
+                    'speaker': speaker_id
                 })
 
-            # 5. Detect number of unique speakers
-            unique_speakers = len(set(seg['speaker'] for seg in diarization_segments))
-
-            logger.info(f"Detected {unique_speakers} speakers via pause analysis")
+            # Align transcription segments with diarization results
+            aligned_segments = force_transcription_segmentation(transcription_segments, diarization_segments)
 
             return {
-                "segments": diarization_segments,
-                "num_speakers": unique_speakers
+                "segments": aligned_segments,
+                "num_speakers": num_speakers
             }
 
         except Exception as e:
-            logger.error(f"Pause-based diarization failed: {e}", exc_info=True)
-            # Fallback to single speaker
+            logger.error(f"Diarization failed: {e}", exc_info=True)
             for seg in transcription_segments:
-                seg['speaker'] = 'SPEAKER_00'
+                seg['speaker'] = 'SPEAKER_01'
             return {"segments": transcription_segments, "num_speakers": 1}
-
 
 # --- Critical Alignment Function (Preserved and Corrected) ---
 
@@ -125,8 +203,6 @@ def force_transcription_segmentation(
 ) -> List[Dict[str, Any]]:
     """
     Force transcription segmentation based on diarization boundaries.
-    
-    FIXED: All max() and min() function calls to use proper key parameters
     """
     
     if not diarization_segments or not transcription_segments:
@@ -160,24 +236,20 @@ def force_transcription_segmentation(
                 segment_speakers.append(time_to_speaker[i])
 
         if segment_speakers:
-            # FIXED: Proper use of max() with key function for counting occurrences
             speaker_counts = {}
             for speaker in segment_speakers:
                 speaker_counts[speaker] = speaker_counts.get(speaker, 0) + 1
             
-            # Use max with proper key function - FIXED PYLANCE ERROR
-            dominant_speaker = max(speaker_counts.keys(), key=lambda x: speaker_counts[x])
+            dominant_speaker = max(speaker_counts, key=lambda k: speaker_counts[k])
         else:
-            # Find closest speaker in time
             if time_to_speaker:
-                # FIXED: Proper use of min() with key function - FIXED PYLANCE ERROR
                 closest_time = min(
                     time_to_speaker.keys(), 
                     key=lambda x: abs(x - int(trans_start * 10))
                 )
                 dominant_speaker = time_to_speaker[closest_time]
             else:
-                dominant_speaker = 'Speaker_1'
+                dominant_speaker = 'SPEAKER_01'
 
         new_seg = trans_seg.copy()
         new_seg['speaker'] = dominant_speaker
