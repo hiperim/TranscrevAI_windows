@@ -35,10 +35,16 @@ class TwoPassDiarizer:
         logger.info("Initializing Silero-VAD based diarizer...")
         self.device = device
         try:
-            self.vad_model, self.utils = cast(tuple, torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False))
-            logger.info("Silero-VAD model loaded successfully.")
+            # Load the Silero VAD model from the local repository to ensure stability.
+            local_repo_path = "src/silero-vad"
+            self.vad_model, self.utils = cast(tuple, torch.hub.load(
+                repo_or_dir=local_repo_path,
+                model='silero_vad',
+                source='local'
+            ))
+            logger.info("Silero-VAD model loaded successfully from local source.")
         except Exception as e:
-            logger.error(f"Failed to load Silero-VAD model: {e}", exc_info=True)
+            logger.error(f"Failed to load Silero-VAD model from local source: {e}", exc_info=True)
             self.vad_model = None
 
     def _estimate_dbscan_eps(self, mfccs_normalized: np.ndarray, min_samples: int) -> float:
@@ -112,7 +118,7 @@ class TwoPassDiarizer:
         (get_speech_timestamps, _, _, _, _) = self.utils
         
         all_speech_timestamps = []
-        all_mfccs = []
+        all_features = [] # Changed from all_mfccs to all_features
         
         CHUNK_DURATION = 30  # seconds
         
@@ -137,8 +143,16 @@ class TwoPassDiarizer:
                         
                         segment_audio = chunk[segment['start'] - i : segment['end'] - i]
                         if len(segment_audio) > 0:
+                            # Enhanced Feature Extraction
                             mfcc = librosa.feature.mfcc(y=segment_audio, sr=sr, n_mfcc=20)
-                            all_mfccs.append(np.mean(mfcc, axis=1))
+                            mfcc_delta = librosa.feature.delta(mfcc)
+                            mfcc_delta2 = librosa.feature.delta(mfcc, order=2)
+                            
+                            # Stack features and take the mean across the time axis
+                            combined_features = np.vstack([mfcc, mfcc_delta, mfcc_delta2])
+                            mean_features = np.mean(combined_features, axis=1)
+                            
+                            all_features.append(mean_features)
                             all_speech_timestamps.append(segment)
 
             if not all_speech_timestamps:
@@ -147,13 +161,13 @@ class TwoPassDiarizer:
                     seg['speaker'] = 'SPEAKER_01'
                 return {"segments": transcription_segments, "num_speakers": 1}
 
-            mfccs_normalized = normalize(np.array(all_mfccs))
+            features_normalized = normalize(np.array(all_features))
 
-            # DBSCAN Clustering
-            min_samples = 5
-            eps = self._estimate_dbscan_eps(mfccs_normalized, min_samples)
+            # DBSCAN Clustering with tuned min_samples
+            min_samples = 3 # Lowered to be more sensitive to speakers with few utterances
+            eps = self._estimate_dbscan_eps(features_normalized, min_samples)
             
-            clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(mfccs_normalized)
+            clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(features_normalized)
             final_labels = clustering.labels_
             
             # Number of clusters in labels, ignoring noise if present.
