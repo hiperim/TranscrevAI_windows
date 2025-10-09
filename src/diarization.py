@@ -98,34 +98,35 @@ class TwoPassDiarizer:
         Definitive diarization logic using an optimized anchor-and-classify method.
         """
         logger.info(f"Starting definitive online diarization for {audio_path}")
-        (get_speech_timestamps, _, _, _, _) = self.utils
-        
-        all_speech_timestamps = []
-        all_features = []
-        
         try:
-            with sf.SoundFile(audio_path, 'r') as audio_file:
-                sr = audio_file.samplerate
-                if sr != 16000:
-                    raise ValueError(f"Audio file has a sample rate of {sr}, but 16000 is required.")
+            audio, sr = librosa.load(audio_path, sr=16000, mono=True)
+            (get_speech_timestamps, _, _, _, _) = self.utils
+            
+            all_speech_timestamps = []
+            all_features = []
 
-                for i in range(0, audio_file.frames, 30 * sr):
-                    chunk = audio_file.read(30 * sr, dtype='float32')
-                    if len(chunk.shape) > 1: chunk = np.mean(chunk, axis=1)
+            num_samples = len(audio)
+            for i in range(0, num_samples, 30 * sr):
+                chunk = audio[i:i + 30 * sr]
+                
+                speech_timestamps_chunk = get_speech_timestamps(torch.from_numpy(chunk), self.vad_model, sampling_rate=sr)
+                
+                for segment in speech_timestamps_chunk:
+                    start_sample = segment['start']
+                    end_sample = segment['end']
+                    segment_audio = chunk[start_sample:end_sample]
                     
-                    speech_timestamps_chunk = get_speech_timestamps(chunk, self.vad_model, sampling_rate=sr)
-                    
-                    for segment in speech_timestamps_chunk:
+                    if len(segment_audio) > 0:
+                        mfcc = librosa.feature.mfcc(y=segment_audio, sr=sr, n_mfcc=20)
+                        mfcc_delta = librosa.feature.delta(mfcc)
+                        mfcc_delta2 = librosa.feature.delta(mfcc, order=2)
+                        combined = np.vstack([mfcc, mfcc_delta, mfcc_delta2])
+                        all_features.append(np.mean(combined, axis=1))
+                        
+                        # Adjust segment times to be relative to the whole audio
                         segment['start'] += i
                         segment['end'] += i
-                        segment_audio = chunk[segment['start'] - i : segment['end'] - i]
-                        if len(segment_audio) > 0:
-                            mfcc = librosa.feature.mfcc(y=segment_audio, sr=sr, n_mfcc=20)
-                            mfcc_delta = librosa.feature.delta(mfcc)
-                            mfcc_delta2 = librosa.feature.delta(mfcc, order=2)
-                            combined = np.vstack([mfcc, mfcc_delta, mfcc_delta2])
-                            all_features.append(np.mean(combined, axis=1))
-                            all_speech_timestamps.append(segment)
+                        all_speech_timestamps.append(segment)
 
             if not all_speech_timestamps:
                 raise ValueError("No speech detected.")
