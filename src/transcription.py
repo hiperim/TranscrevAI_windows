@@ -164,12 +164,11 @@ class TranscriptionService:
         # CORRECTED: Cast numpy float to standard Python float
         return float(np.mean(confidences))
 
-    async def transcribe_with_enhancements(self, audio_path: str, quantization: Optional[str] = None) -> TranscriptionResult:
+    async def transcribe_with_enhancements(self, audio_path: str, quantization: Optional[str] = None, word_timestamps: bool = False) -> TranscriptionResult:
         async with self._model_lock:  # CRITICAL: Thread-safety for concurrent requests
             start_time = time.time()
             requested_compute_type = quantization or self.compute_type
 
-            # CORRECTED: Check against the service's intended compute_type, not a non-existent model attribute
             if not self.model or self.compute_type != requested_compute_type:
                 await self._load_model(compute_type=requested_compute_type)
 
@@ -178,28 +177,38 @@ class TranscriptionService:
             if not self.model:
                 raise RuntimeError("Transcription model could not be loaded.")
 
-            segments_generator, info = self.model.transcribe(audio_path, language="pt", beam_size=5)
+            segments_generator, info = self.model.transcribe(
+                audio_path, 
+                language="pt", 
+                beam_size=5,
+                word_timestamps=word_timestamps
+            )
 
-            raw_segments = [
-                {"start": seg.start, "end": seg.end, "text": seg.text, "avg_logprob": seg.avg_logprob}
-                for seg in segments_generator
-            ]
-
-            corrected_segments = []
+            raw_segments = []
             full_text = ""
-            for segment in raw_segments:
-                corrected_text = self._apply_ptbr_corrections(segment['text'])
+            for seg in segments_generator:
+                segment_dict = {
+                    "start": seg.start, 
+                    "end": seg.end, 
+                    "text": seg.text, 
+                    "avg_logprob": seg.avg_logprob
+                }
+                if word_timestamps and hasattr(seg, 'words') and seg.words is not None:
+                    segment_dict['words'] = [
+                        {'word': w.word, 'start': w.start, 'end': w.end, 'probability': w.probability}
+                        for w in seg.words
+                    ]
+                
+                raw_segments.append(segment_dict)
+                corrected_text = self._apply_ptbr_corrections(seg.text)
                 full_text += corrected_text + " "
-                corrected_segments.append({
-                    'start': segment['start'], 'end': segment['end'], 'text': corrected_text
-                })
 
             processing_time = time.time() - start_time
             confidence = self._calculate_confidence(raw_segments)
 
             return TranscriptionResult(
                 text=full_text.strip(),
-                segments=corrected_segments,
+                segments=raw_segments, # Now contains word timestamps if requested
                 language=info.language,
                 confidence=confidence,
                 processing_time=processing_time,
