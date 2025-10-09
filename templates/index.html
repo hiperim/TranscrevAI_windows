@@ -88,6 +88,7 @@
         <!-- Status de Processamento -->
         <div class="status" id="status">
             <h3>Status do Processamento</h3>
+            <div class="spinner" id="loading-spinner"></div>
             <div class="progress-bar">
                 <div class="progress-fill" id="progress-fill"></div>
             </div>
@@ -161,9 +162,14 @@
         async function processUpload() {
             if (!currentFile) return;
 
+            const uploadBtn = document.getElementById('upload-btn');
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = 'Processando...';
+            
+            document.getElementById('loading-spinner').style.display = 'block';
+
             const domain = document.getElementById('upload-domain').value;
 
-            // CRITICAL FIX: Generate session_id FIRST, then connect WebSocket
             currentSessionId = 'upload_' + Date.now();
 
             const isFirstTime = await checkFirstTimeUsage();
@@ -174,10 +180,8 @@
             showStatus('Enviando arquivo...', 5);
 
             try {
-                // Connect WebSocket FIRST with correct session_id
                 await setupWebSocketConnection();
 
-                // Send file with session_id included
                 const formData = new FormData();
                 formData.append('file', currentFile);
                 formData.append('session_id', currentSessionId);
@@ -193,12 +197,17 @@
 
                 if (result.success) {
                     showStatus('Arquivo enviado. Processando...', 10);
-                    // Result will come via WebSocket 'complete' message
                 } else {
                     showStatus('Erro: ' + (result.error || 'Erro desconhecido'), 0);
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = 'Processar Arquivo';
+                    document.getElementById('loading-spinner').style.display = 'none';
                 }
             } catch (error) {
                 showStatus('Erro no upload: ' + error.message, 0);
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Processar Arquivo';
+                document.getElementById('loading-spinner').style.display = 'none';
             }
         }
 
@@ -263,6 +272,8 @@
             const message = data.message;
             const progress = data.progress;
             const details = data.details;
+            const uploadBtn = document.getElementById('upload-btn');
+            const spinner = document.getElementById('loading-spinner');
 
             switch (type) {
                 case 'model_check':
@@ -284,7 +295,6 @@
                     const percentage = data.percentage || 50;
                     let progressMessage = data.message || 'Processando...';
 
-                    // Add estimated time if available
                     if (data.estimated_time && percentage < 20) {
                         progressMessage += `<br><span style="font-size: 0.85rem; color: #A0A0A0;">Tempo estimado: ${data.estimated_time}s</span>`;
                     } else if (data.estimated_time_remaining && percentage >= 20) {
@@ -297,7 +307,6 @@
                     showStatus(message || 'Processando transcrição...', progress || 90, details);
                     break;
                 case 'complete':
-                    // Backend sends 'complete' with result data
                     if (data.result) {
                         showStatus('Processamento concluído!', 100);
                         const formattedResult = {
@@ -312,15 +321,24 @@
                     } else {
                         showStatus('Processamento concluído!', 100);
                     }
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = 'Processar Arquivo';
+                    spinner.style.display = 'none';
                     break;
                 case 'completed':
                     showStatus('Processamento concluído!', 100);
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = 'Processar Arquivo';
+                    spinner.style.display = 'none';
                     break;
                 case 'warning':
                     showStatus('Aviso: ' + (message || 'Aviso'), progress || 90);
                     break;
                 case 'error':
                     showStatus('Erro: ' + (message || 'Erro desconhecido'), 0);
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = 'Processar Arquivo';
+                    spinner.style.display = 'none';
                     break;
                 default:
                     if (message) {
@@ -336,7 +354,6 @@
 
             status.classList.add('show');
 
-            // Check if text already contains HTML (from progress case with time estimates)
             if (text.includes('<br>') || text.includes('<span>')) {
                 statusText.innerHTML = text;
             } else if (details) {

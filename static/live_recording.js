@@ -42,6 +42,7 @@ class LiveRecorder {
 
     handleServerMessage(data) {
         console.log('Server message:', data);
+        const spinner = document.getElementById('loading-spinner');
 
         if (data.type === 'state_change') {
             this.recordingState = data.data.status;
@@ -52,7 +53,9 @@ class LiveRecorder {
             this.updateStatus(data.message, 'info');
         } else if (data.type === 'error') {
             this.updateStatus(`Erro: ${data.message}`, 'error');
+            if (spinner) spinner.style.display = 'none';
         } else if (data.type === 'complete') {
+            if (spinner) spinner.style.display = 'none';
             this.handleTranscriptionComplete(data.result);
         }
     }
@@ -122,6 +125,11 @@ class LiveRecorder {
             this.updateStatus('Processando...', 'processing');
             this.recordingState = 'processing';
             this.updateButtonStates();
+
+            // Show global spinner
+            document.getElementById('status').classList.add('show');
+            document.getElementById('loading-spinner').style.display = 'block';
+            document.getElementById('status-text').textContent = 'Processando áudio gravado...';
         }
     }
 
