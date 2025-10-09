@@ -177,11 +177,18 @@ class TranscriptionService:
             if not self.model:
                 raise RuntimeError("Transcription model could not be loaded.")
 
+            vad_parameters = dict(
+                threshold=0.4,
+                min_speech_duration_ms=100
+            )
+
             segments_generator, info = self.model.transcribe(
                 audio_path, 
                 language="pt", 
                 beam_size=5,
-                word_timestamps=word_timestamps
+                word_timestamps=word_timestamps,
+                vad_filter=True,
+                vad_parameters=vad_parameters
             )
 
             raw_segments = []

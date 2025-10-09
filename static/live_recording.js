@@ -47,8 +47,6 @@ class LiveRecorder {
         if (data.type === 'state_change') {
             this.recordingState = data.data.status;
             this.updateButtonStates();
-        } else if (data.type === 'chunk_ack') {
-            document.getElementById('chunks-count').textContent = `Chunks: ${data.chunks}`;
         } else if (data.type === 'processing') {
             this.updateStatus(data.message, 'info');
         } else if (data.type === 'error') {
