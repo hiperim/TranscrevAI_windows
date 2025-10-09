@@ -33,7 +33,6 @@ async function processUpload() {
     
     document.getElementById('loading-spinner').style.display = 'block';
 
-    const domain = document.getElementById('upload-domain').value;
 
     currentSessionId = 'upload_' + Date.now();
 
@@ -51,7 +50,6 @@ async function processUpload() {
         formData.append('file', currentFile);
         formData.append('session_id', currentSessionId);
         formData.append('language', 'pt');
-        formData.append('domain', domain);
 
         const response = await fetch('/upload', {
             method: 'POST',
