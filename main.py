@@ -1,4 +1,5 @@
 # Enhanced main.py - Final Version with Corrected Alignment
+
 """
 TranscrevAI Main Application - Final Implementation
 Includes fixes for performance and a corrected transcription-diarization alignment logic.
@@ -15,6 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+import torch
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form
 from fastapi.responses import JSONResponse, FileResponse
@@ -23,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 # Core modules
 from src.audio_processing import LiveAudioProcessor, AudioQualityAnalyzer
-from src.diarization import TwoPassDiarizer
+from src.diarization import PyannoteDiarizer # Corrected Import
 from src.transcription import TranscriptionService
 from src.subtitle_generator import generate_srt
 from src.file_manager import FileManager
@@ -36,10 +38,13 @@ from src.websocket_enhancements import get_websocket_safety_manager, MessagePrio
 # Configuration
 from config.app_config import get_config
 
-# Set up application logging
+# --- Global Configuration ---
 app_config = get_config()
 logging.basicConfig(level=app_config.log_level.upper(), format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Define DEVICE correctly
+DEVICE = "cuda" if torch.cuda.is_available() and not app_config.force_cpu else "cpu"
 
 class ThreadSafeEnhancedAppState:
     """Enhanced thread-safe application state with full monitoring"""
@@ -50,7 +55,7 @@ class ThreadSafeEnhancedAppState:
         self.connections: Dict[str, WebSocket] = {}
         
         self.transcription_service: Optional[TranscriptionService] = None
-        self.diarization_service: Optional[TwoPassDiarizer] = None
+        self.diarization_service: Optional[PyannoteDiarizer] = None # Corrected Type Hint
         self.live_audio_processor = LiveAudioProcessor()
         self.audio_quality_analyzer = AudioQualityAnalyzer()
         self.websocket_safety_manager = get_websocket_safety_manager()
@@ -65,7 +70,7 @@ class ThreadSafeEnhancedAppState:
             if self.is_initialized: return
             logger.info("Starting TranscrevAI Enhanced Initialization...")
             self.transcription_service = TranscriptionService()
-            self.diarization_service = TwoPassDiarizer()
+            self.diarization_service = PyannoteDiarizer(device=DEVICE) # Correctly instantiated here
             self.is_initialized = True
             logger.info("TranscrevAI Initialization Complete!")
 
@@ -85,36 +90,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="TranscrevAI Enhanced", version="4.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-
-def stitch_transcription_to_diarization(transcription_segments: List[Dict], diarization_segments: List[Dict]) -> List[Dict]:
-    """
-    Accurately combines word-level transcription text with speaker diarization segments.
-    """
-    if not diarization_segments:
-        return transcription_segments # Fallback if diarization fails
-
-    # Extract all words from transcription with their timestamps
-    all_words = []
-    for seg in transcription_segments:
-        if 'words' in seg:
-            all_words.extend(seg['words'])
-
-    if not all_words:
-        # Fallback for transcriptions without word-level timestamps
-        return diarization_segments
-
-    # Assign words to each diarization segment
-    for dia_seg in diarization_segments:
-        dia_seg['text'] = ''
-        words_in_segment = []
-        for word in all_words:
-            word_mid_time = (word['start'] + word['end']) / 2
-            if dia_seg['start'] <= word_mid_time < dia_seg['end']:
-                words_in_segment.append(word['word'])
-        
-        dia_seg['text'] = ''.join(words_in_segment).strip()
-
-    return diarization_segments
 
 async def process_audio_pipeline(audio_path: str, session_id: str):
     try:
@@ -138,7 +113,6 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
         
         if not app_state.transcription_service:
             raise RuntimeError("Transcription service not initialized")
-        # Request word-level timestamps for accurate alignment
         transcription_result = await app_state.transcription_service.transcribe_with_enhancements(audio_path, word_timestamps=True)
 
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'diarization', 'percentage': 50, 'message': 'Transcrição concluída. Identificando falantes...'})
@@ -147,12 +121,9 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
             raise RuntimeError("Diarization service not initialized")
         diarization_result = await app_state.diarization_service.diarize(audio_path, transcription_result.segments)
 
-        # Correctly combine results using the new stitcher function
-        final_segments = stitch_transcription_to_diarization(transcription_result.segments, diarization_result["segments"])
-
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'srt', 'percentage': 80, 'message': 'Gerando legendas...'})
 
-        srt_path = await generate_srt(final_segments, output_path=app_state.file_manager.get_data_path("temp"), filename=f"{session_id}.srt")
+        srt_path = await generate_srt(diarization_result["segments"], output_path=app_state.file_manager.get_data_path("temp"), filename=f"{session_id}.srt")
 
         pipeline_end_time = time.time()
         actual_processing_time = pipeline_end_time - pipeline_start_time
@@ -161,7 +132,7 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
         logger.info(f"Processing complete: {actual_processing_time:.2f}s for {audio_duration:.2f}s audio (ratio: {processing_ratio:.2f}x)")
 
         final_result = {
-            "segments": final_segments,
+            "segments": diarization_result["segments"],
             "num_speakers": diarization_result["num_speakers"],
             "processing_time": round(actual_processing_time, 2),
             "processing_ratio": round(processing_ratio, 2),
@@ -215,8 +186,6 @@ async def file_upload_websocket(websocket: WebSocket, session_id: str):
         await app_state.websocket_safety_manager.handle_connection_lost(session_id)
         with app_state._lock:
             if session_id in app_state.connections: del app_state.connections[session_id]
-
-# Other endpoints (check-first-time, live recording) are omitted for brevity but assumed to be present and correct.
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False, log_level="info")

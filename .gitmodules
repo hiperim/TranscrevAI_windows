@@ -1,6 +1,0 @@
-[submodule "silero-vad"]
-	path = silero-vad
-	url = https://github.com/snakers4/silero-vad.git
-[submodule "src/silero-vad"]
-	path = src/silero-vad
-	url = https://github.com/snakers4/silero-vad.git
