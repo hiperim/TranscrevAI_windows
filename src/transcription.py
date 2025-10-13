@@ -11,6 +11,7 @@ import gc
 import time
 import re
 import unicodedata
+import os
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 import numpy as np
@@ -185,7 +186,7 @@ class TranscriptionService:
             segments_generator, info = self.model.transcribe(
                 audio_path, 
                 language="pt", 
-                beam_size=5,
+                beam_size=3,
                 word_timestamps=word_timestamps,
                 vad_filter=True,
                 vad_parameters=vad_parameters
@@ -232,7 +233,9 @@ class TranscriptionService:
                 logger.info(f"Loading Whisper model (attempt {attempt+1}/{max_retries}): {self.model_name} with {self.compute_type} precision...")
                 load_start = time.time()
 
-                self.model = WhisperModel(self.model_name, device=self.device, compute_type=self.compute_type)
+                cpu_threads = max(1, os.cpu_count() - 2)
+                logger.info(f"Setting cpu_threads to {cpu_threads} for faster-whisper.")
+                self.model = WhisperModel(self.model_name, device=self.device, compute_type=self.compute_type, cpu_threads=cpu_threads)
 
                 load_time = time.time() - load_start
                 self.model_loads_count += 1

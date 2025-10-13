@@ -55,6 +55,7 @@ class AppConfig:
     
     # === DEVELOPMENT SETTINGS ===
     debug_mode: bool = False
+    force_cpu: bool = False
     enable_performance_monitoring: bool = True
     enable_memory_profiling: bool = False
     

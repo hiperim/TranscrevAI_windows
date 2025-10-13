@@ -1,0 +1,57 @@
+{
+  "ram": [
+    {
+      "file": "q.speakers.wav",
+      "audio_duration": 14.506666666666666,
+      "transcription_time": 28.405113697052002,
+      "diarization_time": 0.0,
+      "total_time": 28.405113697052002,
+      "processing_ratio": 1.95807309492546,
+      "peak_ram_gb": 0.47478485107421875,
+      "expected_speakers": 4,
+      "detected_speakers": 1,
+      "speaker_error": 3,
+      "speed_pass": true,
+      "ram_pass": true,
+      "accuracy_pass": false
+    }
+  ],
+  "speed": [
+    {
+      "file": "q.speakers.wav",
+      "audio_duration": 14.506666666666666,
+      "transcription_time": 28.405113697052002,
+      "diarization_time": 0.0,
+      "total_time": 28.405113697052002,
+      "processing_ratio": 1.95807309492546,
+      "peak_ram_gb": 0.47478485107421875,
+      "expected_speakers": 4,
+      "detected_speakers": 1,
+      "speaker_error": 3,
+      "speed_pass": true,
+      "ram_pass": true,
+      "accuracy_pass": false
+    }
+  ],
+  "accuracy": [
+    {
+      "file": "q.speakers.wav",
+      "audio_duration": 14.506666666666666,
+      "transcription_time": 28.405113697052002,
+      "diarization_time": 0.0,
+      "total_time": 28.405113697052002,
+      "processing_ratio": 1.95807309492546,
+      "peak_ram_gb": 0.47478485107421875,
+      "expected_speakers": 4,
+      "detected_speakers": 1,
+      "speaker_error": 3,
+      "speed_pass": true,
+      "ram_pass": true,
+      "accuracy_pass": false
+    }
+  ],
+  "initialization": {
+    "time_seconds": 13.55214810371399,
+    "ram_gb": 0.0
+  }
+}
