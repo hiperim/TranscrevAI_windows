@@ -179,14 +179,16 @@ class TranscriptionService:
                 raise RuntimeError("Transcription model could not be loaded.")
 
             vad_parameters = dict(
-                threshold=0.4,
-                min_speech_duration_ms=100
+                threshold=0.5,
+                min_speech_duration_ms=250,
+                min_silence_duration_ms=2000
             )
 
             segments_generator, info = self.model.transcribe(
                 audio_path, 
                 language="pt", 
-                beam_size=3,
+                beam_size=5,
+                best_of=5,
                 word_timestamps=word_timestamps,
                 vad_filter=True,
                 vad_parameters=vad_parameters
@@ -233,9 +235,7 @@ class TranscriptionService:
                 logger.info(f"Loading Whisper model (attempt {attempt+1}/{max_retries}): {self.model_name} with {self.compute_type} precision...")
                 load_start = time.time()
 
-                cpu_threads = max(1, os.cpu_count() - 2)
-                logger.info(f"Setting cpu_threads to {cpu_threads} for faster-whisper.")
-                self.model = WhisperModel(self.model_name, device=self.device, compute_type=self.compute_type, cpu_threads=cpu_threads)
+                self.model = WhisperModel(self.model_name, device=self.device, compute_type=self.compute_type)
 
                 load_time = time.time() - load_start
                 self.model_loads_count += 1

@@ -22,7 +22,6 @@ from . import diarization
 from . import file_manager
 from . import logging_setup
 # models removed - now using dual_whisper_system.py directly
-from . import performance_optimizer
 from . import subtitle_generator
 from . import transcription
 
@@ -30,7 +29,6 @@ __all__ = [
     'transcription',
     'audio_processing',
     'diarization',
-    'performance_optimizer',
     # 'models',  # Removed
     'file_manager',
     'subtitle_generator',

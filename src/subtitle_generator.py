@@ -23,14 +23,7 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class SubtitleSegment:
-    """Enhanced subtitle segment with proper typing and encoding support"""
-    start_time: float
-    end_time: float
-    text: str
-    speaker: Optional[str] = None
-    confidence: Optional[float] = None
+
 
 class SRTGenerator:
     """Enhanced SRT generator with comprehensive UTF-8 Windows support"""
@@ -62,12 +55,7 @@ class SRTGenerator:
             '—': '-',   # Em dash to hyphen
         }
         
-        # Portuguese abbreviations that shouldn't be split
-        self.portuguese_abbreviations = {
-            'Dr.', 'Dra.', 'Sr.', 'Sra.', 'Jr.', 'Prof.', 'Profa.',
-            'etc.', 'ex.', 'obs.', 'p.', 'pp.', 'vol.', 'cap.',
-            'art.', 'inc.', 'ltd.', 'ltda.', 'S.A.', 'LTDA.'
-        }
+
 
     def _format_time_srt(self, seconds: float) -> str:
         """Format time for SRT format (HH:MM:SS,mmm)"""
@@ -491,87 +479,3 @@ async def generate_srt(segments: List[Dict[str, Any]],
     except Exception as e:
         logger.error(f"SRT generation failed: {e}")
         return None
-
-def create_subtitle_segment(start_time: float, end_time: float, text: str, 
-                          speaker: Optional[str] = None, 
-                          confidence: Optional[float] = None) -> Dict[str, Any]:
-    """
-    Create a properly formatted subtitle segment
-    
-    Args:
-        start_time: Start time in seconds
-        end_time: End time in seconds
-        text: Subtitle text
-        speaker: Optional speaker identifier
-        confidence: Optional confidence score
-        
-    Returns:
-        Formatted segment dictionary
-    """
-    segment = {
-        "start": float(start_time),
-        "end": float(end_time),
-        "text": str(text).strip()
-    }
-    
-    if speaker is not None:
-        segment["speaker"] = str(speaker).strip()
-    
-    if confidence is not None:
-        segment["confidence"] = float(confidence)
-    
-    return segment
-
-def merge_subtitle_segments(segments: List[Dict[str, Any]], 
-                          max_gap: float = 0.5) -> List[Dict[str, Any]]:
-    """
-    Merge consecutive segments with small gaps for better subtitle flow
-    
-    Args:
-        segments: List of subtitle segments
-        max_gap: Maximum gap between segments to merge (seconds)
-        
-    Returns:
-        List of merged segments
-    """
-    if not segments:
-        return []
-    
-    merged = []
-    current_segment = None
-    
-    for segment in segments:
-        if not isinstance(segment, dict) or "start" not in segment or "end" not in segment:
-            continue
-        
-        if current_segment is None:
-            current_segment = segment.copy()
-            continue
-        
-        # Check if segments can be merged
-        gap = segment["start"] - current_segment["end"]
-        same_speaker = (
-            current_segment.get("speaker") == segment.get("speaker") or
-            (not current_segment.get("speaker") and not segment.get("speaker"))
-        )
-        
-        if gap <= max_gap and same_speaker:
-            # Merge segments
-            current_segment["end"] = segment["end"]
-            current_segment["text"] = f"{current_segment['text']} {segment['text']}".strip()
-            
-            # Update confidence (average)
-            if "confidence" in current_segment and "confidence" in segment:
-                curr_conf = current_segment["confidence"]
-                new_conf = segment["confidence"]
-                current_segment["confidence"] = (curr_conf + new_conf) / 2
-        else:
-            # Can't merge, add current segment and start new one
-            merged.append(current_segment)
-            current_segment = segment.copy()
-    
-    # Add the last segment
-    if current_segment is not None:
-        merged.append(current_segment)
-    
-    return merged

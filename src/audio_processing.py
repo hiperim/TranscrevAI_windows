@@ -51,40 +51,7 @@ def _get_librosa():
             logger.warning("Librosa not available for advanced audio analysis.")
     return _librosa
 
-# --- VAD (Voice Activity Detection) Pre-processor --- #
 
-class VADMode(Enum):
-    AGGRESSIVE = "aggressive"
-    BALANCED = "balanced"
-    CONSERVATIVE = "conservative"
-
-@dataclass
-class VADSegment:
-    start: float
-    end: float
-
-class VADPreprocessor:
-    """Uses a mock Silero VAD model to detect speech timestamps in an audio file."""
-    def __init__(self):
-        self.sample_rate = 16000
-
-    async def get_speech_timestamps(self, audio_path: str, vad_mode: VADMode = VADMode.BALANCED) -> List[Dict[str, float]]:
-        librosa = _get_librosa()
-        if not librosa:
-            raise ImportError("Librosa is required for VAD processing.")
-        
-        try:
-            audio_data, _ = librosa.load(audio_path, sr=self.sample_rate, mono=True)
-            # Use librosa's built-in effect to split by non-silent parts.
-            # Optimized parameters for PT-BR: lower top_db for better sensitivity
-            speech_chunks = librosa.effects.split(audio_data, top_db=20, frame_length=512, hop_length=128)
-            timestamps = [{'start': start / self.sample_rate, 'end': end / self.sample_rate} for start, end in speech_chunks]
-            
-            logger.info(f"VAD processing found {len(timestamps)} speech segments.")
-            return timestamps
-        except Exception as e:
-            logger.error(f"VAD processing failed: {e}")
-            return []
 
 # --- Dynamic Quantization --- #
 
@@ -259,31 +226,7 @@ class AudioRecorder:
                 wf.writeframes(self._audio_queue.get())
         logger.info(f"Audio file saved: {self.output_file}")
 
-# --- Audio File Loading --- #
 
-class RobustAudioLoader:
-    """Robust audio loading with fallback strategies for maximum compatibility."""
-    def load_audio(self, file_path: Union[str, Path], target_sr: int = 16000) -> Tuple[np.ndarray, int]:
-        file_path = Path(file_path)
-        if not file_path.exists(): raise FileNotFoundError(f"Audio file not found: {file_path}")
-        if file_path.stat().st_size < 100: raise ValueError(f"Audio file is too small: {file_path}")
-        
-        try:
-            data, sr = sf.read(str(file_path), dtype='float32')
-        except Exception as e1:
-            logger.warning(f"Soundfile failed to load {file_path}: {e1}. Falling back to librosa.")
-            librosa = _get_librosa()
-            if not librosa: raise RuntimeError("Audio loading failed: librosa not available.")
-            data, sr = librosa.load(str(file_path), sr=None, mono=False)
-            if len(data.shape) > 1: data = data.mean(axis=0)
-
-        if len(data.shape) > 1: data = np.mean(data, axis=1)
-        if sr != target_sr:
-            librosa = _get_librosa()
-            if not librosa: raise RuntimeError("Resampling failed: librosa not available.")
-            data = librosa.resample(y=data, orig_sr=sr, target_sr=target_sr)
-            sr = target_sr
-        return data.astype(np.float32), int(sr)
 # --- Live Audio Processor with Disk Buffering --- #
 
 class RecordingState(Enum):

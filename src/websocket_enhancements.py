@@ -11,9 +11,7 @@ import threading
 from typing import Dict, Any, Optional, Callable, List, Set
 from dataclasses import dataclass, field
 from enum import Enum
-import weakref
 from collections import deque, defaultdict
-import random
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +19,8 @@ class ConnectionState(Enum):
     CONNECTING = "connecting"
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
-    RECONNECTING = "reconnecting"
-    FAILED = "failed"
-    CLOSED = "closed"
 
 class MessagePriority(Enum):
-    LOW = 1
     NORMAL = 2
     HIGH = 3
     CRITICAL = 4
@@ -36,37 +30,12 @@ class QueuedMessage:
     session_id: str
     message: Dict[str, Any]
     priority: MessagePriority
-    created_at: float
 
 class RobustWebSocketSafetyManager:
-    async def register_connection(self, websocket, session_id: str):
-        """Register a new websocket connection for a session."""
-        with self._lock:
-            self._initialize_session(session_id)
-            if not hasattr(self, 'connections'):
-                self.connections = {}
-            self.connections[session_id] = websocket
-            self.connection_states[session_id] = ConnectionState.CONNECTED
-        logger.info(f"WebSocket registered for session {session_id}")
-
-    async def disconnect_websocket(self, session_id: str):
-        """Disconnect and clean up a websocket connection for a session."""
-        with self._lock:
-            if hasattr(self, 'connections') and session_id in self.connections:
-                try:
-                    await self.connections[session_id].close()
-                except Exception:
-                    pass
-                del self.connections[session_id]
-            self.connection_states[session_id] = ConnectionState.DISCONNECTED
-        self.cleanup_session(session_id)
-        logger.info(f"WebSocket disconnected for session {session_id}")
     """Advanced WebSocket safety manager with exponential retry and robust recovery"""
     
     def __init__(self):
         self.message_timestamps = defaultdict(deque)
-        self.max_messages_per_second = 5
-        self.burst_allowance = 10
         self.priority_queues = {p: defaultdict(deque) for p in MessagePriority}
         self.connection_states = {}
         self._lock = threading.RLock()
@@ -96,7 +65,7 @@ class RobustWebSocketSafetyManager:
             return False
 
     async def _queue_message(self, session_id: str, message: Dict[str, Any], priority: MessagePriority):
-        queued_msg = QueuedMessage(session_id, message, priority, time.time())
+        queued_msg = QueuedMessage(session_id, message, priority)
         self.priority_queues[priority][session_id].append(queued_msg)
 
     async def handle_connection_established(self, session_id: str):
