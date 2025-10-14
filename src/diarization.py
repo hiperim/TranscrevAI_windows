@@ -45,7 +45,7 @@ class PyannoteDiarizer:
                     "threshold": 0.35  # ← CUSTOM: Reverted to 0.35 for best overall accuracy
                 }
             })
-            logger.info("pyannote.audio pipeline loaded with custom clustering threshold=0.4")
+            logger.info("pyannote.audio pipeline loaded with custom clustering threshold=0.35")
 
         except Exception as e:
             logger.error(f"Failed to load pyannote.audio pipeline: {e}", exc_info=True)
@@ -78,6 +78,9 @@ class PyannoteDiarizer:
         """
         Synchronous diarization logic.
         """
+        if not self.pipeline:
+            raise RuntimeError("Diarization pipeline is not initialized.")
+
         logger.info(f"Starting pyannote.audio diarization for {audio_path}")
         try:
             # The pipeline object handles the entire process: VAD, embedding, clustering.
@@ -96,8 +99,8 @@ class PyannoteDiarizer:
             num_speakers = len(diarization_result.labels())
             logger.info(f"pyannote.audio found {num_speakers} speakers.")
 
-            # Use the existing alignment function to merge transcription and diarization
-            aligned_segments = force_transcription_segmentation(transcription_segments, diarization_segments)
+            # Use the new, more accurate word-level alignment function
+            aligned_segments = align_speakers_by_word(transcription_segments, diarization_result)
 
             return {"segments": aligned_segments, "num_speakers": int(num_speakers)}
 
@@ -107,52 +110,55 @@ class PyannoteDiarizer:
                 seg['speaker'] = 'SPEAKER_01'
             return {"segments": transcription_segments, "num_speakers": 1}
 
-# --- Critical Alignment Function (Preserved) ---
-def force_transcription_segmentation(
-    transcription_segments: List[Dict[str, Any]],
-    diarization_segments: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
+# --- New, Corrected and Robust Alignment Function ---
+def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diarization_result) -> List[Dict[str, Any]]:
     """
-    Aligns transcription segments with speaker labels from diarization.
+    Aligns speaker labels to transcription segments using word-level timestamps for high accuracy.
+    This version is robust against words falling into non-speech gaps and is type-safe.
     """
-    if not diarization_segments or not transcription_segments:
-        # Return original transcription if either list is empty
-        for seg in transcription_segments:
-            if 'speaker' not in seg:
-                seg['speaker'] = 'SPEAKER_01'
+    if not diarization_result:
+        # If diarization failed entirely, assign a default speaker to all segments
+        for segment in transcription_segments:
+            segment['speaker'] = 'SPEAKER_01'
         return transcription_segments
 
-    # Create a timeline mapping tenths of a second to a speaker
-    time_to_speaker = {}
-    for seg in diarization_segments:
-        start = int(seg.get('start', 0) * 10)
-        end = int(seg.get('end', 0) * 10)
-        speaker = seg.get('speaker', 'Unknown')
-        for i in range(start, end):
-            time_to_speaker[i] = speaker
+    for segment in transcription_segments:
+        if 'words' not in segment or not segment['words']:
+            # Fallback for segments without word-level timestamps
+            try:
+                cropped_annotation = diarization_result.crop(segment['start'], segment['end'])
+                if cropped_annotation and not cropped_annotation.is_empty():
+                    segment['speaker'] = cropped_annotation.argmax()
+                else:
+                    segment['speaker'] = 'SPEAKER_XX' # No speaker in this segment
+            except Exception:
+                segment['speaker'] = 'SPEAKER_XX'
+            continue
 
-    # Assign a speaker to each transcription segment based on temporal overlap
-    for trans_seg in transcription_segments:
-        trans_start = int(trans_seg.get('start', 0) * 10)
-        trans_end = int(trans_seg.get('end', 0) * 10)
-        
-        speaker_counts = {}
-        for i in range(trans_start, trans_end):
-            if i in time_to_speaker:
-                speaker = time_to_speaker[i]
-                speaker_counts[speaker] = speaker_counts.get(speaker, 0) + 1
-        
-        if speaker_counts:
-            # Assign the speaker with the most overlap
-            dominant_speaker = max(speaker_counts, key=speaker_counts.get)
-            trans_seg['speaker'] = dominant_speaker
-        else:
-            # If no overlap, find the nearest speaker segment
-            if time_to_speaker:
-                closest_time = min(time_to_speaker.keys(), key=lambda x: abs(x - trans_start))
-                trans_seg['speaker'] = time_to_speaker[closest_time]
+        word_speaker_counts: Dict[str, int] = {}
+        for word in segment['words']:
+            # Crop the diarization to the word's timeframe
+            cropped_annotation = diarization_result.crop(word['start'], word['end'])
+            
+            # Check if the cropped annotation is not empty (i.e., a speaker was active)
+            if cropped_annotation and not cropped_annotation.is_empty():
+                try:
+                    speaker = cropped_annotation.argmax()
+                    word['speaker'] = speaker
+                    word_speaker_counts[speaker] = word_speaker_counts.get(speaker, 0) + 1
+                except (IndexError, ValueError):
+                    word['speaker'] = 'SPEAKER_XX' # Handle cases where argmax might fail on unusual annotations
             else:
-                # Fallback if no diarization segments exist at all
-                trans_seg['speaker'] = 'SPEAKER_01'
+                # This word falls in a gap where no speaker was detected
+                word['speaker'] = 'SPEAKER_XX'
+        
+        # Assign the dominant speaker for the entire segment based on word counts
+        if word_speaker_counts:
+            # This is now guaranteed to be safe and satisfies Pylance
+            dominant_speaker = max(word_speaker_counts, key=lambda spk: word_speaker_counts[spk])
+            segment['speaker'] = dominant_speaker
+        else:
+            # If no words in the segment had a speaker, assign a default
+            segment['speaker'] = 'SPEAKER_XX'
 
     return transcription_segments

@@ -69,29 +69,21 @@ BENCHMARK_FILES = {
 }
 
 
-# ==================== FIXTURES ====================
+# ==================== HELPER FUNCTION =====================
 
-@pytest.fixture(scope="module")
-def recordings_dir():
-    """Get recordings directory path"""
-    path = Path(__file__).parent.parent / "data" / "recordings"
-    if not path.exists():
-        pytest.skip(f"Recordings directory not found: {path}")
-    return path
-
-
-@pytest.fixture(scope="module")
-def available_benchmark_files(recordings_dir):
-    """Find available benchmark files"""
+def _get_available_benchmark_files():
+    """Helper to generate benchmark file parameters for this module."""
+    recordings_dir = Path(__file__).parent.parent / "data" / "recordings"
+    if not recordings_dir.exists():
+        return []
+    
     files = []
     for filename, metadata in BENCHMARK_FILES.items():
         filepath = recordings_dir / filename
         if filepath.exists():
-            files.append((str(filepath), filename, metadata))
-
-    if not files:
-        pytest.skip("No benchmark audio files found in data/recordings")
-
+            # Create a pytest.param for better test IDs
+            param = pytest.param(str(filepath), filename, metadata, id=filename)
+            files.append(param)
     return files
 
 
@@ -127,135 +119,127 @@ def memory_tracker():
 
 # ==================== COMPLIANCE TESTS ====================
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("audio_path,filename,metadata", [
-    pytest.param(*file_data, id=file_data[1])
-    for file_data in pytest.lazy_fixture("available_benchmark_files")
-])
-async def test_ram_compliance_hard_limit(audio_path, filename, metadata, memory_tracker):
+import multiprocessing
+from queue import Empty
+from src.worker import process_audio_task
+
+# ==================== HELPER FUNCTION =====================
+
+def run_worker_and_get_result(audio_path: str, session_id: str) -> Dict[str, Any]:
+    """
+    Invokes the worker task directly and retrieves the final result from the queue.
+    This is a synchronous helper for use in compliance tests.
+    """
+    manager = multiprocessing.Manager()
+    communication_queue = manager.Queue()
+    mock_config = {"model_name": "medium", "device": "cpu"}
+
+    # Execute the worker task in the current process
+    process_audio_task(
+        audio_path=audio_path,
+        session_id=session_id,
+        config=mock_config,
+        communication_queue=communication_queue
+    )
+
+    # Retrieve the final result from the queue
+    final_result = None
+    while True:
+        try:
+            # Using a longer timeout as some compliance tests can be slow
+            message = communication_queue.get(timeout=180)
+            if message.get('type') == 'complete':
+                final_result = message.get('result')
+                break
+            if message.get('type') == 'error':
+                pytest.fail(f"Worker task failed for {session_id}: {message.get('message')}")
+        except Empty:
+            pytest.fail(f"Worker task timed out for {session_id}. No 'complete' message received.")
+    
+    assert final_result is not None, f"Worker for {session_id} did not produce a final result."
+    return final_result
+
+
+# ==================== COMPLIANCE TESTS ====================
+
+@pytest.mark.parametrize("audio_path,filename,metadata", _get_available_benchmark_files())
+def test_ram_compliance_hard_limit(worker_services_fixture, audio_path, filename, metadata):
     """
     COMPLIANCE RULE 7: RAM Hard Limit
-    Validates that processing does not exceed hard RAM limit
+    Validates that processing does not exceed hard RAM limit using worker-reported memory.
     """
-    # Get audio duration for context
     import librosa
     audio_duration = librosa.get_duration(path=audio_path)
-
-    # Process audio
     session_id = f"test_ram_{Path(audio_path).stem}"
 
-    from main import process_audio_pipeline
+    # Run the task and get the result, which includes memory usage
+    result = run_worker_and_get_result(audio_path, session_id)
 
-    # Track memory during processing
-    async def track_memory():
-        while True:
-            memory_tracker.update()
-            await asyncio.sleep(0.1)
+    peak_memory_mb = result.get("peak_memory_mb")
+    assert peak_memory_mb is not None, "Peak memory (peak_memory_mb) was not reported by the worker."
 
-    memory_task = asyncio.create_task(track_memory())
-
-    try:
-        await process_audio_pipeline(audio_path, session_id)
-    finally:
-        memory_task.cancel()
-        try:
-            await memory_task
-        except asyncio.CancelledError:
-            pass
-
-    peak_ram_gb = memory_tracker.get_peak_usage_mb() / 1024
-    delta_ram_gb = memory_tracker.get_delta_mb() / 1024
+    peak_ram_gb = peak_memory_mb / 1024
 
     # Log results
     print(f"\n{'='*60}")
     print(f"RAM Compliance Test: {filename}")
     print(f"Audio Duration: {audio_duration:.2f}s")
-    print(f"Peak RAM: {peak_ram_gb:.2f} GB")
-    print(f"Delta RAM: {delta_ram_gb:.2f} GB")
+    print(f"Peak RAM (Reported by Worker): {peak_ram_gb:.2f} GB")
     print(f"Hard Limit: {ComplianceTargets.RAM_HARD_LIMIT_GB} GB")
     print(f"Target: {ComplianceTargets.RAM_TARGET_GB} GB")
-    print(f"{'='*60}")
+    print(f"{ '='*60}")
 
     # HARD LIMIT - Must pass
     assert peak_ram_gb <= ComplianceTargets.RAM_HARD_LIMIT_GB, \
         f"RAM usage {peak_ram_gb:.2f}GB exceeds hard limit {ComplianceTargets.RAM_HARD_LIMIT_GB}GB"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("audio_path,filename,metadata", [
-    pytest.param(*file_data, id=file_data[1])
-    for file_data in pytest.lazy_fixture("available_benchmark_files")
-])
-async def test_speed_compliance_acceptable(audio_path, filename, metadata):
+@pytest.mark.parametrize("audio_path,filename,metadata", _get_available_benchmark_files())
+def test_speed_compliance_acceptable(worker_services_fixture, audio_path, filename, metadata):
     """
     COMPLIANCE RULE 1: Processing Speed (Acceptable Interim)
-    Validates processing ratio ≤ 2.0x (acceptable for accuracy trade-off)
+    Validates processing ratio ≤ 2.0x using worker-reported timing.
     """
-    import librosa
-    audio_duration = librosa.get_duration(path=audio_path)
-
     session_id = f"test_speed_{Path(audio_path).stem}"
 
-    start_time = time.time()
+    # Run the task and get the result, which includes the processing ratio
+    result = run_worker_and_get_result(audio_path, session_id)
 
-    from main import process_audio_pipeline
-    await process_audio_pipeline(audio_path, session_id)
-
-    processing_time = time.time() - start_time
-    processing_ratio = processing_time / audio_duration if audio_duration > 0 else 0
+    processing_ratio = result.get("processing_ratio")
+    assert processing_ratio is not None, "Processing ratio was not reported by the worker."
 
     # Log results
     print(f"\n{'='*60}")
     print(f"Speed Compliance Test: {filename}")
-    print(f"Audio Duration: {audio_duration:.2f}s")
-    print(f"Processing Time: {processing_time:.2f}s")
-    print(f"Processing Ratio: {processing_ratio:.2f}x")
+    print(f"Audio Duration: {result.get('audio_duration', 0):.2f}s")
+    print(f"Processing Time: {result.get('processing_time', 0):.2f}s")
+    print(f"Processing Ratio (Reported by Worker): {processing_ratio:.2f}x")
     print(f"Target (Ideal): {ComplianceTargets.SPEED_IDEAL_RATIO}x")
     print(f"Target (Acceptable): {ComplianceTargets.SPEED_ACCEPTABLE_RATIO}x")
     print(f"Hard Limit: {ComplianceTargets.SPEED_HARD_LIMIT_RATIO}x")
-    print(f"{'='*60}")
+    print(f"{ '='*60}")
 
     # ACCEPTABLE INTERIM - Should pass
     assert processing_ratio <= ComplianceTargets.SPEED_ACCEPTABLE_RATIO, \
         f"Processing ratio {processing_ratio:.2f}x exceeds acceptable limit {ComplianceTargets.SPEED_ACCEPTABLE_RATIO}x"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("audio_path,filename,metadata", [
-    pytest.param(*file_data, id=file_data[1])
-    for file_data in pytest.lazy_fixture("available_benchmark_files")
-])
-async def test_speaker_accuracy_compliance(audio_path, filename, metadata):
+@pytest.mark.parametrize("audio_path,filename,metadata", _get_available_benchmark_files())
+def test_speaker_accuracy_compliance(worker_services_fixture, audio_path, filename, metadata):
     """
     COMPLIANCE RULE 1: Speaker Diarization Accuracy
-    Validates speaker count detection within tolerance
+    Validates speaker count detection within tolerance using worker-reported data.
     """
     session_id = f"test_accuracy_{Path(audio_path).stem}"
 
-    from main import process_audio_pipeline
+    # Run the task and get the result
+    result = run_worker_and_get_result(audio_path, session_id)
 
-    # Mock message sending to capture result
-    captured_result = {}
-
-    original_send = app_state.send_message
-    async def mock_send(sid, message, priority=None):
-        if message.get('type') == 'complete':
-            captured_result.update(message.get('result', {}))
-        await original_send(sid, message, priority)
-
-    app_state.send_message = mock_send
-
-    try:
-        await process_audio_pipeline(audio_path, session_id)
-    finally:
-        app_state.send_message = original_send
-
-    detected_speakers = captured_result.get("num_speakers", 0)
+    detected_speakers = result.get("num_speakers", 0)
     expected_speakers = metadata["expected_speakers"]
     tolerance = ComplianceTargets.SPEAKER_ACCURACY_TOLERANCE
 
     speaker_error = abs(detected_speakers - expected_speakers)
-    accuracy_percent = ((expected_speakers - speaker_error) / expected_speakers) * 100 if expected_speakers > 0 else 0
 
     # Log results
     print(f"\n{'='*60}")
@@ -263,9 +247,8 @@ async def test_speaker_accuracy_compliance(audio_path, filename, metadata):
     print(f"Expected Speakers: {expected_speakers}")
     print(f"Detected Speakers: {detected_speakers}")
     print(f"Error: {speaker_error} (Tolerance: ±{tolerance})")
-    print(f"Accuracy: {accuracy_percent:.1f}%")
-    print(f"Target: ≥{ComplianceTargets.ACCURACY_MIN_PERCENT}%")
-    print(f"{'='*60}")
+    print(f"Target: Error <= {tolerance}")
+    print(f"{ '='*60}")
 
     # MINIMUM ACCURACY - Should pass with tolerance
     assert speaker_error <= tolerance, \
@@ -273,11 +256,10 @@ async def test_speaker_accuracy_compliance(audio_path, filename, metadata):
         f"Expected {expected_speakers}, got {detected_speakers}"
 
 
-@pytest.mark.asyncio
-async def test_compliance_summary_report(available_benchmark_files):
+def test_compliance_summary_report(worker_services_fixture):
     """
-    Generate comprehensive compliance summary report
-    Tests all benchmark files and generates aggregate metrics
+    Generate comprehensive compliance summary report.
+    Tests all benchmark files and generates aggregate metrics using the new worker architecture.
     """
     results = {
         "ram": [],
@@ -285,37 +267,27 @@ async def test_compliance_summary_report(available_benchmark_files):
         "accuracy": []
     }
 
-    for audio_path, filename, metadata in available_benchmark_files:
-        import librosa
-        audio_duration = librosa.get_duration(path=audio_path)
+    available_benchmark_files = _get_available_benchmark_files()
+    if not available_benchmark_files:
+        pytest.skip("No benchmark audio files found for summary report.")
 
-        # Measure RAM
-        gc.collect()
-        process = psutil.Process()
-        baseline_mb = process.memory_info().rss / (1024 * 1024)
-
+    for param in available_benchmark_files:
+        audio_path, filename, metadata = param.values
         session_id = f"test_summary_{Path(audio_path).stem}"
 
-        start_time = time.time()
+        # Run the worker and get the consolidated result
+        result = run_worker_and_get_result(audio_path, session_id)
 
-        from main import process_audio_pipeline
-        await process_audio_pipeline(audio_path, session_id)
-
-        processing_time = time.time() - start_time
-        peak_mb = process.memory_info().rss / (1024 * 1024)
-
-        processing_ratio = processing_time / audio_duration
-        ram_gb = peak_mb / 1024
-
-        # Get speaker accuracy
-        session = app_state.sessions.get(session_id, {})
-        detected_speakers = 0  # Default if not captured
+        # Extract data from the worker's result payload
+        peak_ram_gb = result.get("peak_memory_mb", 0) / 1024
+        processing_ratio = result.get("processing_ratio", 0)
+        detected_speakers = result.get("num_speakers", 0)
 
         results["ram"].append({
             "file": filename,
-            "ram_gb": ram_gb,
-            "passes_hard_limit": ram_gb <= ComplianceTargets.RAM_HARD_LIMIT_GB,
-            "passes_target": ram_gb <= ComplianceTargets.RAM_TARGET_GB
+            "ram_gb": peak_ram_gb,
+            "passes_hard_limit": peak_ram_gb <= ComplianceTargets.RAM_HARD_LIMIT_GB,
+            "passes_target": peak_ram_gb <= ComplianceTargets.RAM_TARGET_GB
         })
 
         results["speed"].append({
@@ -328,10 +300,11 @@ async def test_compliance_summary_report(available_benchmark_files):
         results["accuracy"].append({
             "file": filename,
             "detected": detected_speakers,
-            "expected": metadata["expected_speakers"]
+            "expected": metadata["expected_speakers"],
+            "passes": abs(detected_speakers - metadata["expected_speakers"]) <= ComplianceTargets.SPEAKER_ACCURACY_TOLERANCE
         })
 
-    # Generate Report
+    # --- Report Generation (this part remains largely the same) ---
     print("\n" + "="*80)
     print("TRANSCREVAI COMPLIANCE SUMMARY REPORT")
     print("="*80)
@@ -364,16 +337,18 @@ async def test_compliance_summary_report(available_benchmark_files):
     print("\n🎯 ACCURACY COMPLIANCE")
     print("-" * 80)
     for r in results["accuracy"]:
-        error = abs(r["detected"] - r["expected"])
-        status = "✅ PASS" if error <= ComplianceTargets.SPEAKER_ACCURACY_TOLERANCE else "❌ FAIL"
-        print(f"{r['file']:20} | Expected: {r['expected']} | Detected: {r['detected']} | {status}")
+        status = "✅ PASS" if r["passes"] else "❌ FAIL"
+        print(f"{r['file']:20} | Expected: {r['expected']:<2} | Detected: {r['detected']:<2} | {status}")
 
+    accuracy_pass_rate = sum(r["passes"] for r in results["accuracy"]) / len(results["accuracy"]) * 100
+    print(f"\nAccuracy Pass Rate: {accuracy_pass_rate:.1f}%")
     print("\n" + "="*80)
 
     # Overall Assessment
     overall_pass = (
         hard_limit_pass_rate == 100.0 and
-        acceptable_pass_rate == 100.0
+        acceptable_pass_rate == 100.0 and
+        accuracy_pass_rate == 100.0
     )
 
     if overall_pass:
@@ -387,73 +362,79 @@ async def test_compliance_summary_report(available_benchmark_files):
 # ==================== PERFORMANCE BENCHMARKS ====================
 
 @pytest.mark.benchmark
-@pytest.mark.asyncio
-async def test_benchmark_initialization_time():
+def test_benchmark_initialization_time():
     """
     Benchmark: Service initialization time
-    Measures time to load transcription and diarization models
-    """
-    from main import ThreadSafeEnhancedAppState
-
-    test_state = ThreadSafeEnhancedAppState()
-
-    start_time = time.time()
-    await test_state.initialize_services()
-    init_time = time.time() - start_time
-
-    print(f"\n{'='*60}")
-    print(f"Initialization Benchmark")
-    print(f"Time: {init_time:.2f}s")
-    print(f"{'='*60}")
-
-    # Initialization should be reasonably fast (< 30s)
-    assert init_time < 30.0, f"Initialization took {init_time:.2f}s, expected < 30s"
-
-
-@pytest.mark.benchmark
-@pytest.mark.asyncio
-@pytest.mark.parametrize("audio_path,filename,metadata", [
-    pytest.param(*file_data, id=file_data[1])
-    for file_data in pytest.lazy_fixture("available_benchmark_files")
-])
-async def test_benchmark_component_timing(audio_path, filename, metadata):
-    """
-    Benchmark: Break down processing time by component
-    Helps identify bottlenecks in the pipeline
+    Measures time to load transcription and diarization models directly.
     """
     from src.transcription import TranscriptionService
     from src.diarization import PyannoteDiarizer
     from config.app_config import get_config
 
     config = get_config()
+    device = "cpu"
+
+    start_time = time.time()
+    # Initialize services directly to measure model loading time
+    _ = TranscriptionService(model_name=config.model_name, device=device)
+    _ = PyannoteDiarizer(device=device)
+    init_time = time.time() - start_time
+
+    print(f"\n{'='*60}")
+    print(f"Initialization Benchmark")
+    print(f"Time to load models: {init_time:.2f}s")
+    print(f"{ '='*60}")
+
+    # Initialization should be reasonably fast (< 30s)
+    assert init_time < 30.0, f"Initialization took {init_time:.2f}s, expected < 30s"
+
+
+@pytest.mark.parametrize("audio_path,filename,metadata", _get_available_benchmark_files())
+def test_benchmark_component_timing(audio_path, filename, metadata):
+    """
+    Benchmark: Break down processing time by component
+    Helps identify bottlenecks in the pipeline.
+    """
+    from src.transcription import TranscriptionService
+    from src.diarization import PyannoteDiarizer
+    from config.app_config import get_config
+    import asyncio
+
+    config = get_config()
     device = "cpu"  # Force CPU for consistent benchmarking
 
     # Initialize services
-    transcription_service = TranscriptionService()
+    transcription_service = TranscriptionService(model_name=config.model_name, device=device)
     diarization_service = PyannoteDiarizer(device=device)
 
     import librosa
     audio_duration = librosa.get_duration(path=audio_path)
 
-    # Benchmark Transcription
-    start = time.time()
-    transcription_result = await transcription_service.transcribe_with_enhancements(
-        audio_path, word_timestamps=True
-    )
-    transcription_time = time.time() - start
+    async def run_components():
+        # Benchmark Transcription
+        start_trans = time.time()
+        transcription_result = await transcription_service.transcribe_with_enhancements(
+            audio_path, word_timestamps=True
+        )
+        transcription_time = time.time() - start_trans
 
-    # Benchmark Diarization
-    start = time.time()
-    diarization_result = await diarization_service.diarize(
-        audio_path, transcription_result.segments
-    )
-    diarization_time = time.time() - start
+        # Benchmark Diarization
+        start_diar = time.time()
+        await diarization_service.diarize(
+            audio_path, transcription_result.segments
+        )
+        diarization_time = time.time() - start_diar
+        
+        return transcription_time, diarization_time
+
+    # Run the async inner function
+    transcription_time, diarization_time = asyncio.run(run_components())
 
     total_time = transcription_time + diarization_time
 
     # Calculate percentages
-    transcription_pct = (transcription_time / total_time) * 100
-    diarization_pct = (diarization_time / total_time) * 100
+    transcription_pct = (transcription_time / total_time) * 100 if total_time > 0 else 0
+    diarization_pct = (diarization_time / total_time) * 100 if total_time > 0 else 0
 
     print(f"\n{'='*60}")
     print(f"Component Timing Benchmark: {filename}")
@@ -463,7 +444,7 @@ async def test_benchmark_component_timing(audio_path, filename, metadata):
     print(f"Diarization:   {diarization_time:.2f}s ({diarization_pct:.1f}%)")
     print(f"Total:         {total_time:.2f}s")
     print(f"Ratio:         {total_time/audio_duration:.2f}x")
-    print(f"{'='*60}")
+    print(f"{ '='*60}")
 
     # Store for later analysis
     return {
