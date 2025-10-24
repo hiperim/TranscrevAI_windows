@@ -1,0 +1,1351 @@
+{
+  "timestamp": "2025-10-14T19:28:47.122199",
+  "model": "whisper-medium (int8, beam_size=5, best_of=5)",
+  "summary": {
+    "avg_confidence": 0.678110966356288,
+    "avg_word_probability": 0.8144533743328288,
+    "total_words": 133,
+    "total_low_confidence": 26,
+    "avg_pt_br_percentage": 10.135135135135135,
+    "good_files": 2,
+    "fair_files": 1,
+    "poor_files": 1
+  },
+  "files": [
+    {
+      "filename": "d.speakers.wav",
+      "duration": 21.056,
+      "processing_time": 23.495580434799194,
+      "processing_ratio": 1.1158615328077124,
+      "transcription": {
+        "full_text": "então, rogério, eu sei que é o seu primeiro dia aqui na empresa,  mas eu não gostaria que você me chamasse de você na empresa, sabe?  acho que é um pouco informal demais, têm uma hierarquia aqui dentro,  então acho melhor a gente mudar isso.  desculpa, vou voltar.",
+        "word_count": 48,
+        "segment_count": 5,
+        "confidence": 0.7932849417474622,
+        "avg_word_probability": 0.9306847299966546
+      },
+      "words": [
+        {
+          "word": "Então,",
+          "start": 0.78,
+          "end": 1.1,
+          "probability": 0.45394402742385864
+        },
+        {
+          "word": "Rogério,",
+          "start": 1.36,
+          "end": 1.58,
+          "probability": 0.9687690138816833
+        },
+        {
+          "word": "eu",
+          "start": 1.8,
+          "end": 1.84,
+          "probability": 0.9675939679145813
+        },
+        {
+          "word": "sei",
+          "start": 1.84,
+          "end": 2.04,
+          "probability": 0.9941036105155945
+        },
+        {
+          "word": "que",
+          "start": 2.04,
+          "end": 2.2,
+          "probability": 0.9981794357299805
+        },
+        {
+          "word": "é",
+          "start": 2.2,
+          "end": 2.36,
+          "probability": 0.9946227073669434
+        },
+        {
+          "word": "o",
+          "start": 2.36,
+          "end": 2.4,
+          "probability": 0.9413720965385437
+        },
+        {
+          "word": "seu",
+          "start": 2.4,
+          "end": 2.54,
+          "probability": 0.9963485598564148
+        },
+        {
+          "word": "primeiro",
+          "start": 2.54,
+          "end": 2.84,
+          "probability": 0.9795698523521423
+        },
+        {
+          "word": "dia",
+          "start": 2.84,
+          "end": 3.06,
+          "probability": 0.9957654476165771
+        },
+        {
+          "word": "aqui",
+          "start": 3.06,
+          "end": 3.24,
+          "probability": 0.9769071340560913
+        },
+        {
+          "word": "na",
+          "start": 3.24,
+          "end": 3.4,
+          "probability": 0.9893093109130859
+        },
+        {
+          "word": "empresa,",
+          "start": 3.4,
+          "end": 3.88,
+          "probability": 0.9833146333694458
+        },
+        {
+          "word": "mas",
+          "start": 4.48,
+          "end": 4.52,
+          "probability": 0.8506513237953186
+        },
+        {
+          "word": "eu",
+          "start": 4.52,
+          "end": 4.72,
+          "probability": 0.982499361038208
+        },
+        {
+          "word": "não",
+          "start": 4.72,
+          "end": 4.96,
+          "probability": 0.9979960918426514
+        },
+        {
+          "word": "gostaria",
+          "start": 4.96,
+          "end": 5.34,
+          "probability": 0.9989157319068909
+        },
+        {
+          "word": "que",
+          "start": 5.34,
+          "end": 6.36,
+          "probability": 0.9946434497833252
+        },
+        {
+          "word": "você",
+          "start": 6.36,
+          "end": 6.62,
+          "probability": 0.9297505021095276
+        },
+        {
+          "word": "me",
+          "start": 6.62,
+          "end": 6.82,
+          "probability": 0.9934611320495605
+        },
+        {
+          "word": "chamasse",
+          "start": 6.82,
+          "end": 7.18,
+          "probability": 0.9975763261318207
+        },
+        {
+          "word": "de",
+          "start": 7.18,
+          "end": 7.56,
+          "probability": 0.988716721534729
+        },
+        {
+          "word": "você",
+          "start": 7.56,
+          "end": 8.14,
+          "probability": 0.6529417634010315
+        },
+        {
+          "word": "na",
+          "start": 8.14,
+          "end": 8.64,
+          "probability": 0.6094930768013
+        },
+        {
+          "word": "empresa,",
+          "start": 8.64,
+          "end": 8.96,
+          "probability": 0.9988237023353577
+        },
+        {
+          "word": "sabe?",
+          "start": 9.14,
+          "end": 9.24,
+          "probability": 0.9780318140983582
+        },
+        {
+          "word": "Acho",
+          "start": 9.46,
+          "end": 9.46,
+          "probability": 0.9477646350860596
+        },
+        {
+          "word": "que",
+          "start": 9.46,
+          "end": 9.48,
+          "probability": 0.9965648055076599
+        },
+        {
+          "word": "é",
+          "start": 9.48,
+          "end": 10.3,
+          "probability": 0.9937000274658203
+        },
+        {
+          "word": "um",
+          "start": 10.3,
+          "end": 10.44,
+          "probability": 0.9168561697006226
+        },
+        {
+          "word": "pouco",
+          "start": 10.44,
+          "end": 10.62,
+          "probability": 0.9976910352706909
+        },
+        {
+          "word": "informal",
+          "start": 10.62,
+          "end": 11.16,
+          "probability": 0.9780850410461426
+        },
+        {
+          "word": "demais,",
+          "start": 11.16,
+          "end": 11.86,
+          "probability": 0.9880495667457581
+        },
+        {
+          "word": "tem",
+          "start": 12.12,
+          "end": 12.24,
+          "probability": 0.7654393911361694
+        },
+        {
+          "word": "uma",
+          "start": 12.24,
+          "end": 12.42,
+          "probability": 0.9728727340698242
+        },
+        {
+          "word": "hierarquia",
+          "start": 12.42,
+          "end": 12.92,
+          "probability": 0.9921325743198395
+        },
+        {
+          "word": "aqui",
+          "start": 12.92,
+          "end": 13.2,
+          "probability": 0.9898263216018677
+        },
+        {
+          "word": "dentro,",
+          "start": 13.2,
+          "end": 13.5,
+          "probability": 0.9817689657211304
+        },
+        {
+          "word": "então",
+          "start": 13.9,
+          "end": 13.92,
+          "probability": 0.8497868776321411
+        },
+        {
+          "word": "acho",
+          "start": 13.92,
+          "end": 14.06,
+          "probability": 0.7106429934501648
+        },
+        {
+          "word": "melhor",
+          "start": 14.06,
+          "end": 14.3,
+          "probability": 0.971627950668335
+        },
+        {
+          "word": "a",
+          "start": 14.3,
+          "end": 14.32,
+          "probability": 0.9733909368515015
+        },
+        {
+          "word": "gente",
+          "start": 14.32,
+          "end": 14.68,
+          "probability": 0.9995824694633484
+        },
+        {
+          "word": "mudar",
+          "start": 14.68,
+          "end": 15.08,
+          "probability": 0.9668110013008118
+        },
+        {
+          "word": "isso.",
+          "start": 15.08,
+          "end": 15.3,
+          "probability": 0.9825745224952698
+        },
+        {
+          "word": "Desculpa,",
+          "start": 15.62,
+          "end": 16.06,
+          "probability": 0.833985428015391
+        },
+        {
+          "word": "vou",
+          "start": 16.28,
+          "end": 16.42,
+          "probability": 0.6549233794212341
+        },
+        {
+          "word": "voltar.",
+          "start": 16.42,
+          "end": 16.66,
+          "probability": 0.9954894185066223
+        }
+      ],
+      "analysis": {
+        "low_confidence_count": 4,
+        "low_confidence_words": [
+          {
+            "word": "Então,",
+            "start": 0.78,
+            "end": 1.1,
+            "probability": 0.45394402742385864
+          },
+          {
+            "word": "você",
+            "start": 7.56,
+            "end": 8.14,
+            "probability": 0.6529417634010315
+          },
+          {
+            "word": "na",
+            "start": 8.14,
+            "end": 8.64,
+            "probability": 0.6094930768013
+          },
+          {
+            "word": "vou",
+            "start": 16.28,
+            "end": 16.42,
+            "probability": 0.6549233794212341
+          }
+        ],
+        "accented_words_count": 8,
+        "accented_words": [
+          {
+            "word": "Então,",
+            "start": 0.78,
+            "end": 1.1,
+            "probability": 0.45394402742385864
+          },
+          {
+            "word": "Rogério,",
+            "start": 1.36,
+            "end": 1.58,
+            "probability": 0.9687690138816833
+          },
+          {
+            "word": "é",
+            "start": 2.2,
+            "end": 2.36,
+            "probability": 0.9946227073669434
+          },
+          {
+            "word": "não",
+            "start": 4.72,
+            "end": 4.96,
+            "probability": 0.9979960918426514
+          },
+          {
+            "word": "você",
+            "start": 6.36,
+            "end": 6.62,
+            "probability": 0.9297505021095276
+          },
+          {
+            "word": "você",
+            "start": 7.56,
+            "end": 8.14,
+            "probability": 0.6529417634010315
+          },
+          {
+            "word": "é",
+            "start": 9.48,
+            "end": 10.3,
+            "probability": 0.9937000274658203
+          },
+          {
+            "word": "então",
+            "start": 13.9,
+            "end": 13.92,
+            "probability": 0.8497868776321411
+          }
+        ],
+        "pt_br_keywords_found": 5,
+        "pt_br_keywords_total": 37,
+        "pt_br_keywords_percentage": 13.513513513513514,
+        "found_keywords": [
+          "não",
+          "você",
+          "é",
+          "então",
+          "ta"
+        ],
+        "missing_keywords": [
+          "está",
+          "já",
+          "até",
+          "também",
+          "só",
+          "lá",
+          "aí",
+          "daí",
+          "porém",
+          "além",
+          "ação",
+          "ações",
+          "informação",
+          "informações",
+          "opção",
+          "opções",
+          "irmão",
+          "mãe",
+          "mão",
+          "pão",
+          "cidadão",
+          "pra",
+          "pro",
+          "to",
+          "ce",
+          "né",
+          "português",
+          "brasileiro",
+          "conversa",
+          "falar",
+          "pessoa",
+          "pessoas"
+        ]
+      }
+    },
+    {
+      "filename": "q.speakers.wav",
+      "duration": 14.506666666666666,
+      "processing_time": 23.933225870132446,
+      "processing_ratio": 1.6498087686212624,
+      "transcription": {
+        "full_text": "acho que assustou um pouco os homens, sabe, tipo, eles têm um pouco, assim, com o pé atrás, não sei, mas sério, sério eu não tenho, não.  você têm medo dela, confuso?  pelo sim, pelo não, como é que fica?  fascista!",
+        "word_count": 41,
+        "segment_count": 4,
+        "confidence": 0.6946402381090355,
+        "avg_word_probability": 0.8728885052165365
+      },
+      "words": [
+        {
+          "word": "Acho",
+          "start": 1.07,
+          "end": 1.53,
+          "probability": 0.36323413252830505
+        },
+        {
+          "word": "que",
+          "start": 1.53,
+          "end": 1.73,
+          "probability": 0.9926532506942749
+        },
+        {
+          "word": "assustou",
+          "start": 1.73,
+          "end": 2.27,
+          "probability": 0.8912261923154196
+        },
+        {
+          "word": "um",
+          "start": 2.27,
+          "end": 2.31,
+          "probability": 0.8360652327537537
+        },
+        {
+          "word": "pouco",
+          "start": 2.31,
+          "end": 2.63,
+          "probability": 0.9956088662147522
+        },
+        {
+          "word": "os",
+          "start": 2.63,
+          "end": 2.85,
+          "probability": 0.9493144750595093
+        },
+        {
+          "word": "homens,",
+          "start": 2.85,
+          "end": 3.21,
+          "probability": 0.9949668943881989
+        },
+        {
+          "word": "sabe,",
+          "start": 3.29,
+          "end": 3.39,
+          "probability": 0.9731602072715759
+        },
+        {
+          "word": "tipo,",
+          "start": 3.65,
+          "end": 3.91,
+          "probability": 0.9836466908454895
+        },
+        {
+          "word": "eles",
+          "start": 4.39,
+          "end": 4.53,
+          "probability": 0.926413357257843
+        },
+        {
+          "word": "têm",
+          "start": 4.53,
+          "end": 4.71,
+          "probability": 0.7628472447395325
+        },
+        {
+          "word": "um",
+          "start": 4.71,
+          "end": 4.85,
+          "probability": 0.9866965413093567
+        },
+        {
+          "word": "pouco,",
+          "start": 4.85,
+          "end": 5.03,
+          "probability": 0.9958198070526123
+        },
+        {
+          "word": "assim,",
+          "start": 5.17,
+          "end": 5.43,
+          "probability": 0.973429799079895
+        },
+        {
+          "word": "com",
+          "start": 5.57,
+          "end": 5.63,
+          "probability": 0.6151607632637024
+        },
+        {
+          "word": "o",
+          "start": 5.63,
+          "end": 5.69,
+          "probability": 0.6874690055847168
+        },
+        {
+          "word": "pé",
+          "start": 5.69,
+          "end": 5.81,
+          "probability": 0.9989726543426514
+        },
+        {
+          "word": "atrás,",
+          "start": 5.81,
+          "end": 6.17,
+          "probability": 0.9639601707458496
+        },
+        {
+          "word": "não",
+          "start": 6.33,
+          "end": 6.47,
+          "probability": 0.9023906588554382
+        },
+        {
+          "word": "sei,",
+          "start": 6.47,
+          "end": 6.71,
+          "probability": 0.9982081651687622
+        },
+        {
+          "word": "mas",
+          "start": 7.29,
+          "end": 7.61,
+          "probability": 0.7908360362052917
+        },
+        {
+          "word": "sério,",
+          "start": 7.61,
+          "end": 8.01,
+          "probability": 0.7060483992099762
+        },
+        {
+          "word": "sério",
+          "start": 8.01,
+          "end": 8.37,
+          "probability": 0.9422383308410645
+        },
+        {
+          "word": "eu",
+          "start": 8.37,
+          "end": 8.47,
+          "probability": 0.5272437930107117
+        },
+        {
+          "word": "não",
+          "start": 8.47,
+          "end": 8.57,
+          "probability": 0.984512209892273
+        },
+        {
+          "word": "tenho,",
+          "start": 8.57,
+          "end": 8.71,
+          "probability": 0.988274097442627
+        },
+        {
+          "word": "não.",
+          "start": 8.81,
+          "end": 8.89,
+          "probability": 0.9888061285018921
+        },
+        {
+          "word": "Você",
+          "start": 9.07,
+          "end": 9.09,
+          "probability": 0.34211739897727966
+        },
+        {
+          "word": "tem",
+          "start": 9.09,
+          "end": 9.21,
+          "probability": 0.994076132774353
+        },
+        {
+          "word": "medo",
+          "start": 9.21,
+          "end": 9.41,
+          "probability": 0.9946478009223938
+        },
+        {
+          "word": "dela,",
+          "start": 9.41,
+          "end": 9.71,
+          "probability": 0.9786714315414429
+        },
+        {
+          "word": "Confuso?",
+          "start": 9.77,
+          "end": 10.19,
+          "probability": 0.45839354395866394
+        },
+        {
+          "word": "Pelo",
+          "start": 10.71,
+          "end": 10.99,
+          "probability": 0.8162254691123962
+        },
+        {
+          "word": "sim,",
+          "start": 10.99,
+          "end": 11.19,
+          "probability": 0.9279005527496338
+        },
+        {
+          "word": "pelo",
+          "start": 11.35,
+          "end": 11.39,
+          "probability": 0.998866081237793
+        },
+        {
+          "word": "não,",
+          "start": 11.39,
+          "end": 11.57,
+          "probability": 0.9981073141098022
+        },
+        {
+          "word": "como",
+          "start": 11.69,
+          "end": 11.79,
+          "probability": 0.9831132888793945
+        },
+        {
+          "word": "é",
+          "start": 11.79,
+          "end": 11.87,
+          "probability": 0.9761284589767456
+        },
+        {
+          "word": "que",
+          "start": 11.87,
+          "end": 12.09,
+          "probability": 0.9982807636260986
+        },
+        {
+          "word": "fica?",
+          "start": 12.09,
+          "end": 12.31,
+          "probability": 0.9943692088127136
+        },
+        {
+          "word": "Fascista!",
+          "start": 14.03,
+          "end": 14.39,
+          "probability": 0.6083281636238098
+        }
+      ],
+      "analysis": {
+        "low_confidence_count": 7,
+        "low_confidence_words": [
+          {
+            "word": "Acho",
+            "start": 1.07,
+            "end": 1.53,
+            "probability": 0.36323413252830505
+          },
+          {
+            "word": "com",
+            "start": 5.57,
+            "end": 5.63,
+            "probability": 0.6151607632637024
+          },
+          {
+            "word": "o",
+            "start": 5.63,
+            "end": 5.69,
+            "probability": 0.6874690055847168
+          },
+          {
+            "word": "eu",
+            "start": 8.37,
+            "end": 8.47,
+            "probability": 0.5272437930107117
+          },
+          {
+            "word": "Você",
+            "start": 9.07,
+            "end": 9.09,
+            "probability": 0.34211739897727966
+          },
+          {
+            "word": "Confuso?",
+            "start": 9.77,
+            "end": 10.19,
+            "probability": 0.45839354395866394
+          },
+          {
+            "word": "Fascista!",
+            "start": 14.03,
+            "end": 14.39,
+            "probability": 0.6083281636238098
+          }
+        ],
+        "accented_words_count": 11,
+        "accented_words": [
+          {
+            "word": "têm",
+            "start": 4.53,
+            "end": 4.71,
+            "probability": 0.7628472447395325
+          },
+          {
+            "word": "pé",
+            "start": 5.69,
+            "end": 5.81,
+            "probability": 0.9989726543426514
+          },
+          {
+            "word": "atrás,",
+            "start": 5.81,
+            "end": 6.17,
+            "probability": 0.9639601707458496
+          },
+          {
+            "word": "não",
+            "start": 6.33,
+            "end": 6.47,
+            "probability": 0.9023906588554382
+          },
+          {
+            "word": "sério,",
+            "start": 7.61,
+            "end": 8.01,
+            "probability": 0.7060483992099762
+          },
+          {
+            "word": "sério",
+            "start": 8.01,
+            "end": 8.37,
+            "probability": 0.9422383308410645
+          },
+          {
+            "word": "não",
+            "start": 8.47,
+            "end": 8.57,
+            "probability": 0.984512209892273
+          },
+          {
+            "word": "não.",
+            "start": 8.81,
+            "end": 8.89,
+            "probability": 0.9888061285018921
+          },
+          {
+            "word": "Você",
+            "start": 9.07,
+            "end": 9.09,
+            "probability": 0.34211739897727966
+          },
+          {
+            "word": "não,",
+            "start": 11.39,
+            "end": 11.57,
+            "probability": 0.9981073141098022
+          }
+        ],
+        "pt_br_keywords_found": 5,
+        "pt_br_keywords_total": 37,
+        "pt_br_keywords_percentage": 13.513513513513514,
+        "found_keywords": [
+          "não",
+          "você",
+          "é",
+          "ta",
+          "to"
+        ],
+        "missing_keywords": [
+          "está",
+          "já",
+          "até",
+          "também",
+          "só",
+          "lá",
+          "aí",
+          "daí",
+          "então",
+          "porém",
+          "além",
+          "ação",
+          "ações",
+          "informação",
+          "informações",
+          "opção",
+          "opções",
+          "irmão",
+          "mãe",
+          "mão",
+          "pão",
+          "cidadão",
+          "pra",
+          "pro",
+          "ce",
+          "né",
+          "português",
+          "brasileiro",
+          "conversa",
+          "falar",
+          "pessoa",
+          "pessoas"
+        ]
+      }
+    },
+    {
+      "filename": "t.speakers.wav",
+      "duration": 9.258666666666667,
+      "processing_time": 18.226107120513916,
+      "processing_ratio": 1.9685455559310825,
+      "transcription": {
+        "full_text": "o que você acha que aconteceu com o tapa, com o tapa que ele deu aí, o cara?  o cara mexeu com a mulher dele, mano.  você faria o mesmo?",
+        "word_count": 30,
+        "segment_count": 3,
+        "confidence": 0.5778075938179921,
+        "avg_word_probability": 0.6688119451204936
+      },
+      "words": [
+        {
+          "word": "O",
+          "start": 2.2,
+          "end": 2.64,
+          "probability": 0.11276216059923172
+        },
+        {
+          "word": "que",
+          "start": 2.64,
+          "end": 3.08,
+          "probability": 0.2587912976741791
+        },
+        {
+          "word": "você",
+          "start": 3.08,
+          "end": 3.24,
+          "probability": 0.7510073781013489
+        },
+        {
+          "word": "acha",
+          "start": 3.24,
+          "end": 3.44,
+          "probability": 0.98172527551651
+        },
+        {
+          "word": "que",
+          "start": 3.44,
+          "end": 3.86,
+          "probability": 0.8094836473464966
+        },
+        {
+          "word": "aconteceu",
+          "start": 3.86,
+          "end": 3.94,
+          "probability": 0.9697765707969666
+        },
+        {
+          "word": "com",
+          "start": 3.94,
+          "end": 4.24,
+          "probability": 0.9627799987792969
+        },
+        {
+          "word": "o",
+          "start": 4.24,
+          "end": 4.42,
+          "probability": 0.8521615862846375
+        },
+        {
+          "word": "Tapa,",
+          "start": 4.42,
+          "end": 4.7,
+          "probability": 0.5086952894926071
+        },
+        {
+          "word": "com",
+          "start": 4.7,
+          "end": 4.94,
+          "probability": 0.1765136420726776
+        },
+        {
+          "word": "o",
+          "start": 4.94,
+          "end": 5.1,
+          "probability": 0.8388710618019104
+        },
+        {
+          "word": "Tapa",
+          "start": 5.1,
+          "end": 5.4,
+          "probability": 0.9829471111297607
+        },
+        {
+          "word": "que",
+          "start": 5.4,
+          "end": 5.58,
+          "probability": 0.39187321066856384
+        },
+        {
+          "word": "ele",
+          "start": 5.58,
+          "end": 5.68,
+          "probability": 0.9278891682624817
+        },
+        {
+          "word": "deu",
+          "start": 5.68,
+          "end": 5.76,
+          "probability": 0.962594747543335
+        },
+        {
+          "word": "aí,",
+          "start": 5.76,
+          "end": 5.78,
+          "probability": 0.3656139373779297
+        },
+        {
+          "word": "o",
+          "start": 5.78,
+          "end": 5.78,
+          "probability": 0.19713681936264038
+        },
+        {
+          "word": "cara?",
+          "start": 5.78,
+          "end": 5.78,
+          "probability": 0.8572660684585571
+        },
+        {
+          "word": "O",
+          "start": 5.78,
+          "end": 5.9,
+          "probability": 0.10690462589263916
+        },
+        {
+          "word": "cara",
+          "start": 5.9,
+          "end": 6.2,
+          "probability": 0.8106424808502197
+        },
+        {
+          "word": "mexeu",
+          "start": 6.2,
+          "end": 6.58,
+          "probability": 0.8704418540000916
+        },
+        {
+          "word": "com",
+          "start": 6.58,
+          "end": 6.72,
+          "probability": 0.9881954193115234
+        },
+        {
+          "word": "a",
+          "start": 6.72,
+          "end": 6.72,
+          "probability": 0.6518594026565552
+        },
+        {
+          "word": "mulher",
+          "start": 6.72,
+          "end": 6.94,
+          "probability": 0.35559532046318054
+        },
+        {
+          "word": "dele,",
+          "start": 6.94,
+          "end": 7.22,
+          "probability": 0.9987961053848267
+        },
+        {
+          "word": "mano.",
+          "start": 7.46,
+          "end": 7.46,
+          "probability": 0.9089922904968262
+        },
+        {
+          "word": "Você",
+          "start": 7.82,
+          "end": 8.02,
+          "probability": 0.18932290375232697
+        },
+        {
+          "word": "faria",
+          "start": 8.02,
+          "end": 8.46,
+          "probability": 0.5894958898425102
+        },
+        {
+          "word": "o",
+          "start": 8.46,
+          "end": 8.6,
+          "probability": 0.9733407497406006
+        },
+        {
+          "word": "mesmo?",
+          "start": 8.6,
+          "end": 8.8,
+          "probability": 0.7128823399543762
+        }
+      ],
+      "analysis": {
+        "low_confidence_count": 12,
+        "low_confidence_words": [
+          {
+            "word": "O",
+            "start": 2.2,
+            "end": 2.64,
+            "probability": 0.11276216059923172
+          },
+          {
+            "word": "que",
+            "start": 2.64,
+            "end": 3.08,
+            "probability": 0.2587912976741791
+          },
+          {
+            "word": "Tapa,",
+            "start": 4.42,
+            "end": 4.7,
+            "probability": 0.5086952894926071
+          },
+          {
+            "word": "com",
+            "start": 4.7,
+            "end": 4.94,
+            "probability": 0.1765136420726776
+          },
+          {
+            "word": "que",
+            "start": 5.4,
+            "end": 5.58,
+            "probability": 0.39187321066856384
+          },
+          {
+            "word": "aí,",
+            "start": 5.76,
+            "end": 5.78,
+            "probability": 0.3656139373779297
+          },
+          {
+            "word": "o",
+            "start": 5.78,
+            "end": 5.78,
+            "probability": 0.19713681936264038
+          },
+          {
+            "word": "O",
+            "start": 5.78,
+            "end": 5.9,
+            "probability": 0.10690462589263916
+          },
+          {
+            "word": "a",
+            "start": 6.72,
+            "end": 6.72,
+            "probability": 0.6518594026565552
+          },
+          {
+            "word": "mulher",
+            "start": 6.72,
+            "end": 6.94,
+            "probability": 0.35559532046318054
+          }
+        ],
+        "accented_words_count": 3,
+        "accented_words": [
+          {
+            "word": "você",
+            "start": 3.08,
+            "end": 3.24,
+            "probability": 0.7510073781013489
+          },
+          {
+            "word": "aí,",
+            "start": 5.76,
+            "end": 5.78,
+            "probability": 0.3656139373779297
+          },
+          {
+            "word": "Você",
+            "start": 7.82,
+            "end": 8.02,
+            "probability": 0.18932290375232697
+          }
+        ],
+        "pt_br_keywords_found": 4,
+        "pt_br_keywords_total": 37,
+        "pt_br_keywords_percentage": 10.81081081081081,
+        "found_keywords": [
+          "você",
+          "aí",
+          "ta",
+          "ce"
+        ],
+        "missing_keywords": [
+          "não",
+          "está",
+          "já",
+          "é",
+          "até",
+          "também",
+          "só",
+          "lá",
+          "daí",
+          "então",
+          "porém",
+          "além",
+          "ação",
+          "ações",
+          "informação",
+          "informações",
+          "opção",
+          "opções",
+          "irmão",
+          "mãe",
+          "mão",
+          "pão",
+          "cidadão",
+          "pra",
+          "pro",
+          "to",
+          "né",
+          "português",
+          "brasileiro",
+          "conversa",
+          "falar",
+          "pessoa",
+          "pessoas"
+        ]
+      }
+    },
+    {
+      "filename": "t2.speakers.wav",
+      "duration": 10.602666666666666,
+      "processing_time": 15.556738376617432,
+      "processing_ratio": 1.4672477090622578,
+      "transcription": {
+        "full_text": "o troque do gelo funciona? pode funcionar.  essas luvas muito elegantes, o sapato, o...",
+        "word_count": 14,
+        "segment_count": 2,
+        "confidence": 0.646711091750662,
+        "avg_word_probability": 0.7854283169976303
+      },
+      "words": [
+        {
+          "word": "O",
+          "start": 0.69,
+          "end": 1.23,
+          "probability": 0.07727666944265366
+        },
+        {
+          "word": "troque",
+          "start": 1.23,
+          "end": 1.49,
+          "probability": 0.7885019183158875
+        },
+        {
+          "word": "do",
+          "start": 1.49,
+          "end": 1.63,
+          "probability": 0.8164336085319519
+        },
+        {
+          "word": "gelo",
+          "start": 1.63,
+          "end": 1.91,
+          "probability": 0.9869177937507629
+        },
+        {
+          "word": "funciona?",
+          "start": 1.91,
+          "end": 2.49,
+          "probability": 0.9957929849624634
+        },
+        {
+          "word": "Pode",
+          "start": 2.67,
+          "end": 3.15,
+          "probability": 0.6736103892326355
+        },
+        {
+          "word": "funcionar.",
+          "start": 3.15,
+          "end": 3.81,
+          "probability": 0.9979513883590698
+        },
+        {
+          "word": "Essas",
+          "start": 4.33,
+          "end": 4.65,
+          "probability": 0.7824274897575378
+        },
+        {
+          "word": "luvas",
+          "start": 4.65,
+          "end": 5.05,
+          "probability": 0.9131493866443634
+        },
+        {
+          "word": "muito",
+          "start": 5.05,
+          "end": 5.33,
+          "probability": 0.8291293978691101
+        },
+        {
+          "word": "elegantes,",
+          "start": 5.33,
+          "end": 5.79,
+          "probability": 0.8867506682872772
+        },
+        {
+          "word": "o",
+          "start": 6.19,
+          "end": 6.19,
+          "probability": 0.5120930075645447
+        },
+        {
+          "word": "sapato,",
+          "start": 6.19,
+          "end": 6.91,
+          "probability": 0.9727420508861542
+        },
+        {
+          "word": "o...",
+          "start": 7.03,
+          "end": 8.05,
+          "probability": 0.7632196843624115
+        }
+      ],
+      "analysis": {
+        "low_confidence_count": 3,
+        "low_confidence_words": [
+          {
+            "word": "O",
+            "start": 0.69,
+            "end": 1.23,
+            "probability": 0.07727666944265366
+          },
+          {
+            "word": "Pode",
+            "start": 2.67,
+            "end": 3.15,
+            "probability": 0.6736103892326355
+          },
+          {
+            "word": "o",
+            "start": 6.19,
+            "end": 6.19,
+            "probability": 0.5120930075645447
+          }
+        ],
+        "accented_words_count": 0,
+        "accented_words": [],
+        "pt_br_keywords_found": 1,
+        "pt_br_keywords_total": 37,
+        "pt_br_keywords_percentage": 2.7027027027027026,
+        "found_keywords": [
+          "to"
+        ],
+        "missing_keywords": [
+          "não",
+          "está",
+          "você",
+          "já",
+          "é",
+          "até",
+          "também",
+          "só",
+          "lá",
+          "aí",
+          "daí",
+          "então",
+          "porém",
+          "além",
+          "ação",
+          "ações",
+          "informação",
+          "informações",
+          "opção",
+          "opções",
+          "irmão",
+          "mãe",
+          "mão",
+          "pão",
+          "cidadão",
+          "pra",
+          "pro",
+          "ta",
+          "ce",
+          "né",
+          "português",
+          "brasileiro",
+          "conversa",
+          "falar",
+          "pessoa",
+          "pessoas"
+        ]
+      }
+    }
+  ]
+}

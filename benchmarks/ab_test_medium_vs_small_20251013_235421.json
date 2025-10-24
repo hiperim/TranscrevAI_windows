@@ -1,0 +1,817 @@
+{
+  "timestamp": "2025-10-13T23:54:21.300906",
+  "decision": "NO-GO",
+  "reason": "Unacceptable accuracy degradation (24.7%, threshold <10%)",
+  "performance": {
+    "medium_ratio": 1.2469901319812327,
+    "small_ratio": 0.4100600750569035,
+    "speedup": 3.040993766116317,
+    "speedup_percentage": 67.116012826389,
+    "verdict": "✅ PASS"
+  },
+  "accuracy": {
+    "word_match_rate": 68.57142857142857,
+    "confidence_diff_pct": -8.852830277463664,
+    "overall_score": 75.3441509167609,
+    "degradation_pct": 24.6558490832391,
+    "verdict": "❌ FAIL"
+  },
+  "medium_data": {
+    "model": "medium",
+    "audio_duration": 14.506666666666666,
+    "init_time": 8.3330819606781,
+    "processing_time": 18.089670181274414,
+    "processing_ratio": 1.2469901319812327,
+    "transcription": {
+      "full_text": "eu acho que assustou um pouco os homens, sabe?  tipo, eles têm um pouco assim, com o pé atrás, não sei.  você têm medo?  sério, sério, eu não tenho, não.  você têm medo dela, confuso?  pelo sim, pelo não, como é que fica?  fascista!",
+      "word_count": 44,
+      "segment_count": 7,
+      "confidence": 0.7142024581125322,
+      "avg_word_probability": 0.8620004571804946
+    },
+    "words": [
+      {
+        "word": "Eu",
+        "start": 1.07,
+        "end": 1.51,
+        "probability": 0.11132276058197021
+      },
+      {
+        "word": "acho",
+        "start": 1.51,
+        "end": 1.55,
+        "probability": 0.8707082867622375
+      },
+      {
+        "word": "que",
+        "start": 1.55,
+        "end": 1.71,
+        "probability": 0.9850867986679077
+      },
+      {
+        "word": "assustou",
+        "start": 1.71,
+        "end": 2.27,
+        "probability": 0.9064900279045105
+      },
+      {
+        "word": "um",
+        "start": 2.27,
+        "end": 2.33,
+        "probability": 0.8559672832489014
+      },
+      {
+        "word": "pouco",
+        "start": 2.33,
+        "end": 2.63,
+        "probability": 0.9949807524681091
+      },
+      {
+        "word": "os",
+        "start": 2.63,
+        "end": 2.85,
+        "probability": 0.9457305073738098
+      },
+      {
+        "word": "homens,",
+        "start": 2.85,
+        "end": 3.21,
+        "probability": 0.9941337704658508
+      },
+      {
+        "word": "sabe?",
+        "start": 3.39,
+        "end": 3.41,
+        "probability": 0.9724732637405396
+      },
+      {
+        "word": "Tipo,",
+        "start": 3.91,
+        "end": 4.23,
+        "probability": 0.6679087430238724
+      },
+      {
+        "word": "eles",
+        "start": 4.37,
+        "end": 4.53,
+        "probability": 0.9895797371864319
+      },
+      {
+        "word": "têm",
+        "start": 4.53,
+        "end": 4.71,
+        "probability": 0.7681728005409241
+      },
+      {
+        "word": "um",
+        "start": 4.71,
+        "end": 4.85,
+        "probability": 0.9871086478233337
+      },
+      {
+        "word": "pouco",
+        "start": 4.85,
+        "end": 5.05,
+        "probability": 0.9957619309425354
+      },
+      {
+        "word": "assim,",
+        "start": 5.05,
+        "end": 5.47,
+        "probability": 0.7476458549499512
+      },
+      {
+        "word": "com",
+        "start": 5.53,
+        "end": 5.63,
+        "probability": 0.8183954358100891
+      },
+      {
+        "word": "o",
+        "start": 5.63,
+        "end": 5.69,
+        "probability": 0.7225021123886108
+      },
+      {
+        "word": "pé",
+        "start": 5.69,
+        "end": 5.81,
+        "probability": 0.9987865090370178
+      },
+      {
+        "word": "atrás,",
+        "start": 5.81,
+        "end": 6.15,
+        "probability": 0.9657067656517029
+      },
+      {
+        "word": "não",
+        "start": 6.33,
+        "end": 6.47,
+        "probability": 0.8781594634056091
+      },
+      {
+        "word": "sei.",
+        "start": 6.47,
+        "end": 6.71,
+        "probability": 0.9980043768882751
+      },
+      {
+        "word": "Você",
+        "start": 6.83,
+        "end": 6.95,
+        "probability": 0.03939260169863701
+      },
+      {
+        "word": "tem",
+        "start": 6.95,
+        "end": 7.13,
+        "probability": 0.9720865488052368
+      },
+      {
+        "word": "medo?",
+        "start": 7.13,
+        "end": 7.25,
+        "probability": 0.9924206137657166
+      },
+      {
+        "word": "Sério,",
+        "start": 7.73,
+        "end": 8.05,
+        "probability": 0.6265912353992462
+      },
+      {
+        "word": "sério,",
+        "start": 8.05,
+        "end": 8.37,
+        "probability": 0.8893210589885712
+      },
+      {
+        "word": "eu",
+        "start": 8.45,
+        "end": 8.45,
+        "probability": 0.841930627822876
+      },
+      {
+        "word": "não",
+        "start": 8.45,
+        "end": 8.57,
+        "probability": 0.9917958378791809
+      },
+      {
+        "word": "tenho,",
+        "start": 8.57,
+        "end": 8.69,
+        "probability": 0.9944943785667419
+      },
+      {
+        "word": "não.",
+        "start": 8.79,
+        "end": 8.87,
+        "probability": 0.987395167350769
+      },
+      {
+        "word": "Você",
+        "start": 9.07,
+        "end": 9.09,
+        "probability": 0.7541735172271729
+      },
+      {
+        "word": "tem",
+        "start": 9.09,
+        "end": 9.21,
+        "probability": 0.996823787689209
+      },
+      {
+        "word": "medo",
+        "start": 9.21,
+        "end": 9.41,
+        "probability": 0.9901859760284424
+      },
+      {
+        "word": "dela,",
+        "start": 9.41,
+        "end": 9.71,
+        "probability": 0.9747986197471619
+      },
+      {
+        "word": "Confuso?",
+        "start": 9.77,
+        "end": 10.19,
+        "probability": 0.41454656422138214
+      },
+      {
+        "word": "Pelo",
+        "start": 10.69,
+        "end": 10.99,
+        "probability": 0.8187180459499359
+      },
+      {
+        "word": "sim,",
+        "start": 10.99,
+        "end": 11.19,
+        "probability": 0.9304024577140808
+      },
+      {
+        "word": "pelo",
+        "start": 11.31,
+        "end": 11.39,
+        "probability": 0.9987573623657227
+      },
+      {
+        "word": "não,",
+        "start": 11.39,
+        "end": 11.57,
+        "probability": 0.9978063702583313
+      },
+      {
+        "word": "como",
+        "start": 11.69,
+        "end": 11.79,
+        "probability": 0.9838514924049377
+      },
+      {
+        "word": "é",
+        "start": 11.79,
+        "end": 11.85,
+        "probability": 0.970490038394928
+      },
+      {
+        "word": "que",
+        "start": 11.85,
+        "end": 12.09,
+        "probability": 0.9978740215301514
+      },
+      {
+        "word": "fica?",
+        "start": 12.09,
+        "end": 12.29,
+        "probability": 0.9939497709274292
+      },
+      {
+        "word": "Fascista!",
+        "start": 14.09,
+        "end": 14.41,
+        "probability": 0.5955881923437119
+      }
+    ],
+    "analysis": {
+      "accented_words_count": 12,
+      "low_confidence_words_count": 6,
+      "accented_words": [
+        {
+          "word": "têm",
+          "start": 4.53,
+          "end": 4.71,
+          "probability": 0.7681728005409241
+        },
+        {
+          "word": "pé",
+          "start": 5.69,
+          "end": 5.81,
+          "probability": 0.9987865090370178
+        },
+        {
+          "word": "atrás,",
+          "start": 5.81,
+          "end": 6.15,
+          "probability": 0.9657067656517029
+        },
+        {
+          "word": "não",
+          "start": 6.33,
+          "end": 6.47,
+          "probability": 0.8781594634056091
+        },
+        {
+          "word": "Você",
+          "start": 6.83,
+          "end": 6.95,
+          "probability": 0.03939260169863701
+        },
+        {
+          "word": "Sério,",
+          "start": 7.73,
+          "end": 8.05,
+          "probability": 0.6265912353992462
+        },
+        {
+          "word": "sério,",
+          "start": 8.05,
+          "end": 8.37,
+          "probability": 0.8893210589885712
+        },
+        {
+          "word": "não",
+          "start": 8.45,
+          "end": 8.57,
+          "probability": 0.9917958378791809
+        },
+        {
+          "word": "não.",
+          "start": 8.79,
+          "end": 8.87,
+          "probability": 0.987395167350769
+        },
+        {
+          "word": "Você",
+          "start": 9.07,
+          "end": 9.09,
+          "probability": 0.7541735172271729
+        }
+      ],
+      "low_conf_words": [
+        {
+          "word": "Eu",
+          "start": 1.07,
+          "end": 1.51,
+          "probability": 0.11132276058197021
+        },
+        {
+          "word": "Tipo,",
+          "start": 3.91,
+          "end": 4.23,
+          "probability": 0.6679087430238724
+        },
+        {
+          "word": "Você",
+          "start": 6.83,
+          "end": 6.95,
+          "probability": 0.03939260169863701
+        },
+        {
+          "word": "Sério,",
+          "start": 7.73,
+          "end": 8.05,
+          "probability": 0.6265912353992462
+        },
+        {
+          "word": "Confuso?",
+          "start": 9.77,
+          "end": 10.19,
+          "probability": 0.41454656422138214
+        },
+        {
+          "word": "Fascista!",
+          "start": 14.09,
+          "end": 14.41,
+          "probability": 0.5955881923437119
+        }
+      ]
+    }
+  },
+  "small_data": {
+    "model": "small",
+    "audio_duration": 14.506666666666666,
+    "init_time": 75.0677580833435,
+    "processing_time": 5.9486048221588135,
+    "processing_ratio": 0.4100600750569035,
+    "transcription": {
+      "full_text": "eu acho que eu assustou um pouco os homens, sabe?  eles têm um pouco assim, com um pé atrás, não sei.  mas sério, sério, eu não tenho não.  você têm medo dela com força?  eu não sei, eu não sei como é que fica.  largista!",
+      "word_count": 45,
+      "segment_count": 6,
+      "confidence": 0.693065331414607,
+      "avg_word_probability": 0.7856890197153445
+    },
+    "words": [
+      {
+        "word": "Eu",
+        "start": 1.07,
+        "end": 1.47,
+        "probability": 0.2442648857831955
+      },
+      {
+        "word": "acho",
+        "start": 1.47,
+        "end": 1.55,
+        "probability": 0.8940202593803406
+      },
+      {
+        "word": "que",
+        "start": 1.55,
+        "end": 1.65,
+        "probability": 0.9935442209243774
+      },
+      {
+        "word": "eu",
+        "start": 1.65,
+        "end": 1.73,
+        "probability": 0.9184756278991699
+      },
+      {
+        "word": "assustou",
+        "start": 1.73,
+        "end": 2.15,
+        "probability": 0.8043139775594076
+      },
+      {
+        "word": "um",
+        "start": 2.15,
+        "end": 2.31,
+        "probability": 0.9788147807121277
+      },
+      {
+        "word": "pouco",
+        "start": 2.31,
+        "end": 2.49,
+        "probability": 0.9877447485923767
+      },
+      {
+        "word": "os",
+        "start": 2.49,
+        "end": 2.77,
+        "probability": 0.871304988861084
+      },
+      {
+        "word": "homens,",
+        "start": 2.77,
+        "end": 3.11,
+        "probability": 0.9950149357318878
+      },
+      {
+        "word": "sabe?",
+        "start": 3.15,
+        "end": 3.37,
+        "probability": 0.9776715636253357
+      },
+      {
+        "word": "Eles",
+        "start": 3.99,
+        "end": 4.39,
+        "probability": 0.28152790665626526
+      },
+      {
+        "word": "têm",
+        "start": 4.39,
+        "end": 4.63,
+        "probability": 0.5961773991584778
+      },
+      {
+        "word": "um",
+        "start": 4.63,
+        "end": 4.73,
+        "probability": 0.9788578152656555
+      },
+      {
+        "word": "pouco",
+        "start": 4.73,
+        "end": 4.95,
+        "probability": 0.9929577112197876
+      },
+      {
+        "word": "assim,",
+        "start": 4.95,
+        "end": 5.29,
+        "probability": 0.6506777405738831
+      },
+      {
+        "word": "com",
+        "start": 5.41,
+        "end": 5.51,
+        "probability": 0.906990647315979
+      },
+      {
+        "word": "um",
+        "start": 5.51,
+        "end": 5.63,
+        "probability": 0.6295698285102844
+      },
+      {
+        "word": "pé",
+        "start": 5.63,
+        "end": 5.71,
+        "probability": 0.9774502515792847
+      },
+      {
+        "word": "atrás,",
+        "start": 5.71,
+        "end": 6.01,
+        "probability": 0.9142805337905884
+      },
+      {
+        "word": "não",
+        "start": 6.13,
+        "end": 6.33,
+        "probability": 0.7044616341590881
+      },
+      {
+        "word": "sei.",
+        "start": 6.33,
+        "end": 6.59,
+        "probability": 0.9977188110351562
+      },
+      {
+        "word": "Mas",
+        "start": 6.95,
+        "end": 7.35,
+        "probability": 0.5106783509254456
+      },
+      {
+        "word": "sério,",
+        "start": 7.35,
+        "end": 7.87,
+        "probability": 0.7669923305511475
+      },
+      {
+        "word": "sério,",
+        "start": 7.99,
+        "end": 8.33,
+        "probability": 0.9937494099140167
+      },
+      {
+        "word": "eu",
+        "start": 8.45,
+        "end": 8.45,
+        "probability": 0.4271305799484253
+      },
+      {
+        "word": "não",
+        "start": 8.45,
+        "end": 8.47,
+        "probability": 0.9934697151184082
+      },
+      {
+        "word": "tenho",
+        "start": 8.47,
+        "end": 8.59,
+        "probability": 0.969577968120575
+      },
+      {
+        "word": "não.",
+        "start": 8.59,
+        "end": 8.83,
+        "probability": 0.6875590085983276
+      },
+      {
+        "word": "Você",
+        "start": 8.95,
+        "end": 9.03,
+        "probability": 0.17422039806842804
+      },
+      {
+        "word": "tem",
+        "start": 9.03,
+        "end": 9.17,
+        "probability": 0.986258864402771
+      },
+      {
+        "word": "medo",
+        "start": 9.17,
+        "end": 9.39,
+        "probability": 0.9892149567604065
+      },
+      {
+        "word": "dela",
+        "start": 9.39,
+        "end": 9.61,
+        "probability": 0.9947165846824646
+      },
+      {
+        "word": "com",
+        "start": 9.61,
+        "end": 9.87,
+        "probability": 0.7294121384620667
+      },
+      {
+        "word": "força?",
+        "start": 9.87,
+        "end": 10.09,
+        "probability": 0.43731048703193665
+      },
+      {
+        "word": "Eu",
+        "start": 10.69,
+        "end": 10.83,
+        "probability": 0.5742328763008118
+      },
+      {
+        "word": "não",
+        "start": 10.83,
+        "end": 10.99,
+        "probability": 0.9291331171989441
+      },
+      {
+        "word": "sei,",
+        "start": 10.99,
+        "end": 11.13,
+        "probability": 0.9617423415184021
+      },
+      {
+        "word": "eu",
+        "start": 11.19,
+        "end": 11.27,
+        "probability": 0.1907471865415573
+      },
+      {
+        "word": "não",
+        "start": 11.27,
+        "end": 11.45,
+        "probability": 0.9879680871963501
+      },
+      {
+        "word": "sei",
+        "start": 11.45,
+        "end": 11.67,
+        "probability": 0.3381567597389221
+      },
+      {
+        "word": "como",
+        "start": 11.67,
+        "end": 11.67,
+        "probability": 0.9094986319541931
+      },
+      {
+        "word": "é",
+        "start": 11.67,
+        "end": 11.81,
+        "probability": 0.891575276851654
+      },
+      {
+        "word": "que",
+        "start": 11.81,
+        "end": 11.93,
+        "probability": 0.990542471408844
+      },
+      {
+        "word": "fica.",
+        "start": 11.93,
+        "end": 12.17,
+        "probability": 0.9739964604377747
+      },
+      {
+        "word": "Largista!",
+        "start": 13.83,
+        "end": 14.23,
+        "probability": 0.6522816171248754
+      }
+    ],
+    "analysis": {
+      "accented_words_count": 13,
+      "low_confidence_words_count": 14,
+      "accented_words": [
+        {
+          "word": "têm",
+          "start": 4.39,
+          "end": 4.63,
+          "probability": 0.5961773991584778
+        },
+        {
+          "word": "pé",
+          "start": 5.63,
+          "end": 5.71,
+          "probability": 0.9774502515792847
+        },
+        {
+          "word": "atrás,",
+          "start": 5.71,
+          "end": 6.01,
+          "probability": 0.9142805337905884
+        },
+        {
+          "word": "não",
+          "start": 6.13,
+          "end": 6.33,
+          "probability": 0.7044616341590881
+        },
+        {
+          "word": "sério,",
+          "start": 7.35,
+          "end": 7.87,
+          "probability": 0.7669923305511475
+        },
+        {
+          "word": "sério,",
+          "start": 7.99,
+          "end": 8.33,
+          "probability": 0.9937494099140167
+        },
+        {
+          "word": "não",
+          "start": 8.45,
+          "end": 8.47,
+          "probability": 0.9934697151184082
+        },
+        {
+          "word": "não.",
+          "start": 8.59,
+          "end": 8.83,
+          "probability": 0.6875590085983276
+        },
+        {
+          "word": "Você",
+          "start": 8.95,
+          "end": 9.03,
+          "probability": 0.17422039806842804
+        },
+        {
+          "word": "força?",
+          "start": 9.87,
+          "end": 10.09,
+          "probability": 0.43731048703193665
+        }
+      ],
+      "low_conf_words": [
+        {
+          "word": "Eu",
+          "start": 1.07,
+          "end": 1.47,
+          "probability": 0.2442648857831955
+        },
+        {
+          "word": "Eles",
+          "start": 3.99,
+          "end": 4.39,
+          "probability": 0.28152790665626526
+        },
+        {
+          "word": "têm",
+          "start": 4.39,
+          "end": 4.63,
+          "probability": 0.5961773991584778
+        },
+        {
+          "word": "assim,",
+          "start": 4.95,
+          "end": 5.29,
+          "probability": 0.6506777405738831
+        },
+        {
+          "word": "um",
+          "start": 5.51,
+          "end": 5.63,
+          "probability": 0.6295698285102844
+        },
+        {
+          "word": "Mas",
+          "start": 6.95,
+          "end": 7.35,
+          "probability": 0.5106783509254456
+        },
+        {
+          "word": "eu",
+          "start": 8.45,
+          "end": 8.45,
+          "probability": 0.4271305799484253
+        },
+        {
+          "word": "não.",
+          "start": 8.59,
+          "end": 8.83,
+          "probability": 0.6875590085983276
+        },
+        {
+          "word": "Você",
+          "start": 8.95,
+          "end": 9.03,
+          "probability": 0.17422039806842804
+        },
+        {
+          "word": "força?",
+          "start": 9.87,
+          "end": 10.09,
+          "probability": 0.43731048703193665
+        }
+      ]
+    }
+  }
+}

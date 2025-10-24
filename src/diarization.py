@@ -18,9 +18,10 @@ logger = logging.getLogger(__name__)
 class PyannoteDiarizer:
     """Implements diarization using a pyannote.audio pipeline."""
 
-    def __init__(self, device: str = "cpu"):
+    def __init__(self, device: str = "cpu", embedding_batch_size: int = 8):
         logger.info("Initializing pyannote.audio pipeline...")
         self.device = device
+        self.embedding_batch_size = embedding_batch_size
         self.pipeline = None
         try:
             # Load .env file and get token
@@ -45,7 +46,10 @@ class PyannoteDiarizer:
                     "threshold": 0.35  # ← CUSTOM: Reverted to 0.35 for best overall accuracy
                 }
             })
-            logger.info("pyannote.audio pipeline loaded with custom clustering threshold=0.35")
+
+            # Set batch size for embeddings
+            self.pipeline.embedding_batch_size = self.embedding_batch_size
+            logger.info(f"pyannote.audio pipeline loaded with clustering threshold=0.35, embedding_batch_size={self.embedding_batch_size}")
 
         except Exception as e:
             logger.error(f"Failed to load pyannote.audio pipeline: {e}", exc_info=True)

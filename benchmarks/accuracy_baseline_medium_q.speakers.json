@@ -1,0 +1,328 @@
+{
+  "timestamp": "2025-10-13T23:48:43.466812",
+  "model": "medium",
+  "audio_file": "q.speakers.wav",
+  "audio_duration": 14.506666666666666,
+  "processing_time": 19.401793241500854,
+  "transcription": {
+    "full_text": "eu acho que assustou um pouco os homens, sabe?  tipo, eles têm um pouco assim, com o pé atrás, não sei.  você têm medo?  sério, sério, eu não tenho, não.  você têm medo dela, confuso?  pelo sim, pelo não, como é que fica?  fascista!",
+    "word_count": 44,
+    "segment_count": 7,
+    "confidence": 0.7142024581125322,
+    "avg_word_probability": 0.8620004571804946
+  },
+  "words": [
+    {
+      "word": "Eu",
+      "start": 1.07,
+      "end": 1.51,
+      "probability": 0.11132276058197021
+    },
+    {
+      "word": "acho",
+      "start": 1.51,
+      "end": 1.55,
+      "probability": 0.8707082867622375
+    },
+    {
+      "word": "que",
+      "start": 1.55,
+      "end": 1.71,
+      "probability": 0.9850867986679077
+    },
+    {
+      "word": "assustou",
+      "start": 1.71,
+      "end": 2.27,
+      "probability": 0.9064900279045105
+    },
+    {
+      "word": "um",
+      "start": 2.27,
+      "end": 2.33,
+      "probability": 0.8559672832489014
+    },
+    {
+      "word": "pouco",
+      "start": 2.33,
+      "end": 2.63,
+      "probability": 0.9949807524681091
+    },
+    {
+      "word": "os",
+      "start": 2.63,
+      "end": 2.85,
+      "probability": 0.9457305073738098
+    },
+    {
+      "word": "homens,",
+      "start": 2.85,
+      "end": 3.21,
+      "probability": 0.9941337704658508
+    },
+    {
+      "word": "sabe?",
+      "start": 3.39,
+      "end": 3.41,
+      "probability": 0.9724732637405396
+    },
+    {
+      "word": "Tipo,",
+      "start": 3.91,
+      "end": 4.23,
+      "probability": 0.6679087430238724
+    },
+    {
+      "word": "eles",
+      "start": 4.37,
+      "end": 4.53,
+      "probability": 0.9895797371864319
+    },
+    {
+      "word": "têm",
+      "start": 4.53,
+      "end": 4.71,
+      "probability": 0.7681728005409241
+    },
+    {
+      "word": "um",
+      "start": 4.71,
+      "end": 4.85,
+      "probability": 0.9871086478233337
+    },
+    {
+      "word": "pouco",
+      "start": 4.85,
+      "end": 5.05,
+      "probability": 0.9957619309425354
+    },
+    {
+      "word": "assim,",
+      "start": 5.05,
+      "end": 5.47,
+      "probability": 0.7476458549499512
+    },
+    {
+      "word": "com",
+      "start": 5.53,
+      "end": 5.63,
+      "probability": 0.8183954358100891
+    },
+    {
+      "word": "o",
+      "start": 5.63,
+      "end": 5.69,
+      "probability": 0.7225021123886108
+    },
+    {
+      "word": "pé",
+      "start": 5.69,
+      "end": 5.81,
+      "probability": 0.9987865090370178
+    },
+    {
+      "word": "atrás,",
+      "start": 5.81,
+      "end": 6.15,
+      "probability": 0.9657067656517029
+    },
+    {
+      "word": "não",
+      "start": 6.33,
+      "end": 6.47,
+      "probability": 0.8781594634056091
+    },
+    {
+      "word": "sei.",
+      "start": 6.47,
+      "end": 6.71,
+      "probability": 0.9980043768882751
+    },
+    {
+      "word": "Você",
+      "start": 6.83,
+      "end": 6.95,
+      "probability": 0.03939260169863701
+    },
+    {
+      "word": "tem",
+      "start": 6.95,
+      "end": 7.13,
+      "probability": 0.9720865488052368
+    },
+    {
+      "word": "medo?",
+      "start": 7.13,
+      "end": 7.25,
+      "probability": 0.9924206137657166
+    },
+    {
+      "word": "Sério,",
+      "start": 7.73,
+      "end": 8.05,
+      "probability": 0.6265912353992462
+    },
+    {
+      "word": "sério,",
+      "start": 8.05,
+      "end": 8.37,
+      "probability": 0.8893210589885712
+    },
+    {
+      "word": "eu",
+      "start": 8.45,
+      "end": 8.45,
+      "probability": 0.841930627822876
+    },
+    {
+      "word": "não",
+      "start": 8.45,
+      "end": 8.57,
+      "probability": 0.9917958378791809
+    },
+    {
+      "word": "tenho,",
+      "start": 8.57,
+      "end": 8.69,
+      "probability": 0.9944943785667419
+    },
+    {
+      "word": "não.",
+      "start": 8.79,
+      "end": 8.87,
+      "probability": 0.987395167350769
+    },
+    {
+      "word": "Você",
+      "start": 9.07,
+      "end": 9.09,
+      "probability": 0.7541735172271729
+    },
+    {
+      "word": "tem",
+      "start": 9.09,
+      "end": 9.21,
+      "probability": 0.996823787689209
+    },
+    {
+      "word": "medo",
+      "start": 9.21,
+      "end": 9.41,
+      "probability": 0.9901859760284424
+    },
+    {
+      "word": "dela,",
+      "start": 9.41,
+      "end": 9.71,
+      "probability": 0.9747986197471619
+    },
+    {
+      "word": "Confuso?",
+      "start": 9.77,
+      "end": 10.19,
+      "probability": 0.41454656422138214
+    },
+    {
+      "word": "Pelo",
+      "start": 10.69,
+      "end": 10.99,
+      "probability": 0.8187180459499359
+    },
+    {
+      "word": "sim,",
+      "start": 10.99,
+      "end": 11.19,
+      "probability": 0.9304024577140808
+    },
+    {
+      "word": "pelo",
+      "start": 11.31,
+      "end": 11.39,
+      "probability": 0.9987573623657227
+    },
+    {
+      "word": "não,",
+      "start": 11.39,
+      "end": 11.57,
+      "probability": 0.9978063702583313
+    },
+    {
+      "word": "como",
+      "start": 11.69,
+      "end": 11.79,
+      "probability": 0.9838514924049377
+    },
+    {
+      "word": "é",
+      "start": 11.79,
+      "end": 11.85,
+      "probability": 0.970490038394928
+    },
+    {
+      "word": "que",
+      "start": 11.85,
+      "end": 12.09,
+      "probability": 0.9978740215301514
+    },
+    {
+      "word": "fica?",
+      "start": 12.09,
+      "end": 12.29,
+      "probability": 0.9939497709274292
+    },
+    {
+      "word": "Fascista!",
+      "start": 14.09,
+      "end": 14.41,
+      "probability": 0.5955881923437119
+    }
+  ],
+  "pt_br_analysis": {
+    "keywords_found": 5,
+    "keywords_total": 37,
+    "keywords_percentage": 13.513513513513514,
+    "found_list": [
+      "não",
+      "você",
+      "é",
+      "ta",
+      "to"
+    ],
+    "missing_list": [
+      "está",
+      "já",
+      "até",
+      "também",
+      "só",
+      "lá",
+      "aí",
+      "daí",
+      "então",
+      "porém",
+      "além",
+      "ação",
+      "ações",
+      "informação",
+      "informações",
+      "opção",
+      "opções",
+      "irmão",
+      "mãe",
+      "mão",
+      "pão",
+      "cidadão",
+      "pra",
+      "pro",
+      "ce",
+      "né",
+      "português",
+      "brasileiro",
+      "conversa",
+      "falar",
+      "pessoa",
+      "pessoas"
+    ],
+    "accented_words_count": 12,
+    "low_confidence_words_count": 6
+  }
+}

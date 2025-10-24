@@ -1,0 +1,36 @@
+# Development Dependencies
+# Testing frameworks
+pytest==8.4.2
+pytest-asyncio==1.1.0
+pytest-cov==6.2.1
+pytest-mock==3.14.1
+pytest-timeout==2.4.0
+coverage==7.10.6
+
+# Testing utilities - Audio analysis for benchmarks
+librosa
+jiwer==4.0.0
+rapidfuzz==3.14.1
+
+
+# Code quality and linting
+vulture==2.14
+
+# Development tools
+aider-install==0.2.0
+twine==6.2.0
+readme_renderer==44.0
+
+# Documentation
+docutils==0.22
+
+# Jupyter/notebook support (if needed)
+# matplotlib==3.10.6
+# contourpy==1.3.3
+# cycler==0.12.1
+# fonttools==4.59.2
+# kiwisolver==1.4.9
+
+# Package management tools
+uv==0.8.17
+specify-cli @ git+https://github.com/github/spec-kit.git@b18ef208cb8ba7b1eba04fe5dfcf3c24fda84a3e

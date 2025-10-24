@@ -21,12 +21,106 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import soundfile as sf
+import psutil
 
 # Lazy imports for optional, heavy dependencies
 _pyaudio = None
 _librosa = None
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Adaptive Performance Configuration
+# ============================================================================
+
+def configure_adaptive_threads() -> Tuple[int, int]:
+    """
+    Automatically configure optimal thread counts for torch (diarization) and
+    OpenMP (transcription) based on available hardware resources.
+
+    This function intelligently allocates CPU threads to maximize performance
+    across different hardware configurations (from 2-core laptops to 32+ core servers).
+
+    Strategy:
+    - Transcription (OpenMP/faster-whisper): CPU-intensive, benefits from more threads
+    - Diarization (PyTorch/pyannote): Memory-bound, needs fewer threads to avoid contention
+
+    Returns:
+        Tuple[torch_threads, omp_threads]: Optimal thread counts for PyTorch and OpenMP
+    """
+    # Detect hardware
+    physical_cores = psutil.cpu_count(logical=False) or 1
+    logical_cores = os.cpu_count() or 1
+    total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+    available_ram_gb = psutil.virtual_memory().available / (1024 ** 3)
+
+    logger.info(f"Hardware Detection: {physical_cores} physical cores, "
+               f"{logical_cores} logical cores, {total_ram_gb:.1f}GB total RAM, "
+               f"{available_ram_gb:.1f}GB available")
+
+    # Adaptive allocation based on core count tiers
+    if physical_cores <= 2:
+        # Low-end systems (2 cores): Minimal threading
+        torch_threads = 1
+        omp_threads = 1
+        tier = "Low-end (2 cores)"
+
+    elif physical_cores <= 4:
+        # Mid-range systems (4 cores): Conservative allocation
+        # Transcription gets priority
+        torch_threads = 1
+        omp_threads = max(1, physical_cores - 1)
+        tier = "Mid-range (4 cores)"
+
+    elif physical_cores <= 8:
+        # Standard systems (6-8 cores): Balanced allocation
+        # This is the most common configuration
+        torch_threads = 2
+        omp_threads = max(1, physical_cores - 2)
+        tier = "Standard (6-8 cores)"
+
+    elif physical_cores <= 16:
+        # High-end systems (12-16 cores): Aggressive allocation
+        # Scale up both, but transcription gets majority
+        torch_threads = min(4, physical_cores // 4)
+        omp_threads = max(1, physical_cores - torch_threads)
+        tier = "High-end (12-16 cores)"
+
+    else:
+        # Server systems (16+ cores): Maximum parallelism
+        # Scale both significantly for server-grade CPUs
+        torch_threads = min(8, physical_cores // 4)
+        omp_threads = max(1, physical_cores - torch_threads)
+        tier = "Server (16+ cores)"
+
+    # Memory-based adjustments
+    # If available RAM < 4GB, reduce threads to prevent thrashing
+    if available_ram_gb < 4:
+        logger.warning(f"Low available RAM ({available_ram_gb:.1f}GB). Reducing thread counts to prevent memory thrashing.")
+        torch_threads = max(1, torch_threads // 2)
+        omp_threads = max(1, omp_threads // 2)
+
+    # Validate thread counts don't exceed available cores
+    # This prevents oversubscription
+    total_threads = torch_threads + omp_threads
+    if total_threads > logical_cores:
+        logger.warning(f"Total threads ({total_threads}) exceeds logical cores ({logical_cores}). Scaling down.")
+        scale_factor = logical_cores / total_threads
+        torch_threads = max(1, int(torch_threads * scale_factor))
+        omp_threads = max(1, int(omp_threads * scale_factor))
+
+    # Calculate allocation percentages for logging
+    total = torch_threads + omp_threads
+    torch_pct = (torch_threads / total) * 100
+    omp_pct = (omp_threads / total) * 100
+
+    logger.info(f"Adaptive Thread Configuration:")
+    logger.info(f"  System Tier: {tier}")
+    logger.info(f"  PyTorch (diarization): {torch_threads} threads ({torch_pct:.0f}%)")
+    logger.info(f"  OpenMP (transcription): {omp_threads} threads ({omp_pct:.0f}%)")
+    logger.info(f"  Rationale: Transcription (CPU-heavy) gets {omp_pct:.0f}%, Diarization (memory-bound) gets {torch_pct:.0f}%")
+
+    return torch_threads, omp_threads
 
 def _get_pyaudio():
     """Lazy import of PyAudio to avoid import errors if not installed."""
