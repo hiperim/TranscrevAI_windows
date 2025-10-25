@@ -68,13 +68,13 @@ class TranscriptionService:
             "ate": "até",
             "sao": "são",
 
-            # 13 PT-BR colloquial elisões (safe, Level 1)
-            "pra": "para",
-            "pro": "para o",
-            "pras": "para as",
-            "pros": "para os",
-            "prum": "para um",
-            "pruma": "para uma",
+            # 11 PT-BR colloquial elisões (safe, Level 1)
+            # EXPERIMENTAL: REVERSED normalization (formal→colloquial) based on CORAA analysis
+            "para": "pra",       # 32 CORAA occurrences - most common
+            "para o": "pro",     # Common colloquial contraction
+            "para a": "pra",     # Common colloquial contraction
+            "para os": "pros",   # Common colloquial contraction
+            "para as": "pras",   # Common colloquial contraction
             "ta": "está",
             "tava": "estava",
             "tao": "tão",

@@ -58,6 +58,12 @@ class AppConfig:
     force_cpu: bool = False
     enable_performance_monitoring: bool = True
     enable_memory_profiling: bool = False
+
+    # === SERVER SETTINGS ===
+    host: str = "0.0.0.0"
+    port: int = 8000
+    ssl_cert_path: Optional[str] = None
+    ssl_key_path: Optional[str] = None
     
     def __post_init__(self):
         # Initialize portable paths (relative to project root)
@@ -89,7 +95,11 @@ class AppConfig:
             'TRANSCREVAI_DEVICE': 'device',
             'TRANSCREVAI_MAX_MEMORY': 'max_memory_gb',
             'TRANSCREVAI_LOG_LEVEL': 'log_level',
-            'TRANSCREVAI_DEBUG': 'debug_mode'
+            'TRANSCREVAI_DEBUG': 'debug_mode',
+            'TRANSCREVAI_HOST': 'host',
+            'TRANSCREVAI_PORT': 'port',
+            'TRANSCREVAI_SSL_CERT': 'ssl_cert_path',
+            'TRANSCREVAI_SSL_KEY': 'ssl_key_path'
         }
         for env_key, attr_name in env_mappings.items():
             env_value = os.getenv(env_key)
@@ -97,6 +107,8 @@ class AppConfig:
                 try:
                     if attr_name in ['max_memory_gb']:
                         setattr(self, attr_name, float(env_value))
+                    elif attr_name in ['port']:
+                        setattr(self, attr_name, int(env_value))
                     elif attr_name in ['debug_mode']:
                         setattr(self, attr_name, env_value.lower() in ['true', '1', 'yes'])
                     else:
