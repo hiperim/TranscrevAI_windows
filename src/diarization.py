@@ -118,7 +118,8 @@ class PyannoteDiarizer:
 def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diarization_result) -> List[Dict[str, Any]]:
     """
     Aligns speaker labels to transcription segments using word-level timestamps for high accuracy.
-    This version is robust against words falling into non-speech gaps and is type-safe.
+    Uses direct segment lookup instead of .crop() which has known issues.
+    Renumbers speakers starting from SPEAKER_01 (not SPEAKER_00).
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -130,52 +131,73 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
             segment['speaker'] = 'SPEAKER_01'
         return transcription_segments
 
-    # Debug: Log diarization result info
-    try:
-        speakers_found = set()
-        for turn, _, speaker in diarization_result.itertracks(yield_label=True):
-            speakers_found.add(speaker)
-        logger.info(f"Diarization found {len(speakers_found)} speakers: {speakers_found}")
-    except Exception as e:
-        logger.error(f"Failed to iterate diarization tracks: {e}")
+    # Convert diarization result to simple list of segments for direct lookup
+    diarization_segments = []
+    speakers_found = set()
+    for turn, _, speaker in diarization_result.itertracks(yield_label=True):
+        diarization_segments.append({
+            'start': turn.start,
+            'end': turn.end,
+            'speaker': speaker
+        })
+        speakers_found.add(speaker)
 
+    logger.info(f"Diarization found {len(speakers_found)} speakers: {sorted(speakers_found)}")
+
+    # Create speaker mapping: SPEAKER_00 -> SPEAKER_01, SPEAKER_01 -> SPEAKER_02, etc.
+    sorted_speakers = sorted(speakers_found)
+    speaker_mapping = {old: f"SPEAKER_{str(i+1).zfill(2)}" for i, old in enumerate(sorted_speakers)}
+    logger.info(f"Speaker mapping: {speaker_mapping}")
+
+    def find_speaker_at_timestamp(timestamp: float, margin: float = 0.0) -> Optional[str]:
+        """
+        Find the speaker at a given timestamp using direct segment lookup.
+        Returns the speaker with the most overlap with the timestamp range.
+        """
+        overlapping = []
+        for seg in diarization_segments:
+            if seg['start'] <= timestamp + margin and seg['end'] >= timestamp - margin:
+                # Calculate overlap duration
+                overlap_start = max(seg['start'], timestamp - margin)
+                overlap_end = min(seg['end'], timestamp + margin)
+                overlap_duration = overlap_end - overlap_start
+                if overlap_duration > 0:
+                    overlapping.append((seg['speaker'], overlap_duration))
+
+        if overlapping:
+            # Return speaker with longest overlap
+            return max(overlapping, key=lambda x: x[1])[0]
+        return None
+
+    # Process each transcription segment
     for segment in transcription_segments:
         if 'words' not in segment or not segment['words']:
             # Fallback for segments without word-level timestamps
-            try:
-                cropped_annotation = diarization_result.crop(segment['start'], segment['end'])
-                if cropped_annotation and not cropped_annotation.is_empty():
-                    segment['speaker'] = cropped_annotation.argmax()
-                else:
-                    segment['speaker'] = 'SPEAKER_XX' # No speaker in this segment
-            except Exception:
+            # Use middle of segment timestamp
+            mid_timestamp = (segment['start'] + segment['end']) / 2
+            speaker = find_speaker_at_timestamp(mid_timestamp, margin=0.1)
+            if speaker:
+                segment['speaker'] = speaker_mapping.get(speaker, speaker)
+            else:
                 segment['speaker'] = 'SPEAKER_XX'
             continue
 
         word_speaker_counts: Dict[str, int] = {}
         for word in segment['words']:
-            # Crop the diarization to the word's timeframe
-            cropped_annotation = diarization_result.crop(word['start'], word['end'])
+            # Use middle of word timestamp for lookup
+            word_mid = (word['start'] + word['end']) / 2
+            speaker = find_speaker_at_timestamp(word_mid, margin=0.05)
 
-            # Check if the cropped annotation is not empty (i.e., a speaker was active)
-            if cropped_annotation and not cropped_annotation.is_empty():
-                try:
-                    speaker = cropped_annotation.argmax()
-                    word['speaker'] = speaker
-                    word_speaker_counts[speaker] = word_speaker_counts.get(speaker, 0) + 1
-                except (IndexError, ValueError) as e:
-                    logger.warning(f"argmax failed for word {word.get('word', '?')} at {word['start']:.2f}-{word['end']:.2f}s: {e}")
-                    word['speaker'] = 'SPEAKER_XX' # Handle cases where argmax might fail on unusual annotations
+            if speaker:
+                word['speaker'] = speaker_mapping.get(speaker, speaker)
+                word_speaker_counts[speaker] = word_speaker_counts.get(speaker, 0) + 1
             else:
-                # This word falls in a gap where no speaker was detected
-                # logger.debug(f"No speaker detected for word '{word.get('word', '?')}' at {word['start']:.2f}-{word['end']:.2f}s")
                 word['speaker'] = 'SPEAKER_XX'
-        
+
         # Assign the dominant speaker for the entire segment based on word counts
         if word_speaker_counts:
-            # This is now guaranteed to be safe and satisfies Pylance
-            dominant_speaker = max(word_speaker_counts, key=lambda spk: word_speaker_counts[spk])
-            segment['speaker'] = dominant_speaker
+            dominant_speaker_original = max(word_speaker_counts, key=lambda spk: word_speaker_counts[spk])
+            segment['speaker'] = speaker_mapping.get(dominant_speaker_original, dominant_speaker_original)
         else:
             # If no words in the segment had a speaker, assign a default
             segment['speaker'] = 'SPEAKER_XX'

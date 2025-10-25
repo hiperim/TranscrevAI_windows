@@ -31,7 +31,7 @@ except ImportError:
 
 # Configuration
 WS_URL = "ws://localhost:8000/ws/test-integration"
-AUDIO_FILE = Path("C:/transcrevai_windows/data/uploads/q.speakers.wav")
+AUDIO_FILE = Path("C:/transcrevai_windows/data/recordings/q.speakers.wav")
 CHUNK_SIZE = 64 * 1024  # 64KB chunks (typical for audio streaming)
 
 # Metrics storage
