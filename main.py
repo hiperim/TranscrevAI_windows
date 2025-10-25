@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 # Core application modules
 from src.transcription import TranscriptionService
 from src.diarization import PyannoteDiarizer
-from src.audio_processing import AudioQualityAnalyzer
+from src.audio_processing import AudioQualityAnalyzer, SessionManager
 from src.subtitle_generator import generate_srt
 from src.file_manager import FileManager
 from src.websocket_enhancements import get_websocket_safety_manager, MessagePriority
@@ -64,6 +64,7 @@ class AppState:
         self.transcription_service: Optional[TranscriptionService] = None
         self.diarization_service: Optional[PyannoteDiarizer] = None
         self.audio_quality_analyzer: Optional[AudioQualityAnalyzer] = None
+        self.session_manager: Optional[SessionManager] = None
 
     async def send_message(self, session_id: str, message: Dict, priority: MessagePriority = MessagePriority.NORMAL):
         await self.websocket_safety_manager.safe_send_message(self, session_id, message, priority)
@@ -75,16 +76,40 @@ app_state = AppState()
 async def lifespan(app: FastAPI):
     logger.info("TranscrevAI Server Starting...")
     logger.info("Initializing Machine Learning services...")
-    
+
     # Initialize services once and store them in the global state
     app_state.transcription_service = TranscriptionService(model_name="medium", device=DEVICE)
     await app_state.transcription_service.initialize()
     app_state.diarization_service = PyannoteDiarizer(device=DEVICE)
     app_state.audio_quality_analyzer = AudioQualityAnalyzer()
-    
+
+    # Initialize SessionManager for live recording
+    app_state.session_manager = SessionManager(session_timeout_hours=24)
+
+    # Start background cleanup task
+    cleanup_task = asyncio.create_task(app_state.session_manager.cleanup_old_sessions())
+    logger.info("SessionManager initialized and cleanup task started")
+
     logger.info("Services initialized successfully.")
     yield
+
+    # Shutdown: cleanup all active sessions
     logger.info("Shutting down TranscrevAI...")
+    if app_state.session_manager:
+        session_count = app_state.session_manager.get_active_session_count()
+        logger.info(f"Cleaning up {session_count} active live recording sessions...")
+
+        for session_id in app_state.session_manager.get_all_session_ids():
+            app_state.session_manager.delete_session(session_id)
+
+        logger.info("All live recording sessions cleaned up")
+
+    # Cancel cleanup task
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
 
 # --- Audio Processing Pipeline ---
 async def process_audio_pipeline(audio_path: str, session_id: str):
