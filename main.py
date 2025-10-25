@@ -20,10 +20,11 @@ import torch
 import psutil
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 # Core application modules
 from src.transcription import TranscriptionService
@@ -197,6 +198,64 @@ async def download_srt(session_id: str):
     if not session or not session.get("srt_file_path") or not os.path.exists(session["srt_file_path"]):
         return JSONResponse(status_code=404, content={"error": "Arquivo SRT não encontrado."})
     return FileResponse(path=session["srt_file_path"], filename=f"transcricao_{session_id}.srt", media_type="application/x-subrip")
+
+@app.get("/api/download/{session_id}/{file_type}")
+async def download_file(session_id: str, file_type: str):
+    """
+    Download recorded files from live recording sessions.
+
+    Args:
+        session_id: Session ID from SessionManager
+        file_type: One of ['audio', 'transcript', 'subtitles']
+
+    Returns:
+        FileResponse with the requested file
+
+    Raises:
+        HTTPException 400: Invalid file type
+        HTTPException 404: Session or file not found
+    """
+    # Validate file type
+    valid_types = ['audio', 'transcript', 'subtitles']
+    if file_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Must be one of: {', '.join(valid_types)}"
+        )
+
+    # Get session from SessionManager
+    if not app_state.session_manager:
+        raise HTTPException(status_code=503, detail="SessionManager not initialized")
+
+    session = app_state.session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Get file path from session
+    file_path = session.get("files", {}).get(file_type)
+    if not file_path or not Path(file_path).exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"{file_type.capitalize()} file not found for this session"
+        )
+
+    # Define file extensions and media types
+    file_config = {
+        'audio': {'ext': '.wav', 'media_type': 'audio/wav'},
+        'transcript': {'ext': '.txt', 'media_type': 'text/plain'},
+        'subtitles': {'ext': '.srt', 'media_type': 'application/x-subrip'}
+    }
+
+    config = file_config[file_type]
+    filename = f"recording_{session_id}{config['ext']}"
+
+    logger.info(f"Download requested: session={session_id}, file_type={file_type}, path={file_path}")
+
+    return FileResponse(
+        path=file_path,
+        media_type=config['media_type'],
+        filename=filename
+    )
 
 @app.get("/health", status_code=200)
 async def health_check():
