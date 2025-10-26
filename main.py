@@ -21,7 +21,7 @@ import torch
 import psutil
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -129,11 +129,13 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
         
         # --- Run Pipeline Steps ---
         # 1. Transcription
+        assert app_state.transcription_service is not None
         transcription_result = await app_state.transcription_service.transcribe_with_enhancements(audio_path)
 
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'diarization', 'percentage': 50, 'message': 'Transcrição concluída. Identificando falantes...'})
 
         # 2. Diarization
+        assert app_state.diarization_service is not None
         diarization_result = await app_state.diarization_service.diarize(audio_path, transcription_result.segments)
 
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'srt', 'percentage': 80, 'message': 'Gerando legendas...'})
@@ -147,19 +149,29 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
         processing_ratio = actual_processing_time / audio_duration if audio_duration > 0 else 0
 
         logger.info(f"Processing complete for {session_id}: {actual_processing_time:.2f}s for {audio_duration:.2f}s audio (ratio: {processing_ratio:.2f}x)")
+    except Exception as e:
+        logger.error(f"Error in audio processing pipeline: {str(e)}", exc_info=True)
+        raise
 
-        final_result = {
-            "segments": diarization_result["segments"],
-            "num_speakers": diarization_result["num_speakers"],
-            "processing_time": round(actual_processing_time, 2),
-            "processing_ratio": round(processing_ratio, 2),
-            "audio_duration": round(audio_duration, 2)
-        }
+    final_result = {
+        "segments": diarization_result["segments"],
+        "num_speakers": diarization_result["num_speakers"],
+        "processing_time": round(actual_processing_time, 2),
+        "processing_ratio": round(processing_ratio, 2),
+        "audio_duration": round(audio_duration, 2)
+    }
 
-        # Store file paths in SessionManager (for download endpoint)
+    # Store file paths in SessionManager (for download endpoint)
+    try:
         if app_state.session_manager:
-            session = app_state.session_manager.get_session(session_id)
-            if session:
+            try:
+                assert app_state.session_manager is not None
+                session = app_state.session_manager.get_session(session_id)
+                assert session is not None
+            except AssertionError:
+                logger.error(f"Session manager or session not available for {session_id}")
+                return
+        if session:
                 # Store audio path (already set in WebSocket, but ensure it's there)
                 if "files" not in session:
                     session["files"] = {}
@@ -185,6 +197,10 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
         logger.error(f"Audio pipeline failed for session {session_id}: {e}", exc_info=True)
         await app_state.send_message(session_id, {'type': 'error', 'message': str(e)}, MessagePriority.CRITICAL)
 
+def run_pipeline_sync(audio_path: str, session_id: str):
+    """Synchronous wrapper to run the async pipeline in a separate thread."""
+    asyncio.run(process_audio_pipeline(audio_path, session_id))
+
 # --- FastAPI App Setup ---
 app = FastAPI(title="TranscrevAI Single-Process", version="6.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -196,14 +212,35 @@ async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/upload")
-async def upload_audio(file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
+async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
     try:
-        if not session_id: session_id = f"upload_{int(time.time() * 1000)}"
+        # Ensure a session exists in the SessionManager
+        if not session_id:
+            assert app_state.session_manager is not None
+            session_id = app_state.session_manager.create_session()
+        else:
+            # If a session_id is provided, ensure it is registered
+            assert app_state.session_manager is not None
+            if not app_state.session_manager.get_session(session_id):
+                app_state.session_manager.sessions[session_id] = {
+                    "id": session_id,
+                    "created_at": time.time(),
+                    "last_activity": time.time(),
+                    "processor": None,  # No live processor for uploads
+                    "files": {},
+                    "status": "starting"
+                }
+
+        assert app_state.file_manager is not None
         file_path = app_state.file_manager.save_uploaded_file(file.file, file.filename or f"{session_id}.wav")
         
-        # BEST PRACTICE: Run the heavy CPU-bound task in the background
-        # This allows the endpoint to return immediately, keeping the server responsive.
-        asyncio.create_task(process_audio_pipeline(str(file_path), session_id))
+        # Store the audio file path in the session
+        session = app_state.session_manager.get_session(session_id)
+        if session:
+            session["files"]["audio"] = str(file_path)
+
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, run_pipeline_sync, str(file_path), session_id)
         
         logger.info(f"Job accepted for session {session_id}. Processing started in background.")
         return JSONResponse(content={"success": True, "session_id": session_id})
@@ -215,7 +252,9 @@ async def upload_audio(file: UploadFile = File(...), session_id: Optional[str] =
 async def download_srt(session_id: str):
     with app_state._lock:
         session = app_state.sessions.get(session_id)
-    if not session or not session.get("srt_file_path") or not os.path.exists(session["srt_file_path"]):
+    assert session is not None
+    assert session is not None
+    if not session.get("srt_file_path") or not os.path.exists(session["srt_file_path"]):
         return JSONResponse(status_code=404, content={"error": "Arquivo SRT não encontrado."})
     return FileResponse(path=session["srt_file_path"], filename=f"transcricao_{session_id}.srt", media_type="application/x-subrip")
 
@@ -247,24 +286,40 @@ async def download_file(session_id: str, file_type: str):
     if not app_state.session_manager:
         raise HTTPException(status_code=503, detail="SessionManager not initialized")
 
+    assert app_state.session_manager is not None
     session = app_state.session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
     # Get file path from session
-    file_path = session.get("files", {}).get(file_type)
-    if not file_path or not Path(file_path).exists():
+    assert session is not None
+    file_path_str = session.get("files", {}).get(file_type)
+    if not file_path_str or not Path(file_path_str).exists():
         raise HTTPException(
             status_code=404,
             detail=f"{file_type.capitalize()} file not found for this session"
         )
 
+    file_path = Path(file_path_str)
+
+    # On-demand MP4 conversion for audio files
+    if file_type == 'audio' and session.get("audio_format") == 'mp4' and file_path.suffix.lower() == '.wav':
+        from src.audio_processing import convert_wav_to_mp4
+        mp4_path = file_path.with_suffix(".mp4")
+        if convert_wav_to_mp4(str(file_path), str(mp4_path)):
+            return FileResponse(
+                path=str(mp4_path),
+                media_type='video/mp4',
+                filename=f"recording_{session_id}.mp4"
+            )
+        else:
+            # Fallback to serving the WAV if conversion fails
+            logger.warning(f"MP4 conversion failed for session {session_id}. Serving original WAV file.")
+
     # Define file extensions and media types
-    # For audio, detect format from actual file extension (WAV or MP4)
     if file_type == 'audio':
-        file_ext = Path(file_path).suffix.lower()  # .wav or .mp4
-        media_type = 'video/mp4' if file_ext == '.mp4' else 'audio/wav'
-        filename = f"recording_{session_id}{file_ext}"
+        media_type = 'audio/wav'
+        filename = f"recording_{session_id}.wav"
     else:
         file_config = {
             'transcript': {'ext': '.txt', 'media_type': 'text/plain'},
@@ -277,7 +332,7 @@ async def download_file(session_id: str, file_type: str):
     logger.info(f"Download requested: session={session_id}, file_type={file_type}, path={file_path}")
 
     return FileResponse(
-        path=file_path,
+        path=str(file_path),
         media_type=media_type,
         filename=filename
     )
@@ -321,11 +376,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         await websocket.close()
         return
 
+    assert app_state.session_manager is not None
+    assert app_state.session_manager is not None
     session = app_state.session_manager.get_session(session_id)
     if not session:
         session_id = app_state.session_manager.create_session()
         session = app_state.session_manager.get_session(session_id)
         logger.info(f"Created new session: {session_id}")
+    assert session is not None
 
     # Get LiveAudioProcessor from session
     processor = session.get("processor")
@@ -412,7 +470,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     break
 
                 # Check duration limit
-                elapsed_time = time.time() - recording_start
+                if recording_start is None:
+                    elapsed_time = 0.0
+                else:
+                    elapsed_time = time.time() - recording_start
+
                 if elapsed_time > MAX_RECORDING_DURATION:
                     await websocket.send_json({
                         "type": "error",
@@ -454,30 +516,30 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     audio_path = wav_path
 
                 # Store audio file path
+                assert session is not None
+                # Store audio file path
                 session["files"]["audio"] = str(audio_path)
 
-                # Process audio (transcription + diarization)
-                await websocket.send_json({
-                    "type": "progress",
-                    "stage": "transcription",
-                    "percentage": 10,
-                    "message": "Iniciando transcrição..."
-                })
+                # Finished handling stop — exit loop to process audio
+                break
 
-                # Run audio pipeline in background
-                asyncio.create_task(process_audio_pipeline(str(audio_path), session_id))
+        # Process audio (transcription + diarization)
+        await websocket.send_json({
+            "type": "progress",
+            "stage": "transcription",
+            "percentage": 10,
+            "message": "Iniciando transcrição..."
+            })
 
-                await websocket.send_json({
-                    "type": "processing_started",
-                    "message": "Processamento iniciado em background"
-                })
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, run_pipeline_sync, str(audio_path), session_id)
 
-            # Unknown action
-            else:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"Ação desconhecida: '{action}'. Use: start, audio_chunk, stop"
-                })
+        await websocket.send_json({
+            "type": "processing_started",
+            "message": "Processamento iniciado em background"
+            })
+
+        # If we exit the while loop (break), the code below will process the audio
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {session_id}")
@@ -496,21 +558,21 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
 if __name__ == "__main__":
     # SSL configuration
-    ssl_config = {}
     if app_config.ssl_cert_path and app_config.ssl_key_path:
-        ssl_config = {
-            "ssl_certfile": app_config.ssl_cert_path,
-            "ssl_keyfile": app_config.ssl_key_path
-        }
-        logger.info(f"Starting server with SSL on https://{app_config.host}:{app_config.port}")
+        uvicorn.run(
+            app="main:app",
+            host=app_config.host,
+            port=app_config.port,
+            reload=False,
+            log_level=app_config.log_level.lower(),
+            ssl_certfile=app_config.ssl_cert_path,
+            ssl_keyfile=app_config.ssl_key_path
+        )
     else:
-        logger.info(f"Starting server without SSL on http://{app_config.host}:{app_config.port}")
-
-    uvicorn.run(
-        app="main:app",
-        host=app_config.host,
-        port=app_config.port,
-        reload=False,
-        log_level=app_config.log_level.lower(),
-        **ssl_config
-    )
+        uvicorn.run(
+            app="main:app",
+            host=app_config.host,
+            port=app_config.port,
+            reload=False,
+            log_level=app_config.log_level.lower()
+        )
