@@ -124,15 +124,22 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
         pipeline_start_time = time.time()
 
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'start', 'percentage': 5, 'message': 'Analisando qualidade do áudio...'})
-        
+
         # --- Run Pipeline Steps ---
         # 1. Transcription
-        transcription_result = await app_state.transcription_service.transcribe_with_enhancements(audio_path)
+        # Ensure the transcription service is a concrete instance for type-checkers and at runtime
+        transcription_service = app_state.transcription_service
+        if transcription_service is None:
+            raise RuntimeError("Transcription service is not initialized.")
+        transcription_result = await transcription_service.transcribe_with_enhancements(audio_path)
 
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'diarization', 'percentage': 50, 'message': 'Transcrição concluída. Identificando falantes...'})
 
         # 2. Diarization
-        diarization_result = await app_state.diarization_service.diarize(audio_path, transcription_result.segments)
+        diarization_service = app_state.diarization_service
+        if diarization_service is None:
+            raise RuntimeError("Diarization service is not initialized.")
+        diarization_result = await diarization_service.diarize(audio_path, transcription_result.segments)
 
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'srt', 'percentage': 80, 'message': 'Gerando legendas...'})
 
@@ -218,13 +225,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             if session_id in app_state.connections: del app_state.connections[session_id]
 
 if __name__ == "__main__":
-    # SSL configuration
-    ssl_config = {}
+    # SSL configuration (pass explicitly to avoid **kwargs type-mismatch issues)
+    ssl_certfile = None
+    ssl_keyfile = None
     if app_config.ssl_cert_path and app_config.ssl_key_path:
-        ssl_config = {
-            "ssl_certfile": app_config.ssl_cert_path,
-            "ssl_keyfile": app_config.ssl_key_path
-        }
+        ssl_certfile = app_config.ssl_cert_path
+        ssl_keyfile = app_config.ssl_key_path
         logger.info(f"Starting server with SSL on https://{app_config.host}:{app_config.port}")
     else:
         logger.info(f"Starting server without SSL on http://{app_config.host}:{app_config.port}")
@@ -235,5 +241,6 @@ if __name__ == "__main__":
         port=app_config.port,
         reload=False,
         log_level=app_config.log_level.lower(),
-        **ssl_config
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
     )
