@@ -1,4 +1,3 @@
-# Final Architecture: Single-Process, Async Model
 """
 TranscrevAI Main Application - Final, Optimized Architecture.
 
