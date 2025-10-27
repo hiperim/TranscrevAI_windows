@@ -62,8 +62,8 @@ class AppConfig:
     # === SERVER SETTINGS ===
     host: str = "0.0.0.0"
     port: int = 8000
-    ssl_cert_path: Optional[str] = None
-    ssl_key_path: Optional[str] = None
+    ssl_cert_path: Optional[str] = "certs/localhost+2.pem"
+    ssl_key_path: Optional[str] = "certs/localhost+2-key.pem"
     
     def __post_init__(self):
         # Initialize portable paths (relative to project root)

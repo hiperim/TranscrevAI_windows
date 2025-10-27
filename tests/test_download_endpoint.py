@@ -1,104 +1,66 @@
-"""
-Manual test for download endpoint
-Tests the /api/download/{session_id}/{file_type} endpoint
-
-Usage:
-    1. Start the server: python main.py
-    2. Run this test: python tests/test_download_endpoint.py
-"""
-
-import sys
+import unittest
+from fastapi.testclient import TestClient
 from pathlib import Path
+import os
+import wave
+import struct
+
+# Add parent directory to path for imports
+import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.audio_processing import SessionManager
-import tempfile
+from main import app, app_state
 
-def test_download_endpoint_logic():
-    """Test the download endpoint logic without HTTP requests."""
+class TestDownloadEndpoint(unittest.TestCase):
 
-    print("="*80)
-    print("TESTING DOWNLOAD ENDPOINT LOGIC")
-    print("="*80)
+    def setUp(self):
+        self.client = TestClient(app)
+        self.temp_dir = Path("tests") / "temp_test_files"
+        self.temp_dir.mkdir(exist_ok=True)
+        self.wav_path = self.temp_dir / "test_download.wav"
 
-    # Create SessionManager
-    session_manager = SessionManager()
-    print("\n✅ SessionManager created")
+        # Create a dummy WAV file
+        with wave.open(str(self.wav_path), 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            for _ in range(16000): # 1 second of silence
+                wf.writeframes(struct.pack('<h', 0))
 
-    # Create a test session
-    session_id = session_manager.create_session()
-    print(f"✅ Test session created: {session_id}")
+    def tearDown(self):
+        if self.wav_path.exists():
+            self.wav_path.unlink()
+        mp4_path = self.temp_dir / "test_download.mp4"
+        if mp4_path.exists():
+            mp4_path.unlink()
+        if self.temp_dir.exists():
+            self.temp_dir.rmdir()
 
-    # Get session
-    session = session_manager.get_session(session_id)
-    print(f"✅ Session retrieved: {session['id']}")
+    def test_download_mp4_conversion(self):
+        """Test that the on-demand MP4 conversion in the download endpoint works."""
+        with TestClient(app) as client:
+            session_id = "test_mp4_download_session"
+            
+            # Manually create a session to simulate a completed live recording
+            session_data = {
+                "id": session_id,
+                "audio_format": "mp4",
+                "files": {
+                    "audio": str(self.wav_path)
+                }
+            }
+            app_state.session_manager.sessions[session_id] = session_data
 
-    # Create mock files
-    temp_dir = Path(tempfile.gettempdir())
+            # Make a request to the download endpoint
+            response = client.get(f"/api/download/{session_id}/audio")
 
-    audio_file = temp_dir / f"{session_id}_audio.wav"
-    transcript_file = temp_dir / f"{session_id}_transcript.txt"
-    subtitles_file = temp_dir / f"{session_id}_subtitles.srt"
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers['content-type'], 'video/mp4')
+            
+            # Check that the MP4 file was created
+            mp4_path = self.temp_dir / "test_download.mp4"
+            self.assertTrue(mp4_path.exists())
+            self.assertGreater(mp4_path.stat().st_size, 0)
 
-    # Write mock content
-    audio_file.write_bytes(b"MOCK AUDIO DATA")
-    transcript_file.write_text("Mock transcript content")
-    subtitles_file.write_text("1\n00:00:00,000 --> 00:00:05,000\nMock subtitle")
-
-    print(f"\n✅ Created mock files:")
-    print(f"   - {audio_file}")
-    print(f"   - {transcript_file}")
-    print(f"   - {subtitles_file}")
-
-    # Add files to session
-    session["files"]["audio"] = str(audio_file)
-    session["files"]["transcript"] = str(transcript_file)
-    session["files"]["subtitles"] = str(subtitles_file)
-
-    print(f"\n✅ Files added to session")
-
-    # Test file retrieval
-    print(f"\n📊 TESTING FILE RETRIEVAL:")
-
-    for file_type in ['audio', 'transcript', 'subtitles']:
-        file_path = session.get("files", {}).get(file_type)
-        exists = Path(file_path).exists() if file_path else False
-
-        status = "✅ PASS" if exists else "❌ FAIL"
-        print(f"   {status} - {file_type}: {file_path}")
-
-    # Test invalid file type
-    print(f"\n📊 TESTING INVALID FILE TYPE:")
-    invalid_type = "invalid"
-    valid_types = ['audio', 'transcript', 'subtitles']
-    is_valid = invalid_type in valid_types
-    status = "❌ CORRECTLY REJECTED" if not is_valid else "✅ ERROR - should reject"
-    print(f"   {status} - '{invalid_type}' not in {valid_types}")
-
-    # Test nonexistent session
-    print(f"\n📊 TESTING NONEXISTENT SESSION:")
-    fake_session = session_manager.get_session("nonexistent-uuid")
-    status = "✅ PASS" if fake_session is None else "❌ FAIL"
-    print(f"   {status} - get_session() returned None for nonexistent ID")
-
-    # Cleanup
-    print(f"\n🧹 CLEANUP:")
-    audio_file.unlink()
-    transcript_file.unlink()
-    subtitles_file.unlink()
-    session_manager.delete_session(session_id)
-    print(f"   ✅ Deleted mock files and session")
-
-    print(f"\n{'='*80}")
-    print("✅ ALL TESTS PASSED")
-    print("="*80)
-    print(f"\nEndpoint logic is working correctly!")
-    print(f"To test the HTTP endpoint:")
-    print(f"  1. Start server: python main.py")
-    print(f"  2. Create a session via SessionManager")
-    print(f"  3. Add file paths to session['files']")
-    print(f"  4. Access: http://localhost:8000/api/download/{{session_id}}/{{file_type}}")
-
-
-if __name__ == "__main__":
-    test_download_endpoint_logic()
+if __name__ == '__main__':
+    unittest.main()
