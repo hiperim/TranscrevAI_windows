@@ -33,4 +33,3 @@ docutils==0.22
 
 # Package management tools
 uv==0.8.17
-specify-cli @ git+https://github.com/github/spec-kit.git@b18ef208cb8ba7b1eba04fe5dfcf3c24fda84a3e

@@ -1,65 +1,60 @@
-# Python bytecode
+# Byte-compiled / optimized files
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Distribution/packaging
-dist/
+# Distribution / packaging
 build/
+dist/
 *.egg-info/
+*.spec
 
 # Virtual environments
+.env
+.venv
+env/
+venv/
+venvpyvenv.cfg
 .myenv/
 myenv/
-.venv/
-venv/
-env/
-.env/
-UninstallVENV/
 
-# Project specific
-data/
-models/
-logs/
-*.wav
-*.mp4
-*.mp3
-*.srt
-temp/
-recordings/
-transcripts/
+# IDE / Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.prefs
 
 # System files
 .DS_Store
 Thumbs.db
 
-# IDE files
-.idea/
-.vscode/
-*.swp
-*.swo
+# Testing / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Backup files
-backups/
+# Project-specific ignores
+/data/
+/models/
+/logs/
+/temp/
+/backups/
+/archive/
+/.claude/
 
-# Proposed alterations
+# Media and output files
+*.wav
+*.mp4
+*.mp3
+*.srt
 
-
-# Preference files
-*.prefs
-config/local_*
+# Sensitive & local config
+*.log
+*.json
+transcrevai-windows-3089b18f1ba0.json
+mcp_settings.json
+.env
 .env.local
 .aider*
-.env
-.specify
-archive/
-backup_src_cleanup_20250924_121143/
-dev_tools/
-examples/
-.spec
-#gemini.md
-mcp_server.py
-mcp_settings.json
-transcrevai-windows-3089b18f1ba0.json
-.claude/
-
+/certs/
