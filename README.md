@@ -3,6 +3,8 @@
 ## Visão Geral
 O TranscrevAI é uma aplicação de alto desempenho para transcrição de áudio e diarização de locutores. Ele recebe um áudio como entrada e fornece uma transcrição completa, identificando quem disse o quê e quando. Foi projetado para ser uma ferramenta poderosa para quem precisa de transcrições rápidas e precisas de conversas, reuniões ou gravações.
 
+Toda a transcrição ocorre localmente na máquina onde o servidor está rodando, sem o uso de nenhuma API externa, garantindo a privacidade dos dados. Esta arquitetura offline alinha-se fortemente com os princípios de segurança e minimização de dados da Lei Geral de Proteção de Dados (LGPD).
+
 ## Funcionalidades
 - **Transcrição de Alto Desempenho:** Utiliza o modelo Whisper da OpenAI para transcrição local e rápida.
 - **Diarização de Locutores:** Identifica diferentes locutores no áudio.
@@ -74,6 +76,8 @@ Este projeto ainda não possui uma licença.
 ## Overview
 TranscrevAI is a high-performance audio transcription and speaker diarization application. It takes an audio input and provides a complete transcription, identifying who said what and when. It's designed to be a powerful tool for anyone needing fast and accurate transcriptions of conversations, meetings, or recordings.
 
+All transcription occurs locally on the machine running the server, without the use of any external APIs, ensuring data privacy. This offline architecture strongly aligns with the security and data minimization principles of data protection laws like LGPD.
+
 ## Features
 - **High-Performance Transcription:** Utilizes OpenAI's Whisper model for fast, local transcription.
 - **Speaker Diarization:** Identifies different speakers in the audio.
@@ -124,7 +128,7 @@ The application will be available at `http://localhost:8000`. For HTTPS, follow 
 
 ## Development
 
-To run the test suite, use pytest:
+To run the test suite, use `pytest`:
 ```bash
 pytest
 ```
