@@ -29,7 +29,7 @@ from pathlib import Path
 # Core application modules
 from src.transcription import TranscriptionService
 from src.diarization import PyannoteDiarizer
-from src.audio_processing import AudioQualityAnalyzer, SessionManager
+from src.audio_processing import AudioQualityAnalyzer, SessionManager, LiveAudioProcessor
 from src.subtitle_generator import generate_srt
 from src.file_manager import FileManager
 from src.websocket_enhancements import get_websocket_safety_manager, MessagePriority
@@ -300,7 +300,14 @@ async def download_file(session_id: str, file_type: str):
     if file_type == 'audio' and session.get("audio_format") == 'mp4' and file_path.suffix.lower() == '.wav':
         from src.audio_processing import convert_wav_to_mp4
         mp4_path = file_path.with_suffix(".mp4")
-        if convert_wav_to_mp4(str(file_path), str(mp4_path)):
+
+        # Get subtitle file path if available
+        subtitle_path_str = session.get("files", {}).get("subtitles")
+        subtitle_path = subtitle_path_str if subtitle_path_str and Path(subtitle_path_str).exists() else None
+
+        # Convert WAV to MP4 video with black background and embedded subtitles (if available)
+        if convert_wav_to_mp4(str(file_path), str(mp4_path), subtitle_path=subtitle_path):
+            logger.info(f"MP4 video created successfully for session {session_id} (with subtitles: {subtitle_path is not None})")
             return FileResponse(
                 path=str(mp4_path),
                 media_type='video/mp4',
@@ -519,26 +526,27 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 # Store audio file path
                 session["files"]["audio"] = str(audio_path)
 
-                # Finished handling stop — exit loop to process audio
-                break
+                # Process audio (transcription + diarization) - BEFORE breaking the loop
+                # This keeps the WebSocket open to send progress updates
+                await websocket.send_json({
+                    "type": "progress",
+                    "stage": "transcription",
+                    "percentage": 10,
+                    "message": "Iniciando transcrição..."
+                })
 
-        # Process audio (transcription + diarization)
-        await websocket.send_json({
-            "type": "progress",
-            "stage": "transcription",
-            "percentage": 10,
-            "message": "Iniciando transcrição..."
-            })
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(None, run_pipeline_sync, str(audio_path), session_id)
 
-        loop = asyncio.get_running_loop()
-        loop.run_in_executor(None, run_pipeline_sync, str(audio_path), session_id)
+                await websocket.send_json({
+                    "type": "processing_started",
+                    "message": "Processamento iniciado em background"
+                })
 
-        await websocket.send_json({
-            "type": "processing_started",
-            "message": "Processamento iniciado em background"
-            })
-
-        # If we exit the while loop (break), the code below will process the audio
+                logger.info(f"Audio processing started for session {session_id}. WebSocket will remain open for progress updates.")
+                # DO NOT break here - keep WebSocket open for progress messages
+                # The WebSocket will stay connected to receive 'complete' or 'error' messages from the pipeline
+                # and will close naturally when the client disconnects or an exception occurs
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {session_id}")

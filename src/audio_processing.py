@@ -145,32 +145,67 @@ def _get_librosa():
             logger.warning("Librosa not available for advanced audio analysis.")
     return _librosa
 
-def convert_wav_to_mp4(input_path: str, output_path: str) -> bool:
+def convert_wav_to_mp4(input_path: str, output_path: str, subtitle_path: str = None) -> bool:
     """
-    Convert a WAV file to MP4 using ffmpeg.
+    Convert a WAV file to MP4 video with black background.
+
+    If subtitle_path is provided, creates a video MP4 with:
+    - Black background video (1920x1080)
+    - Audio from WAV
+    - Subtitles as a separate track (can be toggled on/off in player)
+
+    If subtitle_path is not provided, creates audio-only MP4.
 
     Args:
         input_path: Path to the input WAV file.
         output_path: Path to save the output MP4 file.
+        subtitle_path: Optional path to SRT subtitle file.
 
     Returns:
         True if conversion was successful, False otherwise.
     """
     try:
-        logger.info(f"Converting {input_path} to MP4...")
-        command = [
-            "ffmpeg",
-            "-i",
-            input_path,
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            output_path
-        ]
-        
-        subprocess.run(command, check=True, capture_output=True, text=True)
-        
+        logger.info(f"Converting {input_path} to MP4 (with video: {subtitle_path is not None})...")
+
+        if subtitle_path and os.path.exists(subtitle_path):
+            # Get audio duration for video length
+            import librosa
+            duration = librosa.get_duration(path=input_path)
+
+            # Create MP4 video with black background and subtitle track
+            command = [
+                "ffmpeg",
+                "-y",  # Overwrite output file if exists
+                "-f", "lavfi",
+                "-i", f"color=c=black:s=1920x1080:d={duration}:r=30",  # Black video
+                "-i", input_path,  # Audio input
+                "-i", subtitle_path,  # Subtitle input
+                "-c:v", "libx264",  # Video codec
+                "-preset", "fast",  # Encoding speed
+                "-crf", "23",  # Quality (lower = better, 23 is good default)
+                "-c:a", "aac",  # Audio codec
+                "-b:a", "192k",  # Audio bitrate
+                "-c:s", "mov_text",  # Subtitle codec for MP4
+                "-metadata:s:s:0", "language=por",  # Portuguese subtitle language
+                "-metadata:s:s:0", "title=Legendas",  # Subtitle track title
+                "-shortest",  # End when shortest input ends
+                output_path
+            ]
+            logger.info(f"Creating MP4 video with black background and embedded subtitles (duration: {duration:.2f}s)")
+        else:
+            # Fallback: audio-only MP4 (original behavior)
+            command = [
+                "ffmpeg",
+                "-y",
+                "-i", input_path,
+                "-c:a", "aac",
+                "-b:a", "192k",
+                output_path
+            ]
+            logger.info("Creating audio-only MP4 (no subtitles provided)")
+
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+
         logger.info(f"Successfully converted {input_path} to {output_path}")
         return True
     except subprocess.CalledProcessError as e:

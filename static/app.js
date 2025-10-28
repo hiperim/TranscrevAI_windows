@@ -111,7 +111,7 @@ class LiveRecorder {
     }
 
     async init() {
-        await setupWebSocketConnection(this.sessionId, (data) => this.handleServerMessage(data));
+        this.ws = await setupWebSocketConnection(this.sessionId, (data) => this.handleServerMessage(data));
         this.updateStatus('Conectado', 'success');
     }
 
@@ -134,8 +134,18 @@ class LiveRecorder {
     }
 
     async startRecording() {
+        console.log('[DEBUG] LiveRecorder.startRecording() called');
         try {
+            // Connect automatically if not already connected
+            if (!this.ws) {
+                console.log('[DEBUG] No WebSocket connection, calling init()...');
+                await this.init();
+                console.log('[DEBUG] init() completed, WebSocket connected');
+            }
+
+            console.log('[DEBUG] Requesting microphone access...');
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            console.log('[DEBUG] Microphone access granted');
             this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
 
             this.mediaRecorder.ondataavailable = async (event) => {
@@ -149,8 +159,15 @@ class LiveRecorder {
                 }
             };
 
+            // Get selected audio format from UI
+            const selectedFormat = document.querySelector('input[name="audio-format"]:checked');
+            const audioFormat = selectedFormat ? selectedFormat.value : 'wav';
+            console.log('[DEBUG] Selected audio format:', audioFormat);
+
             this.mediaRecorder.start(1000); // 1-second chunks
-            this.ws.send(JSON.stringify({ action: 'start' }));
+            this.ws.send(JSON.stringify({ action: 'start', format: audioFormat }));
+            this.recordingState = 'recording';
+            this.updateButtonStates();
             this.startTimer();
             this.updateStatus('Gravando...', 'recording');
         } catch (error) {
@@ -235,6 +252,14 @@ class LiveRecorder {
         this.recordingState = 'idle';
         this.updateButtonStates();
         showResults(result, this.sessionId);
+
+        // Enable and show download audio button for live recordings
+        const downloadAudioBtn = document.getElementById('download-audio-btn');
+        if (downloadAudioBtn) {
+            downloadAudioBtn.style.display = 'inline-block';
+            downloadAudioBtn.disabled = false;
+            downloadAudioBtn.onclick = () => downloadAudio(this.sessionId);
+        }
     }
 }
 
@@ -242,19 +267,19 @@ class LiveRecorder {
 async function setupWebSocketConnection(sessionId, onMessageHandler) {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws/${sessionId}`;
-    
+
     try {
-        websocket = new WebSocket(wsUrl);
-        websocket.onmessage = (event) => onMessageHandler(JSON.parse(event.data));
-        websocket.onerror = (error) => console.log('WebSocket error:', error);
-        websocket.onclose = () => console.log('WebSocket connection closed');
-        
+        const ws = new WebSocket(wsUrl);
+        ws.onmessage = (event) => onMessageHandler(JSON.parse(event.data));
+        ws.onerror = (error) => console.log('WebSocket error:', error);
+        ws.onclose = () => console.log('WebSocket connection closed');
+
         await new Promise((resolve, reject) => {
-            websocket.onopen = resolve;
-            websocket.onerror = reject; // Reject promise on connection error
+            ws.onopen = resolve;
+            ws.onerror = reject; // Reject promise on connection error
         });
         console.log(`WebSocket connected for session: ${sessionId}`);
-        return websocket;
+        return ws;
     } catch (error) {
         console.log(`WebSocket setup failed for session ${sessionId}:`, error);
         showStatus('Erro de conexão com o servidor.', 0);
@@ -371,8 +396,36 @@ async function downloadSRT(sessionId) {
     }
 }
 
+async function downloadAudio(sessionId) {
+    if (!sessionId) return;
+    try {
+        const response = await fetch(`/api/download/${sessionId}/audio`);
+        if (response.ok) {
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+
+            // Determine file extension from content-type or default to .wav
+            const contentType = response.headers.get('content-type');
+            const extension = contentType && contentType.includes('mp4') ? '.mp4' : '.wav';
+            a.download = `gravacao_${sessionId}${extension}`;
+
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        } else {
+            alert('Erro ao baixar arquivo de áudio');
+        }
+    } catch (error) {
+        alert('Erro: ' + error.message);
+    }
+}
+
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[DEBUG] DOM Content Loaded - Initializing app...');
     // File Upload Listeners
     const fileInput = document.getElementById('file-input');
     const fileDropZone = document.querySelector('.file-drop-zone');
@@ -413,19 +466,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Live Recorder Listeners
-    const initLiveBtn = document.getElementById('init-live-recording');
-    if (initLiveBtn) {
-        initLiveBtn.addEventListener('click', async () => {
-            if (!liveRecorder) {
-                liveRecorder = new LiveRecorder();
-                await liveRecorder.init();
-                liveRecorder.updateButtonStates();
+    console.log('[DEBUG] Registering live recording listeners...');
+    const startBtn = document.getElementById('start-live-btn');
+    console.log('[DEBUG] startBtn element:', startBtn);
+
+    if (startBtn) {
+        console.log('[DEBUG] startBtn found, adding event listener');
+        startBtn.addEventListener('click', async () => {
+            console.log('[DEBUG] Start button clicked!');
+            try {
+                if (!liveRecorder) {
+                    console.log('[DEBUG] Creating new LiveRecorder instance');
+                    liveRecorder = new LiveRecorder();
+                }
+                console.log('[DEBUG] Calling startRecording()');
+                await liveRecorder.startRecording();
+                console.log('[DEBUG] startRecording() completed');
+            } catch (error) {
+                console.error('[DEBUG] Error in startRecording:', error);
             }
         });
+    } else {
+        console.error('[DEBUG] startBtn NOT FOUND!');
     }
-
-    const startBtn = document.getElementById('start-live-btn');
-    if (startBtn) startBtn.addEventListener('click', () => liveRecorder?.startRecording());
 
     const pauseBtn = document.getElementById('pause-live-btn');
     if (pauseBtn) pauseBtn.addEventListener('click', () => liveRecorder?.pauseRecording());

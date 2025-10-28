@@ -23,14 +23,22 @@
         <!-- Tab de Gravação Ao Vivo -->
         <div id="recording-tab" class="tab-content active">
             <div class="card">
-                <div class="button-row">
-                    <button class="button button-secondary" id="init-live-recording">
-                        Conectar para Gravação Ao Vivo
-                    </button>
+                <div class="format-selector">
+                    <label class="format-label">Formato de gravação:</label>
+                    <div class="radio-group">
+                        <label class="radio-option">
+                            <input type="radio" name="audio-format" value="wav" checked>
+                            <span>WAV (melhor qualidade)</span>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="audio-format" value="mp4">
+                            <span>MP4 (Vídeo - visualizar com legenda .srt)</span>
+                        </label>
+                    </div>
                 </div>
 
                 <div class="button-row">
-                    <button class="button button-primary" id="start-live-btn" disabled>
+                    <button class="button button-primary" id="start-live-btn">
                         Iniciar Gravação
                     </button>
                     <button class="button button-warning" id="pause-live-btn" disabled>
@@ -87,8 +95,11 @@
             <div class="stats-grid" id="stats"></div>
 
             <div class="button-row">
+                <button class="button button-secondary" id="download-audio-btn" style="display: none;">
+                    Baixar Áudio
+                </button>
                 <button class="button button-secondary" id="download-btn" onclick="downloadSRT()" disabled>
-                    Baixar SRT
+                    Baixar Legendas (SRT)
                 </button>
             </div>
 
@@ -96,6 +107,19 @@
         </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script>
+        // Inline test to verify JavaScript is running
+        console.log('✅ INLINE TEST: JavaScript is working!');
+        console.log('📄 Current URL:', window.location.href);
+        console.log('📁 Document ready state:', document.readyState);
+    </script>
+    <script src="/static/app.js?v=3"></script>
+    <script>
+        // Verify app.js loaded
+        window.addEventListener('load', () => {
+            console.log('🔍 Window loaded, checking if app.js functions exist...');
+            console.log('LiveRecorder class exists:', typeof LiveRecorder !== 'undefined');
+        });
+    </script>
 </body>
 </html>
