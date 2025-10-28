@@ -145,6 +145,42 @@ def _get_librosa():
             logger.warning("Librosa not available for advanced audio analysis.")
     return _librosa
 
+def convert_wav_to_mp4(input_path: str, output_path: str) -> bool:
+    """
+    Convert a WAV file to MP4 using ffmpeg.
+
+    Args:
+        input_path: Path to the input WAV file.
+        output_path: Path to save the output MP4 file.
+
+    Returns:
+        True if conversion was successful, False otherwise.
+    """
+    try:
+        logger.info(f"Converting {input_path} to MP4...")
+        command = [
+            "ffmpeg",
+            "-i",
+            input_path,
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            output_path
+        ]
+        
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        
+        logger.info(f"Successfully converted {input_path} to {output_path}")
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"ffmpeg conversion failed for {input_path}: {e.stderr}")
+        return False
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during MP4 conversion of {input_path}: {e}")
+        return False
+
+
 
 
 # --- Dynamic Quantization --- #

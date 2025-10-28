@@ -6,7 +6,7 @@ thread-safety mechanisms.
 """
 
 import logging
-import asyncio
+import threading
 import gc
 import time
 import re
@@ -38,7 +38,7 @@ class TranscriptionService:
         self.model = None
         self.last_used = time.time()
         self.model_unload_delay = 600  # 10 minutes (optimized from 30min for web usage)
-        self._model_lock = asyncio.Lock()  # Thread-safety for model operations
+        self._model_lock = threading.Lock()  # Thread-safety for model operations
         self.model_loads_count = 0  # Monitoring metric
         self.model_unloads_count = 0  # Monitoring metric
         self._init_ptbr_corrections()
@@ -153,7 +153,7 @@ class TranscriptionService:
         word_timestamps: bool = False,
         whisper_params: Optional[Dict[str, Any]] = None
     ) -> TranscriptionResult:
-        async with self._model_lock:  # CRITICAL: Thread-safety for concurrent requests
+        with self._model_lock:  # CRITICAL: Thread-safety for concurrent requests
             start_time = time.time()
             requested_compute_type = quantization or self.compute_type
 
@@ -254,9 +254,9 @@ class TranscriptionService:
                 logger.warning(f"Model load attempt {attempt+1} failed, retrying in {2**attempt}s...")
                 await asyncio.sleep(2 ** attempt)  # Exponential backoff
 
-    async def unload_model(self):
+    def unload_model(self):
         """Unload model from memory with thread-safety to free ~1.5GB RAM."""
-        async with self._model_lock:  # CRITICAL: Prevent race conditions during unload
+        with self._model_lock:  # CRITICAL: Prevent race conditions during unload
             if self.model is not None:
                 logger.info("Unloading Whisper model due to inactivity...")
                 self.model = None
