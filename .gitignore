@@ -28,6 +28,7 @@ logs/
 temp/
 recordings/
 transcripts/
+certs/
 
 # System files
 .DS_Store
