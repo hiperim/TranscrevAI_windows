@@ -5,6 +5,7 @@ scoring, automatic model unloading for memory optimization, and production-ready
 thread-safety mechanisms.
 """
 
+import asyncio
 import logging
 import threading
 import gc

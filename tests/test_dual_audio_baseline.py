@@ -310,8 +310,8 @@ async def run_dual_audio_baseline(
 
     logger.info(f"💾 Results saved to: {log_filename}\n")
 
-    # Unload model to free memory
-    await transcription_service.unload_model()
+    # Unload model to free memory (synchronous call)
+    transcription_service.unload_model()
 
     return final_results
 

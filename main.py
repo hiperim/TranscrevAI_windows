@@ -163,12 +163,9 @@ async def process_audio_pipeline(audio_path: str, session_id: str):
     # Store file paths in SessionManager (for download endpoint)
     try:
         if app_state.session_manager:
-            try:
-                assert app_state.session_manager is not None
-                session = app_state.session_manager.get_session(session_id)
-                assert session is not None
-            except AssertionError:
-                logger.error(f"Session manager or session not available for {session_id}")
+            session = app_state.session_manager.get_session(session_id)
+            if not session:
+                logger.error(f"Session not available for {session_id}")
                 return
         if session:
                 # Store audio path (already set in WebSocket, but ensure it's there)
@@ -214,12 +211,12 @@ async def read_root(request: Request):
 async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
     try:
         # Ensure a session exists in the SessionManager
+        assert app_state.session_manager is not None
+
         if not session_id:
-            assert app_state.session_manager is not None
             session_id = app_state.session_manager.create_session()
         else:
             # If a session_id is provided, ensure it is registered
-            assert app_state.session_manager is not None
             if not app_state.session_manager.get_session(session_id):
                 app_state.session_manager.sessions[session_id] = {
                     "id": session_id,
@@ -251,9 +248,7 @@ async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = Fil
 async def download_srt(session_id: str):
     with app_state._lock:
         session = app_state.sessions.get(session_id)
-    assert session is not None
-    assert session is not None
-    if not session.get("srt_file_path") or not os.path.exists(session["srt_file_path"]):
+    if not session or not session.get("srt_file_path") or not os.path.exists(session["srt_file_path"]):
         return JSONResponse(status_code=404, content={"error": "Arquivo SRT não encontrado."})
     return FileResponse(path=session["srt_file_path"], filename=f"transcricao_{session_id}.srt", media_type="application/x-subrip")
 
@@ -376,12 +371,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         return
 
     assert app_state.session_manager is not None
-    assert app_state.session_manager is not None
     session = app_state.session_manager.get_session(session_id)
     if not session:
-        session_id = app_state.session_manager.create_session()
+        # Create session with the client-provided session_id (don't overwrite!)
+        app_state.session_manager.sessions[session_id] = {
+            "id": session_id,
+            "created_at": time.time(),
+            "last_activity": time.time(),
+            "processor": app_state.session_manager.sessions.get(session_id, {}).get("processor") or LiveAudioProcessor(),
+            "files": {},
+            "status": "idle"
+        }
         session = app_state.session_manager.get_session(session_id)
-        logger.info(f"Created new session: {session_id}")
+        logger.info(f"Created new session with client ID: {session_id}")
     assert session is not None
 
     # Get LiveAudioProcessor from session
@@ -514,8 +516,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 else:
                     audio_path = wav_path
 
-                # Store audio file path
-                assert session is not None
                 # Store audio file path
                 session["files"]["audio"] = str(audio_path)
 
