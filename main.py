@@ -129,7 +129,8 @@ async def read_root(request: Request):
 async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
     try:
         # Ensure a session exists in the SessionManager
-        assert app_state.session_manager is not None
+        if not app_state.session_manager:
+            raise RuntimeError("SessionManager not initialized - application startup failed")
 
         if not session_id:
             session_id = app_state.session_manager.create_session()
@@ -145,7 +146,8 @@ async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = Fil
                     "status": "starting"
                 }
 
-        assert app_state.file_manager is not None
+        if not app_state.file_manager:
+            raise RuntimeError("FileManager not initialized - application startup failed")
         file_path = app_state.file_manager.save_uploaded_file(file.file, file.filename or f"{session_id}.wav")
         
         # Store the audio file path in the session
@@ -198,13 +200,15 @@ async def download_file(session_id: str, file_type: str):
     if not app_state.session_manager:
         raise HTTPException(status_code=503, detail="SessionManager not initialized")
 
-    assert app_state.session_manager is not None
+    if not app_state.session_manager:
+        raise RuntimeError("SessionManager not initialized - application startup failed")
     session = app_state.session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
     # Get file path from session
-    assert session is not None
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
     file_path_str = session.get("files", {}).get(file_type)
     if not file_path_str or not Path(file_path_str).exists():
         raise HTTPException(

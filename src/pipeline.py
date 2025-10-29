@@ -24,12 +24,14 @@ async def process_audio_pipeline(app_state: 'AppState', audio_path: str, session
 
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'start', 'percentage': 5, 'message': 'Analisando qualidade do áudio...'})
         
-        assert app_state.transcription_service is not None
+        if not app_state.transcription_service:
+            raise RuntimeError("TranscriptionService not initialized - application startup failed")
         transcription_result = await app_state.transcription_service.transcribe_with_enhancements(audio_path)
 
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'diarization', 'percentage': 50, 'message': 'Transcrição concluída. Identificando falantes...'})
 
-        assert app_state.diarization_service is not None
+        if not app_state.diarization_service:
+            raise RuntimeError("DiarizationService not initialized - application startup failed")
         diarization_result = await app_state.diarization_service.diarize(audio_path, transcription_result.segments)
 
         await app_state.send_message(session_id, {'type': 'progress', 'stage': 'srt', 'percentage': 80, 'message': 'Gerando legendas...'})
