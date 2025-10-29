@@ -35,10 +35,44 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # FASE 10: Pre-download models during build to eliminate cold start download time
+# Build-time argument for HuggingFace token (not exposed in runtime)
+ARG HUGGING_FACE_HUB_TOKEN
+
+# Set HuggingFace cache location explicitly
+ENV HF_HOME=/root/.cache/huggingface
+ENV TRANSFORMERS_CACHE=/root/.cache/huggingface/transformers
+ENV HF_DATASETS_CACHE=/root/.cache/huggingface/datasets
+
+# Create cache directories explicitly
+RUN mkdir -p /root/.cache/huggingface/hub
+
+# Download Whisper model (public, no token needed)
 RUN python -c "from huggingface_hub import snapshot_download; \
     snapshot_download(repo_id='Systran/faster-whisper-medium', \
     cache_dir='/root/.cache/huggingface'); \
-    print('✓ Faster-Whisper model pre-downloaded to cache')"
+    print('✓ Faster-Whisper model pre-downloaded to cache')" && \
+    ls -la /root/.cache/huggingface/hub/ && \
+    echo "Whisper cache size:" && du -sh /root/.cache/huggingface/
+
+# Copy model download script
+COPY download_models.py /tmp/download_models.py
+
+# Download Pyannote models (requires token at build time only)
+RUN if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then \
+    echo "Cache bust: 2025-10-29-v5" && \
+    echo "Starting fresh Pyannote model download with HF_HOME cache..." && \
+    python3 /tmp/download_models.py && \
+    echo "" && echo "Total cache size after Pyannote:" && du -sh /root/.cache/huggingface/ && \
+    rm /tmp/download_models.py; \
+else \
+    echo "⚠️  HUGGING_FACE_HUB_TOKEN not provided - Pyannote models will be downloaded at runtime" && \
+    rm /tmp/download_models.py; \
+fi
+
+# FASE 11: Models are loaded at runtime using hf_hub_download() from cache
+# No config rewriting needed - all path resolution happens in memory at runtime
+# The Hub will automatically use local cache if models are present.
+# Models are already downloaded during build, so they will be loaded from cache automatically.
 
 # Copy application source code
 COPY src/ ./src/

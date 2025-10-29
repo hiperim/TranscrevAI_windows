@@ -24,32 +24,68 @@ class PyannoteDiarizer:
         self.embedding_batch_size = embedding_batch_size
         self.pipeline = None
         try:
-            # Load .env file and get token
-            load_dotenv()
-            auth_token = os.getenv("HUGGING_FACE_HUB_TOKEN")
-            if auth_token is None:
-                raise ValueError("HUGGING_FACE_HUB_TOKEN environment variable not set. Please get a token from https://hf.co/settings/tokens")
+            import yaml
+            from huggingface_hub import hf_hub_download
+            from pyannote.audio.pipelines import SpeakerDiarization
 
-            # Load the pyannote.audio pipeline
-            logger.info("Loading pyannote/speaker-diarization-3.1 pipeline...")
-            self.pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                use_auth_token=auth_token
-            ).to(torch.device(self.device))
+            logger.info("Starting 100% offline pipeline instantiation with runtime config...")
 
-            # Set custom hyperparameters to tune speaker detection
-            # A lower threshold encourages the model to find more speakers.
+            # Step 1: Get path to main pipeline config, forcing local-only file resolution
+            main_config_path = hf_hub_download(
+                repo_id="pyannote/speaker-diarization-3.1",
+                filename="config.yaml",
+                local_files_only=True
+            )
+            logger.info(f"Main config found locally at: {main_config_path}")
+
+            # Step 2: Load config into memory
+            with open(main_config_path, 'r') as f:
+                config = yaml.safe_load(f)
+
+            # Step 3: Get paths to dependency models from local cache only
+            logger.info("Resolving dependency model paths from local cache...")
+            
+            # The previous attempt failed because it was assumed the segmentation model's config was needed.
+            # The SpeakerDiarization pipeline actually expects the *model file itself* for its segmentation parameter.
+            segmentation_model_path = hf_hub_download(
+                repo_id="pyannote/segmentation-3.0",
+                filename="pytorch_model.bin",
+                local_files_only=True
+            )
+            logger.info(f"Segmentation model found locally at: {segmentation_model_path}")
+
+            embedding_model_path = hf_hub_download(
+                repo_id="pyannote/wespeaker-voxceleb-resnet34-LM",
+                filename="pytorch_model.bin",
+                local_files_only=True
+            )
+            logger.info(f"Embedding model found locally at: {embedding_model_path}")
+
+            # Step 4: Modify config dictionary in memory to point to local model files
+            pipeline_params = config.get('pipeline', {}).get('params', {})
+            if not pipeline_params:
+                raise ValueError("Could not find 'pipeline.params' in the loaded config.")
+
+            pipeline_params['segmentation'] = segmentation_model_path
+            pipeline_params['embedding'] = embedding_model_path
+
+            # Step 5: Instantiate pipeline with modified in-memory config
+            self.pipeline = SpeakerDiarization(**pipeline_params)
+            self.pipeline.to(torch.device(self.device))
+            logger.info("✓ Pipeline instantiated from in-memory config with local paths.")
+
+            # Set custom hyperparameters
             self.pipeline.instantiate({
                 "clustering": {
                     "method": "centroid",
                     "min_cluster_size": 15,
-                    "threshold": 0.35  # ← CUSTOM: Reverted to 0.35 for best overall accuracy
+                    "threshold": 0.35
                 }
             })
 
             # Set batch size for embeddings
             self.pipeline.embedding_batch_size = self.embedding_batch_size
-            logger.info(f"pyannote.audio pipeline loaded with clustering threshold=0.35, embedding_batch_size={self.embedding_batch_size}")
+            logger.info(f"pyannote.audio pipeline configured with clustering threshold=0.35, embedding_batch_size={self.embedding_batch_size}")
 
         except Exception as e:
             logger.error(f"Failed to load pyannote.audio pipeline: {e}", exc_info=True)
