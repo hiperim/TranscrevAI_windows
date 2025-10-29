@@ -75,7 +75,7 @@ def get_audio_duration(audio_path: Path) -> float:
     return librosa.get_duration(path=str(audio_path))
 
 
-async def test_single_audio(
+async def _run_single_audio_test(
     audio_config: Dict[str, Any],
     transcription_service: TranscriptionService,
     diarizer: PyannoteDiarizer,
@@ -223,7 +223,7 @@ async def run_dual_audio_baseline(
     # Test each audio file
     individual_results = []
     for audio_config in AUDIO_FILES:
-        result = await test_single_audio(
+        result = await _run_single_audio_test(
             audio_config,
             transcription_service,
             diarizer,
