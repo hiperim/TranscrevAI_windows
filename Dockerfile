@@ -43,14 +43,16 @@ RUN python -c "from huggingface_hub import snapshot_download; \
 # Copy application source code
 COPY src/ ./src/
 COPY main.py .
-COPY setup_models.py .
+
 COPY config/ ./config/
+COPY static/ ./static/
+COPY templates/ ./templates/
 
 # Create necessary directories
 RUN mkdir -p data/uploads data/transcripts data/srt data/recordings temp
 
 # Pre-download and convert models for immediate use
-RUN python setup_models.py
+
 
 # Set proper permissions
 RUN chmod +x main.py
@@ -63,4 +65,12 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 EXPOSE 8000
 
 # Start command
-CMD ["python", "main.py"]
+CMD ["gunicorn", \
+     "-k", "uvicorn.workers.UvicornWorker", \
+     "-w", "1", \
+     "--timeout", "300", \
+     "--graceful-timeout", "300", \
+     "-b", "0.0.0.0:8000", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-", \
+     "main:app"]

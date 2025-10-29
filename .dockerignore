@@ -47,6 +47,7 @@ transcrevai-windows-3089b18f1ba0.json
 .tox/
 .cache
 htmlcov/
+tests/
 
 # Data directories (will be created in container)
 data/
