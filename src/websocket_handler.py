@@ -7,10 +7,11 @@ import logging
 from fastapi import WebSocket
 
 from src.error_messages import get_user_message
-from src.exceptions import ValidationError, SessionError
+from src.exceptions import ValidationError, SessionError, AudioProcessingError
+import os
 
 # Import the pipeline function
-from src.pipeline import run_pipeline_sync
+from src.pipeline import process_audio_pipeline
 
 # Type hinting for AppState
 from typing import TYPE_CHECKING
@@ -133,7 +134,7 @@ class WebSocketHandler:
         return len(audio_data), False # Return bytes received and error=False
 
     async def handle_stop(self, session_id: str, websocket: WebSocket):
-        """Handles the 'stop' action."""
+        """Handles the 'stop' action, finalizing the recording and starting the background processing."""
         logger.info(f"⏹️ Stopping recording for session {session_id}")
 
         if not self.app_state.session_manager:
@@ -145,21 +146,18 @@ class WebSocketHandler:
 
         session.status = "processing"
 
-        # This logic is tightly coupled and needs refactoring (as noted in TIER 2)
-        # For now, we simulate the old behavior.
-        # wav_path = await processor.stop_recording(session_id)
-        # session.files["audio"] = str(audio_path)
-
         await websocket.send_json({
             "type": "recording_stopped",
             "message": "Gravação finalizada. Processando..."
         })
 
-        # The pipeline execution should be triggered here, but the details
-        # are complex due to the previous implementation. This is a prime
-        # candidate for the TIER 2 refactor.
-        # loop = asyncio.get_running_loop()
-        # loop.run_in_executor(None, run_pipeline_sync, self.app_state, str(audio_path), session_id)
+        audio_path = session.temp_file
+        if not audio_path or not os.path.exists(audio_path):
+            logger.error(f"Audio file not found for session {session_id} at path: {audio_path}")
+            raise AudioProcessingError("Arquivo de áudio gravado não encontrado para processamento.", context={"session_id": session_id})
+
+        # Run the processing pipeline in the background without blocking
+        asyncio.create_task(process_audio_pipeline(self.app_state, audio_path, session_id))
 
         await websocket.send_json({
             "type": "processing_started",

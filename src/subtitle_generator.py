@@ -16,6 +16,11 @@ from typing import Dict, Any, List, Optional, Union, Callable, cast
 from dataclasses import dataclass
 import threading
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from src.file_manager import FileManager
+import aiofiles
+
 logger = logging.getLogger(__name__)
 
 
@@ -237,14 +242,14 @@ class SRTGenerator:
         return "\n".join(srt_entries)
 
     async def generate_srt_file(self, segments: List[Dict[str, Any]], 
-                               output_path: Optional[Union[str, Path]] = None,
+                               file_manager: "FileManager",
                                filename: Optional[str] = None) -> Optional[str]:
         """
         Generate SRT file with comprehensive UTF-8 Windows support
         
         Args:
             segments: List of transcription segments
-            output_path: Output directory path
+            file_manager: The application's file manager instance.
             filename: Output filename
             
         Returns:
@@ -252,15 +257,8 @@ class SRTGenerator:
         """
         with self._generation_lock:
             try:
-                # Determine output path
-                if output_path is None:
-                    from src.file_manager import FileManager
-                    output_path = Path(FileManager.get_data_path("subtitles"))
-                else:
-                    output_path = Path(output_path)
-                
-                # Create output directory
-                output_path.mkdir(parents=True, exist_ok=True)
+                # Determine output path using the file manager
+                output_path = file_manager.get_data_path("subtitles")
                 
                 # Determine filename
                 if filename is None:
@@ -292,7 +290,6 @@ class SRTGenerator:
     async def _write_srt_file_safe(self, file_path: Path, content: str):
         """Write SRT file safely with UTF-8 encoding and Windows compatibility"""
         
-        # Multiple encoding strategies for maximum Windows compatibility
         encoding_strategies = [
             ('utf-8-sig', 'UTF-8 with BOM (best Windows compatibility)'),
             ('utf-8', 'UTF-8 without BOM'),
@@ -304,14 +301,7 @@ class SRTGenerator:
         
         for encoding, description in encoding_strategies:
             try:
-                # Run file write in thread pool to avoid blocking
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None, 
-                    self._write_file_with_encoding,
-                    file_path, content, encoding
-                )
-                
+                await self._write_file_with_encoding(file_path, content, encoding)
                 logger.info(f"SRT file written successfully using {description}")
                 return
                 
@@ -319,15 +309,10 @@ class SRTGenerator:
                 last_error = e
                 logger.warning(f"Encoding {encoding} failed: {e}")
                 
-                # Try to clean problematic characters and retry
                 if encoding == 'utf-8-sig':
                     try:
                         cleaned_content = self._clean_content_for_encoding(content)
-                        await loop.run_in_executor(
-                            None,
-                            self._write_file_with_encoding,
-                            file_path, cleaned_content, encoding
-                        )
+                        await self._write_file_with_encoding(file_path, cleaned_content, encoding)
                         logger.info(f"SRT file written with cleaned content using {description}")
                         return
                     except Exception:
@@ -338,14 +323,13 @@ class SRTGenerator:
                 logger.warning(f"Failed to write with {encoding}: {e}")
                 continue
         
-        # If all strategies failed, raise the last error
         if last_error:
             raise RuntimeError(f"Failed to write SRT file with any encoding strategy: {last_error}")
 
-    def _write_file_with_encoding(self, file_path: Path, content: str, encoding: str):
-        """Write file with specific encoding (blocking operation)"""
-        with open(file_path, 'w', encoding=encoding, newline='\r\n') as f:
-            f.write(content)
+    async def _write_file_with_encoding(self, file_path: Path, content: str, encoding: str):
+        """Write file with specific encoding asynchronously."""
+        async with aiofiles.open(file_path, 'w', encoding=encoding, newline='\r\n') as f:
+            await f.write(content)
 
     def _clean_content_for_encoding(self, content: str) -> str:
         """Clean content to preserve PT-BR characters with UTF-8 encoding"""
@@ -444,18 +428,18 @@ class SRTGenerator:
 srt_generator = SRTGenerator()
 
 async def generate_srt(segments: List[Dict[str, Any]], 
-                      output_path: Optional[Union[str, Path]] = None,
+                      file_manager: "FileManager",
                       filename: Optional[str] = None) -> Optional[str]:
     """
-    Convenience function to generate SRT file
+    Convenience function to generate SRT file.
     
     Args:
-        segments: List of transcription segments
-        output_path: Output directory path
-        filename: Output filename
+        segments: List of transcription segments.
+        file_manager: The application's file manager instance.
+        filename: Output filename.
         
     Returns:
-        Path to generated SRT file or None if failed
+        Path to generated SRT file or None if failed.
     """
     try:
         # Validate segments first
@@ -468,8 +452,8 @@ async def generate_srt(segments: List[Dict[str, Any]],
         if validation["valid_segments"] < validation["total_segments"]:
             logger.warning(f"Only {validation['valid_segments']}/{validation['total_segments']} segments are valid")
         
-        # Generate SRT file
-        return await srt_generator.generate_srt_file(segments, output_path, filename)
+        # Generate SRT file by passing the file_manager instance
+        return await srt_generator.generate_srt_file(segments, file_manager, filename)
         
     except Exception as e:
         logger.error(f"SRT generation failed: {e}")

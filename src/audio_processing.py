@@ -25,6 +25,8 @@ import numpy as np
 import soundfile as sf
 import psutil
 
+from src.file_manager import FileManager
+
 # Lazy imports for optional, heavy dependencies
 _pyaudio = None
 _librosa = None
@@ -405,15 +407,11 @@ class RecordingState(Enum):
 
 class LiveAudioProcessor:
     """
-    Manages live audio recording with disk buffering (Option A - Compliance validated).
+    Manages live audio recording with disk buffering.
     Uses temporary file storage to maintain low RAM usage during recording.
     """
-    def __init__(self, temp_dir: Optional[str] = None):
-        if temp_dir is None:
-            from src.file_manager import FileManager
-            temp_dir = FileManager.get_data_path("temp")
-        self.temp_dir = Path(temp_dir)
-        self.temp_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, file_manager: FileManager):
+        self.temp_dir = file_manager.get_data_path("temp")
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.RLock()
         logger.info("LiveAudioProcessor initialized with disk buffering strategy")
@@ -656,7 +654,7 @@ class LiveAudioProcessor:
 class SessionData:
     """Represents all data associated with a single recording session."""
     session_id: str
-    websocket: "WebSocket"
+    websocket: Optional["WebSocket"]
     format: Optional[str]
     started_at: "datetime"
     temp_file: Optional[str] = None

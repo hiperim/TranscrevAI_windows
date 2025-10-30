@@ -35,7 +35,7 @@ from datetime import datetime
 from src.subtitle_generator import generate_srt
 from src.file_manager import FileManager
 from src.websocket_enhancements import get_websocket_safety_manager, MessagePriority
-from src.pipeline import run_pipeline_sync
+from src.pipeline import process_audio_pipeline
 from src.exceptions import TranscrevAIError, TranscriptionError, DiarizationError, AudioProcessingError, SessionError, ValidationError
 from config.app_config import get_config
 
@@ -65,13 +65,25 @@ class AppState:
     def __init__(self):
         self._lock = threading.RLock()
         self.websocket_safety_manager = get_websocket_safety_manager()
-        self.file_manager = FileManager()
+        self.file_manager: Optional[FileManager] = None
 
     # Services will be initialized during startup
     transcription_service: Optional[TranscriptionService] = None
     diarization_service: Optional[PyannoteDiarizer] = None
     audio_quality_analyzer: Optional[AudioQualityAnalyzer] = None
     session_manager: Optional[SessionManager] = None
+
+    async def send_message(self, session_id: str, message: Dict[str, Any], priority: MessagePriority = MessagePriority.NORMAL):
+        """Safely send a JSON message to a WebSocket client."""
+        if not self.session_manager:
+            return
+        
+        session = await self.session_manager.get_session(session_id)
+        if session and session.websocket:
+            try:
+                await session.websocket.send_json(message)
+            except Exception as e:
+                logger.warning(f"Failed to send message to session {session_id}: {e}")
 
 app_state = AppState()
 
@@ -82,6 +94,8 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Machine Learning services...")
 
     # Initialize services once and store them in the global state
+    data_dir = Path(os.getenv("DATA_DIR", app_config.data_dir or "./data")).resolve()
+    app_state.file_manager = FileManager(data_dir=data_dir)
     app_state.transcription_service = TranscriptionService(model_name="medium", device=DEVICE)
     app_state.diarization_service = PyannoteDiarizer(device=DEVICE)
     app_state.audio_quality_analyzer = AudioQualityAnalyzer()
@@ -120,8 +134,8 @@ async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = Fil
     logger.info(f"Upload received, processing for session {session_id}")
 
     try:
-        # Save the uploaded file first
-        file_path = app_state.file_manager.save_uploaded_file(file.file, file.filename or f"{session_id}.wav")
+        # Save the uploaded file asynchronously
+        file_path = await app_state.file_manager.save_uploaded_file(file, file.filename or f"{session_id}.wav")
 
         # Create a session data object for this upload
         session_data = SessionData(
@@ -133,9 +147,8 @@ async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = Fil
         )
         await app_state.session_manager.create_session(session_id, session_data)
 
-        # Run the processing pipeline in the background
-        loop = asyncio.get_running_loop()
-        loop.run_in_executor(None, run_pipeline_sync, app_state, str(file_path), session_id)
+        # Run the processing pipeline in the background without blocking
+        asyncio.create_task(process_audio_pipeline(app_state, str(file_path), session_id))
         
         logger.info(f"Job accepted for session {session_id}. Processing started in background.")
         return JSONResponse(content={"success": True, "session_id": session_id})
