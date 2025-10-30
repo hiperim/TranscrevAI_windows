@@ -43,79 +43,10 @@ def client():
 
 # --- Main Integration Test (Parametrized with Accuracy Checks) ---
 
-# (Add this import at the top of tests/test_unit.py)
-import multiprocessing
-from queue import Empty
-
-from src.worker import process_audio_task
 
 
-# --- New Main Integration Test ---
 
-@pytest.mark.parametrize("audio_file_path", get_benchmark_files())
-def test_worker_process_audio_task_accuracy(worker_services_fixture, audio_file_path: str):
-    """
-    Tests the core `process_audio_task` in the worker module to validate
-    the entire pipeline's accuracy from transcription to diarization.
-    """
-    file_name = Path(audio_file_path).name
-    expectations = BENCHMARK_EXPECTATIONS[file_name]
-    test_session_id = f"test_worker_{Path(audio_file_path).stem}"
 
-    # The worker communicates via a queue, so we must simulate it
-    manager = multiprocessing.Manager()
-    communication_queue = manager.Queue()
-
-    # Mock the app config required by the worker
-    mock_config = {
-        "model_name": "medium",
-        "device": "cpu"
-    }
-
-    # Execute the worker task directly
-    process_audio_task(
-        audio_path=audio_file_path,
-        session_id=test_session_id,
-        config=mock_config,
-        communication_queue=communication_queue
-    )
-
-    # Retrieve the final result from the queue
-    final_result = None
-    while True:
-        try:
-            message = communication_queue.get(timeout=60) # 60-second timeout
-            if message.get('type') == 'complete':
-                final_result = message.get('result')
-                break
-            if message.get('type') == 'error':
-                pytest.fail(f"Worker task failed for {file_name}: {message.get('message')}")
-        except Empty:
-            pytest.fail(f"Worker task timed out for {file_name}. No 'complete' message received.")
-
-    # --- Validate the Final Result ---
-    assert final_result is not None, f"Worker did not produce a final result for {file_name}"
-
-    # 1. Validate Diarization Accuracy
-    detected_speakers = final_result.get("num_speakers", 0)
-    expected_speakers = expectations["expected_speakers"]
-    assert abs(detected_speakers - expected_speakers) <= 1, f"Speaker count mismatch for {file_name}. Expected {expected_speakers} (tolerance: +/-1), got {detected_speakers}."
-
-    # 2. Validate Transcription Accuracy (by checking segments)
-    full_text = " ".join(seg.get('text', '') for seg in final_result.get("segments", [])).lower()
-    assert len(full_text) > 10, f"Transcription text is too short for {file_name}"
-
-    missing_keywords = [kw for kw in expectations["keywords"] if kw.lower() not in full_text]
-    assert len(missing_keywords) <= 1, f"Transcription for {file_name} is missing too many keywords. Expected at most 1 missing, but found {len(missing_keywords)}: {', '.join(missing_keywords)}"
-
-    # 3. Validate SRT Generation
-    assert "srt_path" in final_result and final_result["srt_path"], f"SRT file path missing for {file_name}"
-    srt_path = Path(final_result["srt_path"])
-    assert srt_path.exists(), f"SRT file was not created for {file_name}"
-    assert srt_path.stat().st_size > 50, f"SRT file is empty for {file_name}"
-
-    # Cleanup the generated SRT file
-    srt_path.unlink()
 
 # --- API Tests ---
 

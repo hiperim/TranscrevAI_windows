@@ -13,21 +13,24 @@ print("Downloading pyannote/speaker-diarization-3.1 (all files)...")
 snapshot_download(
     repo_id='pyannote/speaker-diarization-3.1',
     token=token,
-    allow_patterns=["*"]
+    allow_patterns=["*"],
+    local_dir_use_symlinks=False
 )
 
 print("Downloading pyannote/segmentation-3.0 (all files)...")
 snapshot_download(
     repo_id='pyannote/segmentation-3.0',
     token=token,
-    allow_patterns=["*"]
+    allow_patterns=["*"],
+    local_dir_use_symlinks=False
 )
 
 print("Downloading pyannote/wespeaker-voxceleb-resnet34-LM (embedding model)...")
 snapshot_download(
     repo_id='pyannote/wespeaker-voxceleb-resnet34-LM',
     token=token,
-    allow_patterns=["*"]
+    allow_patterns=["*"],
+    local_dir_use_symlinks=False
 )
 
 print('\n✓ Pyannote models pre-downloaded to the correct cache directory.')

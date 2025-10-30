@@ -145,7 +145,7 @@ def _get_librosa():
             logger.warning("Librosa not available for advanced audio analysis.")
     return _librosa
 
-def convert_wav_to_mp4(input_path: str, output_path: str, subtitle_path: str = None) -> bool:
+def convert_wav_to_mp4(input_path: str, output_path: str, subtitle_path: Optional[str] = None) -> bool:
     """
     Convert a WAV file to MP4 video with black background.
 
@@ -650,169 +650,69 @@ class LiveAudioProcessor:
 # Session Management for Live Recording
 # ============================================================================
 
+@dataclass
+class SessionData:
+    """Represents all data associated with a single recording session."""
+    session_id: str
+    websocket: "WebSocket"
+    format: Optional[str]
+    started_at: "datetime"
+    temp_file: Optional[str] = None
+    files: Dict[str, str] = field(default_factory=dict)
+    status: str = "idle"
+
 class SessionManager:
-    """
-    Manages live recording sessions across multiple users.
+    """Centralized session lifecycle management.
 
-    Each session has its own LiveAudioProcessor instance and tracks
-    all files generated during the recording/processing lifecycle.
-
-    This class is in audio_processing.py because it manages the lifecycle
-    of LiveAudioProcessor instances (cohesion principle).
-
-    Design decisions:
-    - UUID-based session IDs for security
-    - 24-hour default timeout for inactive sessions
-    - Automatic cleanup via background task
-    - Thread-safe operations for concurrent requests
+    Single source of truth for all active recording sessions.
+    Thread-safe operations using asyncio.Lock.
     """
 
     def __init__(self, session_timeout_hours: int = 24):
-        """
-        Initialize SessionManager.
-
-        Args:
-            session_timeout_hours: Hours before inactive session is cleaned up
-        """
-        self.sessions: Dict[str, Dict[str, Any]] = {}
-        self.session_timeout_hours = session_timeout_hours
-        self._lock = threading.RLock()
+        self.sessions: Dict[str, SessionData] = {}
+        self._lock = asyncio.Lock()
+        self.session_timeout_hours = session_timeout_hours # Keep timeout for future use
         logger.info(f"SessionManager initialized (timeout: {session_timeout_hours}h)")
 
-    def create_session(self) -> str:
-        """
-        Create new session with LiveAudioProcessor.
+    async def create_session(self, session_id: str, session_data: SessionData) -> None:
+        """Create a new recording session."""
+        async with self._lock:
+            if session_id in self.sessions:
+                raise ValueError(f"Session {session_id} already exists")
+            self.sessions[session_id] = session_data
+            logger.info(f"Session created: {session_id}")
 
-        Returns:
-            session_id: UUID string identifying the session
-        """
-        import uuid
-        from datetime import datetime
+    async def get_session(self, session_id: str) -> Optional[SessionData]:
+        """Retrieve session data by ID."""
+        async with self._lock:
+            return self.sessions.get(session_id)
 
-        session_id = str(uuid.uuid4())
+    async def remove_session(self, session_id: str) -> bool:
+        """Remove session and cleanup resources."""
+        async with self._lock:
+            if session_id in self.sessions:
+                session_data = self.sessions.pop(session_id, None)
+                if session_data and session_data.temp_file:
+                    try:
+                        if os.path.exists(session_data.temp_file):
+                            os.remove(session_data.temp_file)
+                            logger.debug(f"Cleaned up temp file: {session_data.temp_file}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup temp file for session {session_id}: {e}")
+                logger.info(f"Session removed: {session_id}")
+                return True
+            return False
 
-        with self._lock:
-            self.sessions[session_id] = {
-                "id": session_id,
-                "created_at": datetime.now(),
-                "last_activity": datetime.now(),
-                "processor": LiveAudioProcessor(),  # New processor for this session
-                "files": {},  # Will store: audio, transcript, subtitles paths
-                "status": "idle"  # idle, recording, processing, complete, error
-            }
+    async def session_exists(self, session_id: str) -> bool:
+        """Check if a session exists."""
+        return session_id in self.sessions
 
-        logger.info(f"✅ Created session: {session_id}")
-        return session_id
-
-    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get session data by ID and update last activity timestamp.
-
-        Args:
-            session_id: UUID string
-
-        Returns:
-            Session dict or None if not found
-        """
-        from datetime import datetime
-
-        with self._lock:
-            session = self.sessions.get(session_id)
-            if session:
-                session["last_activity"] = datetime.now()
-            return session
-
-    def delete_session(self, session_id: str):
-        """
-        Delete session and cleanup all resources.
-
-        - Stops any active recording
-        - Deletes temporary files
-        - Removes session from memory
-
-        Args:
-            session_id: UUID string
-        """
-        with self._lock:
-            session = self.sessions.pop(session_id, None)
-            if not session:
-                return
-
-            # Cleanup processor
-            if session.get("processor"):
-                try:
-                    # Stop any active recordings
-                    processor = session["processor"]
-                    if hasattr(processor, 'cleanup_session'):
-                        processor.cleanup_session(session_id)
-                except Exception as e:
-                    logger.warning(f"Processor cleanup error for {session_id}: {e}")
-
-            # Delete temporary files
-            for file_type, file_path in session.get("files", {}).items():
-                try:
-                    file_path_obj = Path(file_path)
-                    if file_path_obj.exists():
-                        file_path_obj.unlink()
-                        logger.debug(f"Deleted {file_type} file: {file_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete {file_type} file: {e}")
-
-            logger.info(f"🗑️ Deleted session: {session_id}")
-
-    async def cleanup_old_sessions(self):
-        """
-        Background task to cleanup expired sessions.
-
-        Runs every hour and removes sessions inactive for more than
-        session_timeout_hours.
-
-        This is designed to run as an asyncio task started at app startup.
-        """
-        from datetime import datetime
-
-        while True:
-            try:
-                now = datetime.now()
-                timeout_seconds = self.session_timeout_hours * 3600
-
-                with self._lock:
-                    expired_sessions = [
-                        sid for sid, data in self.sessions.items()
-                        if (now - data["last_activity"]).total_seconds() > timeout_seconds
-                    ]
-
-                for session_id in expired_sessions:
-                    logger.info(f"⏰ Cleaning up expired session: {session_id}")
-                    self.delete_session(session_id)
-
-                # Run cleanup every hour
-                await asyncio.sleep(3600)
-
-            except Exception as e:
-                logger.error(f"Session cleanup error: {e}")
-                await asyncio.sleep(60)  # Retry in 1 minute
-
-    def get_active_session_count(self) -> int:
-        """
-        Get number of active sessions.
-
-        Useful for monitoring and debugging.
-
-        Returns:
-            Number of active sessions
-        """
-        with self._lock:
+    async def get_active_session_count(self) -> int:
+        """Get the number of currently active sessions."""
+        async with self._lock:
             return len(self.sessions)
 
-    def get_all_session_ids(self) -> list:
-        """
-        Get list of all active session IDs.
-
-        Useful for shutdown cleanup.
-
-        Returns:
-            List of session ID strings
-        """
-        with self._lock:
+    async def get_all_session_ids(self) -> List[str]:
+        """Get a list of all active session IDs."""
+        async with self._lock:
             return list(self.sessions.keys())
