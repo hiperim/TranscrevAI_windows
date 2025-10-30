@@ -36,6 +36,7 @@ from src.subtitle_generator import generate_srt
 from src.file_manager import FileManager
 from src.websocket_enhancements import get_websocket_safety_manager, MessagePriority
 from src.pipeline import run_pipeline_sync
+from src.exceptions import TranscrevAIError, TranscriptionError, DiarizationError, AudioProcessingError, SessionError, ValidationError
 from config.app_config import get_config
 
 # --- Global Configuration & Tuning ---
@@ -266,45 +267,43 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     try:
         while True:
             message = await websocket.receive_json()
+            
+            # The logic for validation and handling is now implicitly wrapped by the outer try/except block
+            # The handler/validator will raise custom exceptions which are caught below.
+
             action = message.get("action")
 
             # --- Validation ---
-            # The validator needs the session object, get it from the manager
             current_session_data = await app_state.session_manager.get_session(session_id)
             if not current_session_data:
-                logger.warning(f"Session {session_id} not found during validation. Closing connection.")
-                break # Exit loop, finally block will handle cleanup
+                logger.warning(f"Session {session_id} not found during message processing. Closing connection.")
+                break
 
-            # Convert SessionData object to a dict for the validator if it expects a dict
-            # NOTE: This part might need adjustment if validator is also refactored
-            session_dict_for_validator = {
-                "status": current_session_data.status if hasattr(current_session_data, 'status') else 'recording'
-            }
+            session_dict_for_validator = {"status": getattr(current_session_data, 'status', 'recording')}
 
             error_msg = validator.validate_action(action)
             if error_msg:
-                await websocket.send_json({"type": "error", "message": error_msg})
-                continue
+                raise ValidationError(error_msg, context={"action": action})
             
             if action == "start":
                 audio_format = message.get("format", "wav").lower()
                 error_msg = validator.validate_audio_format(audio_format)
+                if error_msg: raise ValidationError(error_msg, context={"format": audio_format})
+
             elif action == "audio_chunk":
                 error_msg = validator.validate_session_state_for_chunk(session_dict_for_validator)
-                if not error_msg:
-                    chunk_b64 = message.get("data", "")
-                    error_msg = validator.validate_chunk_size(chunk_b64)
-                if not error_msg:
-                    estimated_chunk_size = len(chunk_b64) * 3 / 4
-                    error_msg = validator.validate_total_size(int(total_data_received + estimated_chunk_size))
-                if not error_msg:
-                    error_msg = validator.validate_recording_duration(recording_start_time)
-            
-            if error_msg:
-                await websocket.send_json({"type": "error", "message": error_msg})
-                if action in ["audio_chunk", "start"]:
-                    break
-                continue
+                if error_msg: raise SessionError(error_msg, context={"session_id": session_id, "status": session_dict_for_validator.get('status')})
+                
+                chunk_b64 = message.get("data", "")
+                error_msg = validator.validate_chunk_size(chunk_b64)
+                if error_msg: raise ValidationError(error_msg, context={"chunk_size": len(chunk_b64)})
+
+                estimated_chunk_size = len(chunk_b64) * 3 / 4
+                error_msg = validator.validate_total_size(int(total_data_received + estimated_chunk_size))
+                if error_msg: raise ValidationError(error_msg, context={"total_size": total_data_received + estimated_chunk_size})
+
+                error_msg = validator.validate_recording_duration(recording_start_time)
+                if error_msg: raise ValidationError(error_msg, context={"duration": (time.time() - recording_start_time) if recording_start_time else 0})
 
             # --- Handling ---
             if action == "start":
@@ -323,16 +322,30 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected by client: {session_id}")
+
+    except ValidationError as e:
+        logger.warning(f"Validation error in WebSocket: {e.message}", extra={"session_id": session_id, "context": e.context})
+        await websocket.send_json({"error": "Dados inválidos", "details": e.message, "type": "validation_error"})
+
+    except SessionError as e:
+        logger.error(f"Session error during message processing: {e.message}", extra={"session_id": session_id, "context": e.context})
+        await websocket.send_json({"error": "Erro de sessão", "details": e.message, "type": "session_error"})
+
+    except (TranscriptionError, DiarizationError, AudioProcessingError) as e:
+        logger.error(f"Processing error in WebSocket handler: {e.message}", extra={"session_id": session_id, "error_type": type(e).__name__, "context": e.context})
+        await websocket.send_json({"error": "Erro ao processar áudio", "details": e.message, "type": "processing_error"})
+
     except Exception as e:
-        logger.error(f"An unexpected error occurred in WebSocket for session {session_id}: {e}", exc_info=True)
+        logger.exception(f"Unexpected error in WebSocket handler for session {session_id}", extra={"session_id": session_id})
         try:
-            await websocket.send_json({"type": "error", "message": f"Internal server error: {str(e)}"})
+            await websocket.send_json({"error": "Erro interno do servidor", "type": "internal_error"})
         except Exception:
             pass # Ignore errors on a closed socket
+    
     finally:
-        # Guaranteed cleanup: remove the session from the manager
         logger.info(f"Cleaning up session due to WebSocket closure: {session_id}")
-        await app_state.session_manager.remove_session(session_id)
+        if app_state.session_manager:
+            await app_state.session_manager.remove_session(session_id)
         logger.info(f"WebSocket cleanup complete: {session_id}")
 
 if __name__ == "__main__":

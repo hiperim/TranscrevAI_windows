@@ -15,6 +15,7 @@ import unicodedata
 import os
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
+from src.exceptions import TranscriptionError, AudioProcessingError
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -195,29 +196,57 @@ class TranscriptionService:
                     if key != "vad_parameters":  # VAD already handled above
                         transcribe_args[key] = value
 
-            segments_generator, info = self.model.transcribe(
-                audio_path,
-                **transcribe_args
-            )
+            try:
+                segments_generator, info = self.model.transcribe(
+                    audio_path,
+                    **transcribe_args
+                )
 
-            raw_segments = []
-            full_text = ""
-            for seg in segments_generator:
-                segment_dict = {
-                    "start": seg.start, 
-                    "end": seg.end, 
-                    "text": seg.text, 
-                    "avg_logprob": seg.avg_logprob
-                }
-                if word_timestamps and hasattr(seg, 'words') and seg.words is not None:
-                    segment_dict['words'] = [
-                        {'word': w.word, 'start': w.start, 'end': w.end, 'probability': w.probability}
-                        for w in seg.words
-                    ]
-                
-                raw_segments.append(segment_dict)
-                corrected_text = self._apply_ptbr_corrections(seg.text)
-                full_text += corrected_text + " "
+                raw_segments = []
+                full_text = ""
+                for seg in segments_generator:
+                    segment_dict = {
+                        "start": seg.start, 
+                        "end": seg.end, 
+                        "text": seg.text, 
+                        "avg_logprob": seg.avg_logprob
+                    }
+                    if word_timestamps and hasattr(seg, 'words') and seg.words is not None:
+                        segment_dict['words'] = [
+                            {'word': w.word, 'start': w.start, 'end': w.end, 'probability': w.probability}
+                            for w in seg.words
+                        ]
+                    
+                    raw_segments.append(segment_dict)
+                    corrected_text = self._apply_ptbr_corrections(seg.text)
+                    full_text += corrected_text + " "
+
+            except FileNotFoundError as e:
+                # Audio file doesn't exist
+                raise AudioProcessingError(
+                    "Audio file not found for transcription",
+                    context={"audio_path": audio_path}
+                ) from e
+            except MemoryError as e:
+                # Insufficient RAM for model
+                raise TranscriptionError(
+                    "Insufficient memory for transcription",
+                    context={"audio_path": audio_path}
+                ) from e
+            except Exception as e:
+                # Unexpected error during transcription
+                logger.error(
+                    "Unexpected transcription error",
+                    extra={
+                        "audio_path": audio_path,
+                        "error_type": type(e).__name__,
+                        "error_message": str(e)
+                    }
+                )
+                raise TranscriptionError(
+                    f"Transcription failed: {str(e)}",
+                    context={"audio_path": audio_path}
+                ) from e
 
             processing_time = time.time() - start_time
             confidence = self._calculate_confidence(raw_segments)
