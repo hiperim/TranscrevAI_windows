@@ -29,7 +29,7 @@ fi
 
 # Build with docker compose
 echo "🚀 Building with docker compose..."
-docker compose build --build-arg HUGGING_FACE_HUB_TOKEN="$HUGGING_FACE_HUB_TOKEN"
+docker compose build --no-cache --build-arg HUGGING_FACE_HUB_TOKEN="$HUGGING_FACE_HUB_TOKEN"
 
 echo "✅ Build complete!"
 echo "📦 Image size:"
