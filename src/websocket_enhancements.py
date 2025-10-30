@@ -1,4 +1,4 @@
-# Enhanced WebSocket Enhancements - FINAL AND CORRECTED
+
 """
 WebSocket Browser Safety Enhancements with Exponential Retry and Robust Recovery
 """
@@ -87,7 +87,7 @@ class RobustWebSocketSafetyManager:
                 priority_queue.pop(session_id, None)
         logger.info(f"🧹 Session {session_id} cleaned up")
 
-# CORRECTED: Moved factory function to be defined after the class
+
 _global_safety_manager: Optional[RobustWebSocketSafetyManager] = None
 
 def get_websocket_safety_manager() -> RobustWebSocketSafetyManager:

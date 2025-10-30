@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterator
 import shutil
 import tempfile
-from src.worker import init_worker
+
 
 @pytest.fixture(scope="session")
 def event_loop():
@@ -39,22 +39,4 @@ def temp_output_dir() -> Iterator[Path]:
         # Cleanup after tests are done
         shutil.rmtree(temp_dir)
 
-# --- New Fixture for Production-Ready Testing ---
 
-@pytest.fixture(scope="session")
-def worker_services_fixture():
-    """
-    Session-scoped fixture to initialize the worker services ONCE.
-    This simulates the production environment where models are loaded
-    once when the worker process starts. This is essential for getting
-    accurate performance metrics.
-    """
-    print("\n--- (SESSION START) Initializing worker services for the entire test session ---")
-    mock_config = {
-        "model_name": "medium",
-        "device": "cpu"
-    }
-    init_worker(mock_config)
-    print("--- (SESSION START) Worker services initialized. Running tests... ---")
-    yield
-    print("\n--- (SESSION END) All tests finished. ---")

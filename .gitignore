@@ -39,6 +39,7 @@ htmlcov/
 /models/
 /logs/
 /temp/
+/backups_oldFiles/
 /backups/
 /archive/
 /.claude/

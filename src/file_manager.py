@@ -1,17 +1,9 @@
-# file_manager.py - COMPLETE AND CORRECTED
-
 """
-Enhanced File Manager - Fixed All Pylance Errors
+Centralized File Management for TranscrevAI.
 
-Production-ready file management with proper security and organization
-
-FIXES APPLIED:
-- Fixed all Pylance import errors with proper fallback handling
-- Corrected all unterminated string literals
-- Fixed all syntax errors and missing colons
-- Proper import handling with comprehensive fallbacks
-- All type hints corrected and validated
-- Complete implementation with no missing functionality
+Provides a secure and robust interface for file operations, including
+sanitizing filenames, validating paths against an allow-list, and managing
+the application's data directory structure.
 """
 
 import os
@@ -155,9 +147,8 @@ class FileManager:
             logger.error(f"Directory creation failed: {path} - {e}")
             raise RuntimeError(f"Filesystem error: {str(e)}") from e
     
-    @staticmethod
-    def validate_path(user_path: str) -> str:
-        """Enhanced path validation with security checks - FIXED ALL IMPORT ERRORS"""
+    def validate_path(self, user_path: str) -> str:
+        """Enhanced path validation with security checks."""
         try:
             resolved = Path(user_path).resolve(strict=False)
             

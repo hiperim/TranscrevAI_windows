@@ -1,4 +1,4 @@
-# FINALIZED AND CORRECTED - Enhanced Audio Processing Module
+
 """
 Unified Audio Processing Module for TranscrevAI.
 Combines real-time recording, VAD pre-processing, dynamic quantization analysis,
@@ -18,6 +18,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
+from fastapi import WebSocket
+from datetime import datetime
 
 import numpy as np
 import soundfile as sf

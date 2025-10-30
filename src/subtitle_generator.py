@@ -1,14 +1,9 @@
-# FIXED - Enhanced Subtitle Generator with UTF-8 Windows Support
 """
-Enhanced Subtitle Generator Module for TranscrevAI
-Production-ready SRT generation with comprehensive UTF-8 support for Windows
+Handles the generation of SRT subtitle files from transcription segments.
 
-FIXES APPLIED:
-- Complete UTF-8 encoding support for Windows SRT files
-- UTF-8 BOM for maximum Windows compatibility
-- Proper Portuguese character handling
-- Enhanced error handling with encoding fallbacks
-- Thread-safe file operations
+This module is designed to create well-formatted SRT files with robust support
+for Portuguese characters and Windows-compatible UTF-8 encoding (UTF-8-SIG).
+It includes logic for line splitting, duration management, and text cleaning.
 """
 
 import logging

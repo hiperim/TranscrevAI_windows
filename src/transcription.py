@@ -1,4 +1,4 @@
-# FINALIZED AND CORRECTED - Enhanced Transcription Module with Model Unloading
+
 """
 Enhanced Transcription Module with complete PT-BR corrections, advanced confidence
 scoring, automatic model unloading for memory optimization, and production-ready
@@ -70,8 +70,8 @@ class TranscriptionService:
             "ate": "até",
             "sao": "são",
 
-            # 11 PT-BR colloquial elisões (safe, Level 1)
-            # EXPERIMENTAL: REVERSED normalization (formal→colloquial) based on CORAA analysis
+            # 11 PT-BR colloquial elisions
+            # REVERSED normalization (formal→colloquial) based on CORAA analysis
             "para": "pra",       # 32 CORAA occurrences - most common
             "para o": "pro",     # Common colloquial contraction
             "para a": "pra",     # Common colloquial contraction
@@ -86,9 +86,8 @@ class TranscriptionService:
             "num": "não"
         }
 
-        # ⭐ PRÉ-COMPILAR REGEX PATTERNS (CRITICAL OPTIMIZATION)
-        # Compiling once at initialization = 5-10x faster than compiling in loop
-        # Source: final_optimization_summary.md - "restored 1.64x target"
+        # PRE-COMPILE REGEX PATTERNS
+        # Compiling once at initialization
         self.correction_patterns = [
             (re.compile(rf'\b{re.escape(wrong)}\b', re.IGNORECASE), correct)
             for wrong, correct in self.ptbr_corrections.items()
@@ -145,7 +144,7 @@ class TranscriptionService:
         logprobs = [s.get('avg_logprob', -2.0) for s in segments if s.get('avg_logprob') is not None]
         if not logprobs: return 0.0
         confidences = [np.exp(lp) for lp in logprobs]
-        # CORRECTED: Cast numpy float to standard Python float
+        # Cast numpy float to standard Python float for JSON compatibility
         return float(np.mean(confidences))
 
     async def transcribe_with_enhancements(

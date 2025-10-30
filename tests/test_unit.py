@@ -69,6 +69,8 @@ def test_upload_endpoint(client):
 
 # Import the class to be tested
 from src.websocket_handler import WebSocketValidator
+from src.exceptions import ValidationError
+from src.error_messages import get_user_message
 
 def test_websocket_validator_valid_actions():
     """Tests that the validator correctly identifies valid actions."""
@@ -77,25 +79,31 @@ def test_websocket_validator_valid_actions():
     assert validator.validate_action("audio_chunk") is None
     assert validator.validate_action("stop") is None
 
-def test_websocket_validator_invalid_action():
-    """Tests that the validator flags invalid or missing actions."""
+def test_websocket_validator_invalid_action_raises_exception():
+    """Tests that the validator raises ValidationError for invalid or missing actions."""
     validator = WebSocketValidator()
-    assert validator.validate_action("delete") is not None
-    assert validator.validate_action(None) is not None
-    assert validator.validate_action("") is not None
+    with pytest.raises(ValidationError, match="Ação inválida ou ausente"):
+        validator.validate_action("delete")
+    with pytest.raises(ValidationError):
+        validator.validate_action(None)
+    with pytest.raises(ValidationError):
+        validator.validate_action("")
 
 def test_websocket_validator_audio_format():
-    """Tests audio format validation."""
+    """Tests audio format validation, checking for valid formats and raising on invalid ones."""
     validator = WebSocketValidator()
     assert validator.validate_audio_format("wav") is None
     assert validator.validate_audio_format("mp4") is None
-    assert validator.validate_audio_format("mp3") is not None
-    assert validator.validate_audio_format("") is not None
+    with pytest.raises(ValidationError, match="Formato de arquivo inválido ou não suportado"):
+        validator.validate_audio_format("mp3")
+    with pytest.raises(ValidationError):
+        validator.validate_audio_format("")
 
 def test_websocket_validator_session_state():
-    """Tests the validation of session state for receiving chunks."""
+    """Tests the validation of session state, raising an exception for invalid states."""
     validator = WebSocketValidator()
     valid_session = {"status": "recording"}
     invalid_session = {"status": "processing"}
     assert validator.validate_session_state_for_chunk(valid_session) is None
-    assert validator.validate_session_state_for_chunk(invalid_session) is not None
+    with pytest.raises(ValidationError, match="Gravação não está ativa"):
+        validator.validate_session_state_for_chunk(invalid_session)

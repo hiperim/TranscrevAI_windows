@@ -1,13 +1,9 @@
-# logging_setup.py - COMPLETE AND CORRECTED
-
 """
-Enhanced Logging Setup for TranscrevAI - All Pylance Errors Fixed
+Centralized Logging Setup for the TranscrevAI application.
 
-FIXES APPLIED:
-- Fixed import error for DATA_DIR with comprehensive fallback handling
-- Added multiple import strategies with proper error handling
-- All Pylance errors resolved completely
-- Complete functional implementation with robust error handling
+This module provides a configurable logging setup that includes both console
+and file-based logging with rotation, ensuring that log messages are
+consistent and persistent.
 """
 
 import logging
@@ -49,7 +45,7 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
     # Add handler to logger
     logger.addHandler(console_handler)
     
-    # Create file handler for persistent logging - FIXED ALL IMPORT ERRORS
+    # Create file handler for persistent logging
     try:
         # Multiple import strategies for robust DATA_DIR access
         data_dir = None
