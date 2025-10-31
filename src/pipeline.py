@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-async def process_audio_pipeline(app_state: 'AppState', audio_path: str, session_id: str):
+async def process_audio_pipeline(app_state: 'AppState', audio_path: str, session_id: str) -> None:
     """Complete, non-blocking pipeline for processing a single audio file."""
     try:
         # Explicitly check for required services to ensure runtime safety
@@ -49,7 +49,6 @@ async def process_audio_pipeline(app_state: 'AppState', audio_path: str, session
     except Exception as e:
         logger.error(f"Error in audio processing pipeline: {str(e)}", exc_info=True)
         await app_state.send_message(session_id, {'type': 'error', 'message': f"Erro no pipeline: {str(e)}"}, MessagePriority.CRITICAL)
-        return
 
     final_result = {
         "segments": diarization_result["segments"],

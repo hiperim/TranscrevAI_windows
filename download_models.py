@@ -1,50 +1,62 @@
-#!/usr/bin/env python3
-"""Download Pyannote models using the environment's default cache path."""
+# download_models.py
+"""
+Downloads all required models from Hugging Face Hub into a project-local cache
+directory (`models/.cache`), making the project self-contained and portable.
+
+This script ensures the application can run 100% offline in any environment
+(local, Docker) by populating a predictable, local cache.
+"""
+
 import os
+from pathlib import Path
 from huggingface_hub import snapshot_download
+from dotenv import load_dotenv
 
-token = os.environ.get('HUGGING_FACE_HUB_TOKEN')
+# Load environment variables (for HF_TOKEN)
+load_dotenv()
 
-# By REMOVING the `cache_dir` parameter, `snapshot_download` will respect the
-# HF_HOME environment variable set in the Dockerfile. This ensures it downloads
-# to the modern `/hub` subdirectory, matching where `hf_hub_download` looks at runtime.
+# --- Configuration ---
+# This script will create a cache structure inside `models/.cache` that mimics
+# the official Hugging Face cache. This is the key to making the app portable.
+LOCAL_CACHE_DIR = Path(__file__).parent / "models" / ".cache"
+os.environ['HF_HOME'] = str(LOCAL_CACHE_DIR)
 
-print("Downloading pyannote/speaker-diarization-3.1 (all files)...")
-snapshot_download(
-    repo_id='pyannote/speaker-diarization-3.1',
-    token=token,
-    allow_patterns=["*"],
-    local_dir_use_symlinks=False
-)
+print(f"Target local cache directory set via HF_HOME: {LOCAL_CACHE_DIR}")
 
-print("Downloading pyannote/segmentation-3.0 (all files)...")
-snapshot_download(
-    repo_id='pyannote/segmentation-3.0',
-    token=token,
-    allow_patterns=["*"],
-    local_dir_use_symlinks=False
-)
+# List of all models required by the application
+MODELS_TO_DOWNLOAD = [
+    "guillaumekln/faster-whisper-medium",
+    "pyannote/speaker-diarization-3.1",
+    "pyannote/segmentation-3.0",
+    "pyannote/wespeaker-voxceleb-resnet34-LM",
+]
 
-print("Downloading pyannote/wespeaker-voxceleb-resnet34-LM (embedding model)...")
-snapshot_download(
-    repo_id='pyannote/wespeaker-voxceleb-resnet34-LM',
-    token=token,
-    allow_patterns=["*"],
-    local_dir_use_symlinks=False
-)
+def download_models():
+    """Downloads and saves all specified models to the local cache directory."""
+    hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN")
+    if not hf_token:
+        print("WARNING: HUGGING_FACE_HUB_TOKEN not found in .env file. Downloads may fail for gated models.")
 
-print('\n✓ Pyannote models pre-downloaded to the correct cache directory.')
+    for repo_id in MODELS_TO_DOWNLOAD:
+        print("-" * 80)
+        print(f"Downloading model: {repo_id}")
+        
+        try:
+            # Using cache_dir forces downloads to our project-local cache
+            snapshot_download(
+                repo_id=repo_id,
+                token=hf_token,
+                resume_download=True
+            )
+            print(f"✓ Successfully downloaded {repo_id} to local cache.")
+        except Exception as e:
+            print(f"❌ FAILED to download {repo_id}. Error: {e}")
+            print("Please check your internet connection and Hugging Face token.")
+            # In a CI/CD environment, you might want to exit on failure
+            # exit(1)
 
-# Optional: You can still print the cache structure to verify
-hf_home = os.getenv("HF_HOME", "/root/.cache/huggingface")
-print(f'\nVerifying cache structure in: {hf_home}\n')
-for root, dirs, files in os.walk(hf_home):
-    level = root.replace(hf_home, '').count(os.sep)
-    indent = ' ' * 2 * level
-    print(f'{indent}{os.path.basename(root)}/')
-    subindent = ' ' * 2 * (level + 1)
-    # Show first 3 files in each directory
-    for file in sorted(files)[:3]:
-        print(f'{subindent}{file}')
-    if len(files) > 3:
-        print(f'{subindent}... and {len(files)-3} more files')
+if __name__ == "__main__":
+    print("Starting download of all required models into the project-local cache...")
+    LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+    download_models()
+    print("\n✅ All model downloads attempted.")

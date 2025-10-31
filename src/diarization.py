@@ -1,147 +1,99 @@
-# diarization.py - Implementation with pyannote.audio
 """
 Speaker Diarization using the state-of-the-art pyannote.audio library.
-This module replaces all previous custom VAD, embedding, and clustering logic.
+
+This module implements a robust, 100% offline speaker diarization solution by
+leveraging a project-local Hugging Face cache.
 """
 
-import logging
 import os
+from pathlib import Path
 import asyncio
+import logging
 from typing import Dict, Any, List, Optional
+
+# CRITICAL: Set HF_HOME *before* importing pyannote.audio or torch.
+# This forces the library to use our local, embedded cache directory.
+MODELS_CACHE_DIR = Path(__file__).parent.parent / "models" / ".cache"
+os.environ['HF_HOME'] = str(MODELS_CACHE_DIR)
 
 import torch
 from pyannote.audio import Pipeline
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+load_dotenv()
+
 
 class PyannoteDiarizer:
-    """Implements diarization using a pyannote.audio pipeline."""
+    """Implements diarization using a cached pyannote.audio pipeline."""
 
     def __init__(self, device: str = "cpu", embedding_batch_size: int = 8):
-        logger.info("Initializing pyannote.audio pipeline...")
+        logger.info(f"Initializing pyannote.audio pipeline from local cache: {MODELS_CACHE_DIR}")
         self.device = device
         self.embedding_batch_size = embedding_batch_size
-        self.pipeline = None
+        self.pipeline: Optional[Pipeline] = None
+
         try:
-            import yaml
-            from huggingface_hub import hf_hub_download
-            from pyannote.audio.pipelines import SpeakerDiarization
+            # 1. Load pipeline from pretrained repo ID.
+            #    pyannote automatically uses the cache defined by HF_HOME.
+            self.pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
+            logger.info("✓ Pipeline loaded from cache.")
 
-            logger.info("Starting 100% offline pipeline instantiation with runtime config...")
-
-            # The SpeakerDiarization pipeline expects the model file path for its segmentation parameter,
-            # not the directory's config.yaml.
-            segmentation_model_path = hf_hub_download(
-                repo_id="pyannote/segmentation-3.0",
-                filename="pytorch_model.bin",
-                local_files_only=True
-            )
-            logger.info(f"Segmentation model found locally at: {segmentation_model_path}")
-
-            embedding_model_path = hf_hub_download(
-                repo_id="pyannote/wespeaker-voxceleb-resnet34-LM",
-                filename="pytorch_model.bin",
-                local_files_only=True
-            )
-            logger.info(f"Embedding model found locally at: {embedding_model_path}")
-
-            pipeline_params = config.get('pipeline', {}).get('params', {})
-            if not pipeline_params:
-                raise ValueError("Could not find 'pipeline.params' in the loaded config.")
-
-            pipeline_params['segmentation'] = segmentation_model_path
-            pipeline_params['embedding'] = embedding_model_path
-
-            self.pipeline = SpeakerDiarization(**pipeline_params)
-            self.pipeline.to(torch.device(self.device))
-            logger.info("✓ Pipeline instantiated from in-memory config with local paths.")
-
+            # 2. Instantiate with custom hyperparameters for accuracy.
+            #    The default threshold is too high and merges distinct speakers.
             self.pipeline.instantiate({
                 "clustering": {
-                    "method": "centroid",
-                    "min_cluster_size": 15,
                     "threshold": 0.35
                 }
             })
+            logger.info("✓ Pipeline instantiated with custom clustering threshold.")
 
+            # 3. Move to device and set batch size
+            self.pipeline.to(torch.device(self.device))
             self.pipeline.embedding_batch_size = self.embedding_batch_size
-            logger.info(f"pyannote.audio pipeline configured with clustering threshold=0.35, embedding_batch_size={self.embedding_batch_size}")
+
+            logger.info("✓ Diarization pipeline initialized successfully.")
 
         except Exception as e:
-            logger.error(f"Failed to load pyannote.audio pipeline: {e}", exc_info=True)
+            logger.error(f"Failed to load diarization pipeline: {e}", exc_info=True)
             self.pipeline = None
 
     async def diarize(self, audio_path: str, transcription_segments: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Asynchronously performs speaker diarization using the pyannote.audio pipeline.
-        The pipeline handles chunking and processing internally.
-        """
         if not self.pipeline:
             logger.error("Diarization pipeline not available. Falling back to single speaker diarization.")
             for seg in transcription_segments:
                 seg['speaker'] = 'SPEAKER_01'
             return {"segments": transcription_segments, "num_speakers": 1}
 
-        try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None, self._process_diarization_sync, audio_path, transcription_segments
-            )
-            return result
-        except Exception as e:
-            logger.error(f"Diarization failed in async wrapper: {e}", exc_info=True)
-            for seg in transcription_segments:
-                seg['speaker'] = 'SPEAKER_01'
-            return {"segments": transcription_segments, "num_speakers": 1}
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, 
+            self._process_diarization_sync, 
+            audio_path, 
+            transcription_segments
+        )
 
     def _process_diarization_sync(self, audio_path: str, transcription_segments: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Synchronous diarization logic.
-        """
         if not self.pipeline:
             raise RuntimeError("Diarization pipeline is not initialized.")
 
-        logger.info(f"Starting pyannote.audio diarization for {audio_path}")
+        logger.info(f"Starting pyannote.audio diarization for: {audio_path}")
         try:
-            # The pipeline object handles the entire process: VAD, embedding, clustering.
-            # It processes the audio in chunks internally, so we can pass the whole file.
             diarization_result = self.pipeline(audio_path)
-
-            diarization_segments = []
-            for turn, _, speaker in diarization_result.itertracks(yield_label=True):
-                diarization_segments.append({
-                    'start': turn.start,
-                    'end': turn.end,
-                    'speaker': speaker
-                })
-            
             num_speakers = len(diarization_result.labels())
-            logger.info(f"pyannote.audio found {num_speakers} speakers.")
-
+            logger.info(f"✓ pyannote.audio detected {num_speakers} speakers")
             aligned_segments = align_speakers_by_word(transcription_segments, diarization_result)
-
             return {"segments": aligned_segments, "num_speakers": int(num_speakers)}
-
         except Exception as e:
             logger.error(f"Diarization with pyannote.audio failed: {e}", exc_info=True)
             for seg in transcription_segments:
                 seg['speaker'] = 'SPEAKER_01'
             return {"segments": transcription_segments, "num_speakers": 1}
 
-# --- New, Corrected and Robust Alignment Function ---
 def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diarization_result) -> List[Dict[str, Any]]:
-    """
-    Aligns speaker labels to transcription segments using word-level timestamps for high accuracy.
-    Uses direct segment lookup instead of .crop() which has known issues.
-    Renumbers speakers starting from SPEAKER_01 (not SPEAKER_00).
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-
+    logger.info("Aligning speakers to transcription segments...")
     if not diarization_result:
-        # If diarization failed entirely, assign a default speaker to all segments
-        logger.warning("Diarization result is None/empty, assigning default SPEAKER_01 to all segments")
+        logger.warning("Diarization result is None/empty, assigning SPEAKER_01 to all")
         for segment in transcription_segments:
             segment['speaker'] = 'SPEAKER_01'
         return transcription_segments
@@ -156,17 +108,13 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
         })
         speakers_found.add(speaker)
 
-    logger.info(f"Diarization found {len(speakers_found)} speakers: {sorted(speakers_found)}")
+    logger.info(f"Diarization found {len(speakers_found)} unique speakers: {sorted(speakers_found)}")
 
     sorted_speakers = sorted(speakers_found)
     speaker_mapping = {old: f"SPEAKER_{str(i+1).zfill(2)}" for i, old in enumerate(sorted_speakers)}
-    logger.info(f"Speaker mapping: {speaker_mapping}")
+    logger.debug(f"Speaker mapping: {speaker_mapping}")
 
     def find_speaker_at_timestamp(timestamp: float, margin: float = 0.0) -> Optional[str]:
-        """
-        Find the speaker at a given timestamp using direct segment lookup.
-        Returns the speaker with the most overlap with the timestamp range.
-        """
         overlapping = []
         for seg in diarization_segments:
             if seg['start'] <= timestamp + margin and seg['end'] >= timestamp - margin:
@@ -175,14 +123,12 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
                 overlap_duration = overlap_end - overlap_start
                 if overlap_duration > 0:
                     overlapping.append((seg['speaker'], overlap_duration))
-
         if overlapping:
             return max(overlapping, key=lambda x: x[1])[0]
         return None
 
     for segment in transcription_segments:
         if 'words' not in segment or not segment['words']:
-            # Fallback for segments without word-level timestamps
             mid_timestamp = (segment['start'] + segment['end']) / 2
             speaker = find_speaker_at_timestamp(mid_timestamp, margin=0.1)
             if speaker:
@@ -195,19 +141,17 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
         for word in segment['words']:
             word_mid = (word['start'] + word['end']) / 2
             speaker = find_speaker_at_timestamp(word_mid, margin=0.05)
-
             if speaker:
                 word['speaker'] = speaker_mapping.get(speaker, speaker)
                 word_speaker_counts[speaker] = word_speaker_counts.get(speaker, 0) + 1
             else:
                 word['speaker'] = 'SPEAKER_XX'
 
-        # Assign the dominant speaker for the entire segment based on word counts
         if word_speaker_counts:
             dominant_speaker_original = max(word_speaker_counts, key=lambda spk: word_speaker_counts[spk])
             segment['speaker'] = speaker_mapping.get(dominant_speaker_original, dominant_speaker_original)
         else:
-            # If no words in the segment had a speaker, assign a default
             segment['speaker'] = 'SPEAKER_XX'
 
+    logger.info("✓ Speaker alignment completed successfully")
     return transcription_segments
