@@ -30,23 +30,8 @@ class PyannoteDiarizer:
 
             logger.info("Starting 100% offline pipeline instantiation with runtime config...")
 
-            # Step 1: Get path to main pipeline config, forcing local-only file resolution
-            main_config_path = hf_hub_download(
-                repo_id="pyannote/speaker-diarization-3.1",
-                filename="config.yaml",
-                local_files_only=True
-            )
-            logger.info(f"Main config found locally at: {main_config_path}")
-
-            # Step 2: Load config into memory
-            with open(main_config_path, 'r') as f:
-                config = yaml.safe_load(f)
-
-            # Step 3: Get paths to dependency models from local cache only
-            logger.info("Resolving dependency model paths from local cache...")
-            
-            # The previous attempt failed because it was assumed the segmentation model's config was needed.
-            # The SpeakerDiarization pipeline actually expects the *model file itself* for its segmentation parameter.
+            # The SpeakerDiarization pipeline expects the model file path for its segmentation parameter,
+            # not the directory's config.yaml.
             segmentation_model_path = hf_hub_download(
                 repo_id="pyannote/segmentation-3.0",
                 filename="pytorch_model.bin",
@@ -61,7 +46,6 @@ class PyannoteDiarizer:
             )
             logger.info(f"Embedding model found locally at: {embedding_model_path}")
 
-            # Step 4: Modify config dictionary in memory to point to local model files
             pipeline_params = config.get('pipeline', {}).get('params', {})
             if not pipeline_params:
                 raise ValueError("Could not find 'pipeline.params' in the loaded config.")
@@ -69,12 +53,10 @@ class PyannoteDiarizer:
             pipeline_params['segmentation'] = segmentation_model_path
             pipeline_params['embedding'] = embedding_model_path
 
-            # Step 5: Instantiate pipeline with modified in-memory config
             self.pipeline = SpeakerDiarization(**pipeline_params)
             self.pipeline.to(torch.device(self.device))
             logger.info("✓ Pipeline instantiated from in-memory config with local paths.")
 
-            # Set custom hyperparameters
             self.pipeline.instantiate({
                 "clustering": {
                     "method": "centroid",
@@ -83,7 +65,6 @@ class PyannoteDiarizer:
                 }
             })
 
-            # Set batch size for embeddings
             self.pipeline.embedding_batch_size = self.embedding_batch_size
             logger.info(f"pyannote.audio pipeline configured with clustering threshold=0.35, embedding_batch_size={self.embedding_batch_size}")
 
@@ -127,7 +108,6 @@ class PyannoteDiarizer:
             # It processes the audio in chunks internally, so we can pass the whole file.
             diarization_result = self.pipeline(audio_path)
 
-            # Convert the pyannote.core.Annotation object to our desired list format
             diarization_segments = []
             for turn, _, speaker in diarization_result.itertracks(yield_label=True):
                 diarization_segments.append({
@@ -139,7 +119,6 @@ class PyannoteDiarizer:
             num_speakers = len(diarization_result.labels())
             logger.info(f"pyannote.audio found {num_speakers} speakers.")
 
-            # Use the new, more accurate word-level alignment function
             aligned_segments = align_speakers_by_word(transcription_segments, diarization_result)
 
             return {"segments": aligned_segments, "num_speakers": int(num_speakers)}
@@ -167,7 +146,6 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
             segment['speaker'] = 'SPEAKER_01'
         return transcription_segments
 
-    # Convert diarization result to simple list of segments for direct lookup
     diarization_segments = []
     speakers_found = set()
     for turn, _, speaker in diarization_result.itertracks(yield_label=True):
@@ -180,7 +158,6 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
 
     logger.info(f"Diarization found {len(speakers_found)} speakers: {sorted(speakers_found)}")
 
-    # Create speaker mapping: SPEAKER_00 -> SPEAKER_01, SPEAKER_01 -> SPEAKER_02, etc.
     sorted_speakers = sorted(speakers_found)
     speaker_mapping = {old: f"SPEAKER_{str(i+1).zfill(2)}" for i, old in enumerate(sorted_speakers)}
     logger.info(f"Speaker mapping: {speaker_mapping}")
@@ -193,7 +170,6 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
         overlapping = []
         for seg in diarization_segments:
             if seg['start'] <= timestamp + margin and seg['end'] >= timestamp - margin:
-                # Calculate overlap duration
                 overlap_start = max(seg['start'], timestamp - margin)
                 overlap_end = min(seg['end'], timestamp + margin)
                 overlap_duration = overlap_end - overlap_start
@@ -201,15 +177,12 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
                     overlapping.append((seg['speaker'], overlap_duration))
 
         if overlapping:
-            # Return speaker with longest overlap
             return max(overlapping, key=lambda x: x[1])[0]
         return None
 
-    # Process each transcription segment
     for segment in transcription_segments:
         if 'words' not in segment or not segment['words']:
             # Fallback for segments without word-level timestamps
-            # Use middle of segment timestamp
             mid_timestamp = (segment['start'] + segment['end']) / 2
             speaker = find_speaker_at_timestamp(mid_timestamp, margin=0.1)
             if speaker:
@@ -220,7 +193,6 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
 
         word_speaker_counts: Dict[str, int] = {}
         for word in segment['words']:
-            # Use middle of word timestamp for lookup
             word_mid = (word['start'] + word['end']) / 2
             speaker = find_speaker_at_timestamp(word_mid, margin=0.05)
 

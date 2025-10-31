@@ -256,8 +256,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     )
 
     try:
-        # Register the new session. If a session with this ID somehow still exists, 
-        # remove the old one to prevent conflicts.
+        # Defensively check for and remove any lingering session with the same ID.
+        # This can happen if a client disconnects improperly and reconnects quickly.
         if await app_state.session_manager.session_exists(session_id):
             logger.warning(f"Session {session_id} already exists. Removing old session before creating new one.")
             await app_state.session_manager.remove_session(session_id)
@@ -356,6 +356,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             pass # Ignore errors on a closed socket
     
     finally:
+        # This block is the safety net. It guarantees that the session and its
+        # associated resources are cleaned up, no matter how the connection
+        # terminates (cleanly, with an error, or a disconnect).
         logger.info(f"Cleaning up session due to WebSocket closure: {session_id}")
         if app_state.session_manager:
             await app_state.session_manager.remove_session(session_id)

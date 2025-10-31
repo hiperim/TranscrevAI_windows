@@ -154,6 +154,28 @@ class TranscriptionService:
         word_timestamps: bool = False,
         whisper_params: Optional[Dict[str, Any]] = None
     ) -> TranscriptionResult:
+        """Performs transcription with PT-BR corrections and optional enhancements.
+
+        This is the core transcription method, ensuring thread-safety and handling
+        dynamic model loading based on the requested quantization. It wraps the
+        `faster-whisper` transcribe call with robust error handling.
+
+        Args:
+            audio_path: Path to the audio file to be transcribed.
+            quantization: The quantization type to use (e.g., "int8", "float16").
+                          If None, uses the service's default.
+            word_timestamps: Whether to generate word-level timestamps.
+            whisper_params: Additional parameters to pass to the Whisper model.
+
+        Returns:
+            A TranscriptionResult dataclass containing the full text, segments,
+            confidence, and other metadata.
+
+        Raises:
+            AudioProcessingError: If the audio file is not found.
+            TranscriptionError: If the model fails to load or transcription fails
+                                for other reasons (e.g., out of memory).
+        """
         with self._model_lock:  # CRITICAL: Thread-safety for concurrent requests
             start_time = time.time()
             requested_compute_type = quantization or self.compute_type
