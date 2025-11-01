@@ -43,6 +43,8 @@ class PyannoteDiarizer:
             #    The default threshold is too high and merges distinct speakers.
             self.pipeline.instantiate({
                 "clustering": {
+                    "method": "centroid",
+                    "min_cluster_size": 15,
                     "threshold": 0.35
                 }
             })
