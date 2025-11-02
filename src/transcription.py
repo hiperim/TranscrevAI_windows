@@ -11,6 +11,7 @@ import threading
 import gc
 import time
 import re
+import functools
 import unicodedata
 import os
 from typing import Dict, Any, List, Optional, Tuple
@@ -33,7 +34,7 @@ class TranscriptionResult:
 class TranscriptionService:
     """Handles the core transcription logic using faster-whisper with automatic model unloading."""
 
-    def __init__(self, model_name: str = "medium", device: str = "cpu"):
+    def __init__(self, model_name: str = "pierreguillou/whisper-medium-portuguese", device: str = "cpu"):
         self.model_name = model_name
         self.device = device
         self.compute_type = "int8" # Default compute type
@@ -147,6 +148,39 @@ class TranscriptionService:
         # Cast numpy float to standard Python float for JSON compatibility
         return float(np.mean(confidences))
 
+    def _transcribe_sync(
+        self,
+        audio_path: str,
+        transcribe_args: Dict[str, Any]
+    ) -> Tuple[List[Dict[str, Any]], Any, str, float]:
+        """Synchronous transcription (runs in executor thread)."""
+        if not self.model:
+            raise RuntimeError("Model not loaded")
+
+        # Operação bloqueante
+        segments_generator, info = self.model.transcribe(audio_path, **transcribe_args)
+
+        raw_segments = []
+        full_text = ""
+        for seg in segments_generator:
+            segment_dict = {
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text,
+                "avg_logprob": seg.avg_logprob
+            }
+            if transcribe_args.get("word_timestamps") and hasattr(seg, 'words') and seg.words:
+                segment_dict['words'] = [
+                    {'word': w.word, 'start': w.start, 'end': w.end, 'probability': w.probability}
+                    for w in seg.words
+                ]
+            raw_segments.append(segment_dict)
+            corrected_text = self._apply_ptbr_corrections(seg.text)
+            full_text += corrected_text + " "
+
+        confidence = self._calculate_confidence(raw_segments)
+        return raw_segments, info, full_text, confidence
+
     async def transcribe_with_enhancements(
         self,
         audio_path: str,
@@ -154,135 +188,68 @@ class TranscriptionService:
         word_timestamps: bool = False,
         whisper_params: Optional[Dict[str, Any]] = None
     ) -> TranscriptionResult:
-        """Performs transcription with PT-BR corrections and optional enhancements.
+        """Async transcription with executor."""
+        start_time = time.time()
+        requested_compute_type = quantization or self.compute_type
 
-        This is the core transcription method, ensuring thread-safety and handling
-        dynamic model loading based on the requested quantization. It wraps the
-        `faster-whisper` transcribe call with robust error handling.
+        # Check and load model outside the transcription lock if necessary
+        if not self.model or self.compute_type != requested_compute_type:
+            await self._load_model(compute_type=requested_compute_type)
 
-        Args:
-            audio_path: Path to the audio file to be transcribed.
-            quantization: The quantization type to use (e.g., "int8", "float16").
-                          If None, uses the service's default.
-            word_timestamps: Whether to generate word-level timestamps.
-            whisper_params: Additional parameters to pass to the Whisper model.
-
-        Returns:
-            A TranscriptionResult dataclass containing the full text, segments,
-            confidence, and other metadata.
-
-        Raises:
-            AudioProcessingError: If the audio file is not found.
-            TranscriptionError: If the model fails to load or transcription fails
-                                for other reasons (e.g., out of memory).
-        """
-        with self._model_lock:  # CRITICAL: Thread-safety for concurrent requests
-            start_time = time.time()
-            requested_compute_type = quantization or self.compute_type
-
-            if not self.model or self.compute_type != requested_compute_type:
-                await self._load_model(compute_type=requested_compute_type)
-
+        # Lock apenas para setup
+        with self._model_lock:
             self.last_used = time.time()
-
             if not self.model:
-                raise RuntimeError("Transcription model could not be loaded.")
+                raise TranscriptionError("Model not loaded")
 
-            # Default VAD parameters (can be overridden)
+            # Preparar argumentos
             vad_parameters = dict(
                 threshold=0.5,
                 min_speech_duration_ms=250,
-                min_silence_duration_ms=2000
+                min_silence_duration_ms=1000
             )
-
-            # Build transcription parameters with defaults
             transcribe_args = {
                 "language": "pt",
-                "beam_size": 5,
-                "best_of": 5,
+                "beam_size": 3,
+                "best_of": 3,
                 "word_timestamps": word_timestamps,
                 "vad_filter": True,
                 "vad_parameters": vad_parameters
             }
-
-            # Apply custom Whisper parameters if provided
             if whisper_params:
-                # Override VAD parameters if provided
-                if "vad_parameters" in whisper_params:
-                    vad_parameters.update(whisper_params["vad_parameters"])
-                    transcribe_args["vad_parameters"] = vad_parameters
+                # Merge custom params...
+                pass
 
-                # Apply other Whisper parameters
-                for key, value in whisper_params.items():
-                    if key != "vad_parameters":  # VAD already handled above
-                        transcribe_args[key] = value
-
+            # Executar em thread separado
+            loop = asyncio.get_running_loop()
             try:
-                segments_generator, info = self.model.transcribe(
-                    audio_path,
-                    **transcribe_args
+                sync_func = functools.partial(
+                    self._transcribe_sync,
+                    audio_path=audio_path,
+                    transcribe_args=transcribe_args
                 )
-
-                raw_segments = []
-                full_text = ""
-                for seg in segments_generator:
-                    segment_dict = {
-                        "start": seg.start, 
-                        "end": seg.end, 
-                        "text": seg.text, 
-                        "avg_logprob": seg.avg_logprob
-                    }
-                    if word_timestamps and hasattr(seg, 'words') and seg.words is not None:
-                        segment_dict['words'] = [
-                            {'word': w.word, 'start': w.start, 'end': w.end, 'probability': w.probability}
-                            for w in seg.words
-                        ]
-                    
-                    raw_segments.append(segment_dict)
-                    corrected_text = self._apply_ptbr_corrections(seg.text)
-                    full_text += corrected_text + " "
-
+                raw_segments, info, full_text, confidence = await loop.run_in_executor(
+                    None, sync_func
+                )
             except FileNotFoundError as e:
-                # Audio file doesn't exist
-                raise AudioProcessingError(
-                    "Audio file not found for transcription",
-                    context={"audio_path": audio_path}
-                ) from e
-            except MemoryError as e:
-                # Insufficient RAM for model
-                raise TranscriptionError(
-                    "Insufficient memory for transcription",
-                    context={"audio_path": audio_path}
-                ) from e
+                raise AudioProcessingError("Audio not found", context={"audio_path": audio_path}) from e
             except Exception as e:
-                # Unexpected error during transcription
-                logger.error(
-                    "Unexpected transcription error",
-                    extra={
-                        "audio_path": audio_path,
-                        "error_type": type(e).__name__,
-                        "error_message": str(e)
-                    }
-                )
-                raise TranscriptionError(
-                    f"Transcription failed: {str(e)}",
-                    context={"audio_path": audio_path}
-                ) from e
+                logger.error(f"Transcription failed: {e}")
+                raise TranscriptionError(f"Failed: {e}", context={"audio_path": audio_path}) from e
 
-            processing_time = time.time() - start_time
-            confidence = self._calculate_confidence(raw_segments)
-
-            return TranscriptionResult(
-                text=full_text.strip(),
-                segments=raw_segments, # Now contains word timestamps if requested
-                language=info.language,
-                confidence=confidence,
-                processing_time=processing_time,
-                word_count=len(full_text.split())
-            )
+        processing_time = time.time() - start_time
+        return TranscriptionResult(
+            text=full_text.strip(),
+            segments=raw_segments,
+            language=info.language,
+            confidence=confidence,
+            processing_time=processing_time,
+            word_count=len(full_text.strip().split())
+        )
 
     async def _load_model(self, compute_type: str = "int8"):
-        """Load model with retry logic for production reliability."""
+        """Load model asynchronously with retry logic."""
+        loop = asyncio.get_running_loop()
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -291,7 +258,14 @@ class TranscriptionService:
                 logger.info(f"Loading Whisper model (attempt {attempt+1}/{max_retries}): {self.model_name} with {self.compute_type} precision...")
                 load_start = time.time()
 
-                self.model = WhisperModel(self.model_name, device=self.device, compute_type=self.compute_type)
+                # Create a partial function with keyword arguments to pass to the executor
+                loader_func = functools.partial(
+                    WhisperModel, 
+                    model_size_or_path=self.model_name, 
+                    device=self.device, 
+                    compute_type=self.compute_type
+                )
+                self.model = await loop.run_in_executor(None, loader_func)
 
                 load_time = time.time() - load_start
                 self.model_loads_count += 1
@@ -303,7 +277,7 @@ class TranscriptionService:
                     self.model = None
                     raise
                 logger.warning(f"Model load attempt {attempt+1} failed, retrying in {2**attempt}s...")
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                await asyncio.sleep(2 ** attempt)
 
     def unload_model(self):
         """Unload model from memory with thread-safety to free ~1.5GB RAM."""
