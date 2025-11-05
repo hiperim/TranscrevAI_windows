@@ -416,7 +416,7 @@ class LiveAudioProcessor:
         self._lock = threading.RLock()
         logger.info("LiveAudioProcessor initialized with disk buffering strategy")
 
-    async def start_recording(self, session_id: str, sample_rate: int = 16000) -> Dict[str, str]:
+    def start_recording(self, session_id: str, sample_rate: int = 16000) -> Dict[str, Any]:
         """Start a new recording session with disk buffering"""
         with self._lock:
             if session_id in self.sessions:
@@ -426,19 +426,20 @@ class LiveAudioProcessor:
 
             temp_file = self.temp_dir / f"{session_id}_{int(time.time())}.wav"
 
+            start_time = time.time()
             self.sessions[session_id] = {
                 "state": RecordingState.RECORDING,
                 "temp_file": temp_file,
                 "sample_rate": sample_rate,
-                "start_time": time.time(),
+                "start_time": start_time,
                 "chunks_received": 0,
                 "total_bytes": 0
             }
 
             logger.info(f"Recording started for session {session_id}, buffering to: {temp_file}")
-            return {"status": "recording", "session_id": session_id, "temp_file": str(temp_file)}
+            return {"status": "recording", "session_id": session_id, "temp_file": str(temp_file), "start_time": start_time}
 
-    async def pause_recording(self, session_id: str) -> Dict[str, str]:
+    def pause_recording(self, session_id: str) -> Dict[str, str]:
         """Pause active recording"""
         with self._lock:
             if session_id not in self.sessions:
@@ -454,7 +455,7 @@ class LiveAudioProcessor:
             logger.info(f"Recording paused for session {session_id}")
             return {"status": "paused", "session_id": session_id}
 
-    async def resume_recording(self, session_id: str) -> Dict[str, str]:
+    def resume_recording(self, session_id: str) -> Dict[str, str]:
         """Resume paused recording"""
         with self._lock:
             if session_id not in self.sessions:
@@ -470,7 +471,7 @@ class LiveAudioProcessor:
             logger.info(f"Recording resumed for session {session_id}")
             return {"status": "recording", "session_id": session_id}
 
-    async def process_audio_chunk(self, session_id: str, audio_chunk: bytes) -> Dict[str, Any]:
+    def process_audio_chunk(self, session_id: str, audio_chunk: bytes) -> Dict[str, Any]:
         """
         Store audio chunk in memory buffer for proper WAV file generation.
         Compliance: Uses in-memory buffering for valid WAV structure.
@@ -502,7 +503,7 @@ class LiveAudioProcessor:
                 "total_bytes": session["total_bytes"]
             }
 
-    async def stop_recording(self, session_id: str) -> str:
+    def stop_recording(self, session_id: str) -> str:
         """
         Stop recording, convert WebM to WAV, and return path for processing.
         Transitions to PROCESSING state.
@@ -538,7 +539,7 @@ class LiveAudioProcessor:
 
             # Convert WebM to WAV using FFMPEG
             try:
-                await self._convert_webm_to_wav(webm_temp, temp_file_path, session.get("sample_rate", 16000))
+                self._convert_webm_to_wav(webm_temp, temp_file_path, session.get("sample_rate", 16000))
                 logger.info(f"Successfully converted WebM to WAV: {temp_file_path}")
 
                 # Clean up temporary WebM file
@@ -557,8 +558,47 @@ class LiveAudioProcessor:
             logger.info(f"Recording stopped for session {session_id}. Duration: {duration:.2f}s, File: {temp_file_path}")
 
             return temp_file_path
+        session = self.sessions[session_id]
+        batch_num = session["batch_count"] + 1
+        session["batch_count"] = batch_num
 
-    async def _convert_webm_to_wav(self, input_path: str, output_path: str, sample_rate: int = 16000):
+        audio_data = b''.join(session["audio_buffer"])
+        session["audio_buffer"].clear()
+        session["total_bytes"] = 0
+
+        if not audio_data:
+            logger.warning(f"Attempted to process an empty batch for session {session_id}")
+            return
+
+        try:
+            # Define temporary file paths for this batch
+            webm_path = self.temp_dir / f"{session_id}_batch_{batch_num}.webm"
+            wav_path = self.temp_dir / f"{session_id}_batch_{batch_num}.wav"
+
+            # Write raw WebM data to a temporary file
+            with open(webm_path, 'wb') as f:
+                f.write(audio_data)
+
+            # Convert the WebM batch to a WAV file
+            self._convert_webm_to_wav(str(webm_path), str(wav_path), session["sample_rate"])
+
+            # Create a job for the transcription worker
+            job = {
+                "session_id": session_id,
+                "wav_file_path": str(wav_path),
+                "is_final": is_final
+            }
+            transcription_queue.put(job)
+            logger.info(f"Queued batch {batch_num} for session {session_id} for transcription.")
+
+        except Exception as e:
+            logger.error(f"Failed to process batch {batch_num} for session {session_id}: {e}", exc_info=True)
+        finally:
+            # Clean up the temporary WebM file
+            if 'webm_path' in locals() and Path(webm_path).exists():
+                Path(webm_path).unlink()
+
+    def _convert_webm_to_wav(self, input_path: str, output_path: str, sample_rate: int = 16000):
         """
         Convert WebM audio to WAV using FFMPEG.
         Uses ffmpeg from static_ffmpeg package or system installation.
@@ -612,7 +652,7 @@ class LiveAudioProcessor:
         except FileNotFoundError:
             raise RuntimeError("FFMPEG not found. Please install ffmpeg or check static_ffmpeg installation.")
 
-    async def complete_session(self, session_id: str) -> None:
+    def complete_session(self, session_id: str) -> None:
         """Mark session as complete and cleanup temporary file"""
         with self._lock:
             if session_id not in self.sessions:
@@ -631,19 +671,16 @@ class LiveAudioProcessor:
             del self.sessions[session_id]
 
     def get_session_state(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get current session state"""
+        """Thread-safely get the state of a session."""
         with self._lock:
-            session = self.sessions.get(session_id)
-            if not session:
-                return None
-
-            state = session.get("state")
-            return {
-                "state": state.value if state else None,
-                "chunks_received": session.get("chunks_received", 0),
-                "total_bytes": session.get("total_bytes", 0),
-                "duration": time.time() - session.get("start_time", time.time())
-            }
+            if session_id in self.sessions:
+                # Return a copy of the state-related parts of the session
+                session = self.sessions[session_id]
+                return {
+                    "state": session.get("state"),
+                    "total_bytes": session.get("total_bytes", 0)
+                }
+            return None
 
 
 # ============================================================================

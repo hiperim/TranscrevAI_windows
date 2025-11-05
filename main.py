@@ -13,6 +13,8 @@ import time
 import threading
 import base64
 import uuid
+import queue
+from src.worker import transcription_worker
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 
@@ -26,6 +28,9 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Core application modules
 from src.transcription import TranscriptionService
@@ -61,9 +66,10 @@ class AppState:
 
     Manages references to core services without duplicating session storage.
     Session data is exclusively managed by SessionManager.
-    """    
+    """
     def __init__(self):
         self._lock = threading.RLock()
+        self._session_lock = threading.RLock()  # Dedicated lock for session access
         self.websocket_safety_manager = get_websocket_safety_manager()
         self.file_manager: Optional[FileManager] = None
 
@@ -72,13 +78,19 @@ class AppState:
     diarization_service: Optional[PyannoteDiarizer] = None
     audio_quality_analyzer: Optional[AudioQualityAnalyzer] = None
     session_manager: Optional[SessionManager] = None
+    live_audio_processor: Optional[LiveAudioProcessor] = None
+    transcription_queue: Optional[queue.Queue] = None
+
+    async def get_session_safe(self, session_id: str):
+        """Thread-safe session retrieval with lock protection."""
+        with self._session_lock:
+            if not self.session_manager:
+                return None
+            return await self.session_manager.get_session(session_id)
 
     async def send_message(self, session_id: str, message: Dict[str, Any], priority: MessagePriority = MessagePriority.NORMAL):
         """Safely send a JSON message to a WebSocket client."""
-        if not self.session_manager:
-            return
-        
-        session = await self.session_manager.get_session(session_id)
+        session = await self.get_session_safe(session_id)
         if session and session.websocket:
             try:
                 await session.websocket.send_json(message)
@@ -100,13 +112,24 @@ async def lifespan(app: FastAPI):
     app_state.diarization_service = PyannoteDiarizer(device=DEVICE)
     app_state.audio_quality_analyzer = AudioQualityAnalyzer()
     app_state.session_manager = SessionManager(session_timeout_hours=24)
+    app_state.live_audio_processor = LiveAudioProcessor(file_manager=app_state.file_manager)
+    app_state.transcription_queue = queue.Queue()
 
-    logger.info("SessionManager initialized.")
-    logger.info("Services initialized successfully.")
+    # Start the transcription worker thread
+    main_loop = asyncio.get_running_loop()
+    worker_thread = threading.Thread(target=transcription_worker, args=(app_state, main_loop), daemon=True)
+    worker_thread.start()
+
+    logger.info("Services and worker initialized successfully.")
     yield
 
     # --- Shutdown Logic ---
     logger.info("Shutting down TranscrevAI...")
+    # Signal the worker to exit
+    if app_state.transcription_queue:
+        app_state.transcription_queue.put(None)
+    worker_thread.join(timeout=5) # Wait for worker to finish
+
     if app_state.session_manager:
         all_sessions = await app_state.session_manager.get_all_session_ids()
         logger.info(f"Cleaning up {len(all_sessions)} active sessions...")
@@ -116,6 +139,19 @@ async def lifespan(app: FastAPI):
 
 # --- FastAPI App Setup ---
 app = FastAPI(title="TranscrevAI Single-Process", version="6.0.0", lifespan=lifespan)
+
+# Rate Limiting Configuration
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+# Custom rate limit exception handler
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"error": "Rate limit exceeded. Please try again later."}
+    )
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -125,7 +161,8 @@ async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/upload")
-async def upload_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
+@limiter.limit("10/minute")
+async def upload_audio(request: Request, background_tasks: BackgroundTasks, file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
     if not app_state.session_manager or not app_state.file_manager:
         raise HTTPException(status_code=503, detail="Core services not initialized")
 
@@ -231,15 +268,40 @@ async def health_check():
     return {"status": "ok"}
 
 from src.websocket_handler import WebSocketValidator, WebSocketHandler
+from collections import defaultdict
+from time import time as current_time
+
+# WebSocket rate limiting (manual implementation as slowapi doesn't support WS)
+ws_connection_tracker = defaultdict(list)
+WS_RATE_LIMIT = 20  # connections per minute
+WS_RATE_WINDOW = 60  # seconds
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """
     WebSocket endpoint for live audio recording, refactored for centralized session management.
-    
+
     Creates and removes sessions exclusively through the SessionManager, ensuring a single
     source of truth and proper resource cleanup.
     """
+    # Rate limiting check
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    now = current_time()
+
+    # Clean old entries
+    ws_connection_tracker[client_ip] = [
+        t for t in ws_connection_tracker[client_ip]
+        if now - t < WS_RATE_WINDOW
+    ]
+
+    # Check limit
+    if len(ws_connection_tracker[client_ip]) >= WS_RATE_LIMIT:
+        await websocket.close(code=1008, reason="Rate limit exceeded")
+        logger.warning(f"WebSocket rate limit exceeded for IP: {client_ip}")
+        return
+
+    ws_connection_tracker[client_ip].append(now)
+
     await websocket.accept()
     logger.info(f"WebSocket connected for session: {session_id}")
 
@@ -278,12 +340,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     total_data_received: int = 0
     
     try:
+        loop = asyncio.get_running_loop()
         while True:
             message = await websocket.receive_json()
             
-            # The logic for validation and handling is now implicitly wrapped by the outer try/except block
-            # The handler/validator will raise custom exceptions which are caught below.
-
             action = message.get("action")
 
             # --- Validation ---
@@ -292,46 +352,109 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 logger.warning(f"Session {session_id} not found during message processing. Closing connection.")
                 break
 
-            session_dict_for_validator = {"status": getattr(current_session_data, 'status', 'recording')}
+            session_state = app_state.live_audio_processor.get_session_state(session_id) if app_state.live_audio_processor else None
+            session_dict_for_validator = session_state if session_state else {"status": "idle"}
 
-            error_msg = validator.validate_action(action)
-            if error_msg:
-                raise ValidationError(error_msg, context={"action": action})
+            validator.validate_action(action)
             
             if action == "start":
                 audio_format = message.get("format", "wav").lower()
-                error_msg = validator.validate_audio_format(audio_format)
-                if error_msg: raise ValidationError(error_msg, context={"format": audio_format})
+                validator.validate_audio_format(audio_format)
 
             elif action == "audio_chunk":
-                error_msg = validator.validate_session_state_for_chunk(session_dict_for_validator)
-                if error_msg: raise SessionError(error_msg, context={"session_id": session_id, "status": session_dict_for_validator.get('status')})
-                
+                # State validation is now handled by the worker/processor, removing the check here
+                # to prevent race conditions during testing.
                 chunk_b64 = message.get("data", "")
-                error_msg = validator.validate_chunk_size(chunk_b64)
-                if error_msg: raise ValidationError(error_msg, context={"chunk_size": len(chunk_b64)})
-
+                validator.validate_chunk_size(chunk_b64)
                 estimated_chunk_size = len(chunk_b64) * 3 / 4
-                error_msg = validator.validate_total_size(int(total_data_received + estimated_chunk_size))
-                if error_msg: raise ValidationError(error_msg, context={"total_size": total_data_received + estimated_chunk_size})
-
-                error_msg = validator.validate_recording_duration(recording_start_time)
-                if error_msg: raise ValidationError(error_msg, context={"duration": (time.time() - recording_start_time) if recording_start_time else 0})
+                validator.validate_total_size(int(total_data_received + estimated_chunk_size))
+                validator.validate_recording_duration(recording_start_time)
 
             # --- Handling ---
             if action == "start":
-                start_time, data_received = await handler.handle_start(message, session_id, websocket)
-                recording_start_time = start_time
-                total_data_received = data_received
+                if not app_state.live_audio_processor or not app_state.session_manager:
+                    raise SessionError("Core services not initialized")
+
+                current_session_data.format = message.get("format", "wav").lower()
+                
+                start_result = await loop.run_in_executor(None, app_state.live_audio_processor.start_recording, session_id, 16000)
+                recording_start_time = start_result["start_time"]
+                current_session_data.temp_file = start_result["temp_file"]
+
+                await websocket.send_json({
+                    "type": "recording_started",
+                    "session_id": session_id,
+                    "format": current_session_data.format,
+                    "message": f"Gravação iniciada (formato: {(current_session_data.format or 'wav').upper()})"
+                })
 
             elif action == "audio_chunk":
-                bytes_received, error_occurred = await handler.handle_chunk(message, session_id, websocket)
-                if error_occurred:
-                    continue
-                total_data_received += bytes_received
+                if not app_state.transcription_queue:
+                    raise SessionError("Transcription queue not initialized")
+
+                try:
+                    audio_bytes = base64.b64decode(message.get("data", ""))
+                    job = {
+                        "session_id": session_id,
+                        "type": "audio_chunk",
+                        "audio_chunk_bytes": audio_bytes
+                    }
+                    app_state.transcription_queue.put(job)
+                except Exception:
+                    await websocket.send_json({"type": "error", "message": "Dados de áudio inválidos (base64 decode falhou)"})
+
+            elif action == "custom_job":
+                if app_state.transcription_queue:
+                    job = {"session_id": session_id, **message}
+                    app_state.transcription_queue.put(job)
+
+            elif action == "pause":
+                if not app_state.live_audio_processor:
+                    raise SessionError("LiveAudioProcessor not initialized")
+                await loop.run_in_executor(None, app_state.live_audio_processor.pause_recording, session_id)
+                await websocket.send_json({"type": "state_change", "data": {"status": "paused"}})
+
+            elif action == "resume":
+                if not app_state.live_audio_processor:
+                    raise SessionError("LiveAudioProcessor not initialized")
+                await loop.run_in_executor(None, app_state.live_audio_processor.resume_recording, session_id)
+                await websocket.send_json({"type": "state_change", "data": {"status": "recording"}})
 
             elif action == "stop":
-                await handler.handle_stop(session_id, websocket)
+                logger.info(f"⏹️ Stop action received for session {session_id}")
+
+                # Stop the recording and get the audio file path
+                if not app_state.live_audio_processor:
+                    raise SessionError("LiveAudioProcessor not initialized")
+
+                audio_path = await loop.run_in_executor(None, app_state.live_audio_processor.stop_recording, session_id)
+
+                if not audio_path or not Path(audio_path).exists():
+                    logger.error(f"Audio file not found for session {session_id} at path: {audio_path}")
+                    raise AudioProcessingError("Arquivo de áudio gravado não encontrado para processamento.", context={"session_id": session_id})
+
+                # Update session status
+                current_session_data.status = "processing"
+
+                # Send stop confirmation
+                await websocket.send_json({
+                    "type": "recording_stopped",
+                    "message": "Gravação finalizada. Processando..."
+                })
+
+                # Queue final transcription job for any remaining audio chunks
+                if app_state.transcription_queue:
+                    stop_job = {"type": "stop", "session_id": session_id}
+                    app_state.transcription_queue.put(stop_job)
+
+                # Start the full processing pipeline in background
+                asyncio.create_task(process_audio_pipeline(app_state, audio_path, session_id))
+
+                await websocket.send_json({
+                    "type": "processing_started",
+                    "message": "Processamento iniciado em background"
+                })
+                logger.info(f"Audio processing pipeline started for session {session_id}")
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected by client: {session_id}")

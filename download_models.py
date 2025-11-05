@@ -57,6 +57,6 @@ def download_models():
 
 if __name__ == "__main__":
     print("Starting download of all required models into the project-local cache...")
-    LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+    LOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     download_models()
     print("\n✅ All model downloads attempted.")

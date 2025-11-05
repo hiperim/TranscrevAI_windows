@@ -30,7 +30,7 @@ class WebSocketValidator:
 
     def validate_action(self, action: Optional[str]):
         """Validates the 'action' field, raising ValidationError on failure."""
-        if not action or action not in ["start", "audio_chunk", "stop"]:
+        if not action or action not in ["start", "audio_chunk", "stop", "pause", "resume"]:
             logger.warning("Invalid or missing action received", extra={"action": action})
             raise ValidationError(get_user_message("invalid_action"))
         return None

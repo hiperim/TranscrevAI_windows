@@ -164,10 +164,12 @@ class LiveRecorder {
             const audioFormat = selectedFormat ? selectedFormat.value : 'wav';
             console.log('[DEBUG] Selected audio format:', audioFormat);
 
-            this.mediaRecorder.start(1000); // 1-second chunks
+            const chunkDurationMs = 5000; // Configurable for 5s vs 15s testing
+            this.mediaRecorder.start(chunkDurationMs); // Send chunks at this interval
             this.ws.send(JSON.stringify({ action: 'start', format: audioFormat }));
             this.recordingState = 'recording';
             this.updateButtonStates();
+            this.resetTimer();  // Reset timer for new recording
             this.startTimer();
             this.updateStatus('Gravando...', 'recording');
         } catch (error) {
@@ -211,17 +213,30 @@ class LiveRecorder {
     }
 
     startTimer() {
-        let seconds = 0;
+        // Initialize elapsed seconds if not set (first start)
+        if (this.elapsedSeconds === undefined) {
+            this.elapsedSeconds = 0;
+        }
+
         this.timer = setInterval(() => {
-            seconds++;
-            const mins = Math.floor(seconds / 60);
-            const secs = seconds % 60;
+            this.elapsedSeconds++;
+            const mins = Math.floor(this.elapsedSeconds / 60);
+            const secs = this.elapsedSeconds % 60;
             document.getElementById('recording-timer').textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
         }, 1000);
     }
 
     stopTimer() {
-        if (this.timer) clearInterval(this.timer);
+        if (this.timer) {
+            clearInterval(this.timer);
+            this.timer = null;
+        }
+    }
+
+    resetTimer() {
+        this.stopTimer();
+        this.elapsedSeconds = 0;
+        document.getElementById('recording-timer').textContent = '00:00';
     }
 
     updateButtonStates() {
@@ -264,25 +279,100 @@ class LiveRecorder {
 }
 
 // --- GENERAL WEBSOCKET AND UI LOGIC ---
-async function setupWebSocketConnection(sessionId, onMessageHandler) {
+const WS_CONFIG = {
+    TIMEOUT: 30000,           // 30s connection timeout
+    RETRY_ATTEMPTS: 3,        // Max retry attempts
+    RETRY_DELAY: 2000,        // 2s initial delay
+    HEARTBEAT_INTERVAL: 15000 // 15s heartbeat
+};
+
+async function setupWebSocketConnection(sessionId, onMessageHandler, retryCount = 0) {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws/${sessionId}`;
 
     try {
         const ws = new WebSocket(wsUrl);
-        ws.onmessage = (event) => onMessageHandler(JSON.parse(event.data));
-        ws.onerror = (error) => console.log('WebSocket error:', error);
-        ws.onclose = () => console.log('WebSocket connection closed');
+        let heartbeatInterval = null;
+        let connectionTimeout = null;
 
+        // Setup heartbeat to keep connection alive
+        ws.onopen = () => {
+            console.log(`WebSocket connected for session: ${sessionId}`);
+            clearTimeout(connectionTimeout);
+
+            // Send heartbeat every 15s
+            heartbeatInterval = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ action: 'ping' }));
+                }
+            }, WS_CONFIG.HEARTBEAT_INTERVAL);
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type !== 'pong') {  // Ignore pong responses
+                onMessageHandler(data);
+            }
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            clearInterval(heartbeatInterval);
+        };
+
+        ws.onclose = (event) => {
+            console.log(`WebSocket closed: ${event.code} ${event.reason}`);
+            clearInterval(heartbeatInterval);
+
+            // Auto-reconnect if not clean close and retries available
+            if (!event.wasClean && retryCount < WS_CONFIG.RETRY_ATTEMPTS) {
+                const delay = WS_CONFIG.RETRY_DELAY * Math.pow(2, retryCount);
+                console.log(`Reconnecting in ${delay}ms (attempt ${retryCount + 1}/${WS_CONFIG.RETRY_ATTEMPTS})`);
+                showStatus(`Reconectando... (tentativa ${retryCount + 1})`, 50);
+
+                setTimeout(() => {
+                    setupWebSocketConnection(sessionId, onMessageHandler, retryCount + 1)
+                        .then(newWs => {
+                            websocket = newWs;  // Update global reference
+                        });
+                }, delay);
+            } else if (retryCount >= WS_CONFIG.RETRY_ATTEMPTS) {
+                showStatus('Falha na conexão. Recarregue a página.', 0);
+            }
+        };
+
+        // Connection timeout
+        connectionTimeout = setTimeout(() => {
+            if (ws.readyState !== WebSocket.OPEN) {
+                ws.close();
+                throw new Error('Connection timeout');
+            }
+        }, WS_CONFIG.TIMEOUT);
+
+        // Wait for connection
         await new Promise((resolve, reject) => {
-            ws.onopen = resolve;
-            ws.onerror = reject; // Reject promise on connection error
+            const originalOnOpen = ws.onopen;
+            ws.onopen = (event) => {
+                originalOnOpen(event);
+                resolve();
+            };
+            ws.onerror = reject;
         });
-        console.log(`WebSocket connected for session: ${sessionId}`);
+
         return ws;
     } catch (error) {
-        console.log(`WebSocket setup failed for session ${sessionId}:`, error);
-        showStatus('Erro de conexão com o servidor.', 0);
+        console.error(`WebSocket setup failed for session ${sessionId}:`, error);
+
+        // Retry if attempts remaining
+        if (retryCount < WS_CONFIG.RETRY_ATTEMPTS) {
+            const delay = WS_CONFIG.RETRY_DELAY * Math.pow(2, retryCount);
+            showStatus(`Tentando reconectar... (${retryCount + 1}/${WS_CONFIG.RETRY_ATTEMPTS})`, 25);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return setupWebSocketConnection(sessionId, onMessageHandler, retryCount + 1);
+        } else {
+            showStatus('Erro de conexão. Verifique sua internet.', 0);
+            throw error;
+        }
     }
 }
 

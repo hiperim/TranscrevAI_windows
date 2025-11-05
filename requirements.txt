@@ -134,3 +134,4 @@ zipp==3.23.0
 
 # Production WSGI Server
 gunicorn
+slowapi==0.1.9

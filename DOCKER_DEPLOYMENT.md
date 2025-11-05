@@ -1,379 +1,91 @@
-# TranscrevAI - Docker Deployment Guide
+# TranscrevAI - Guia de Deployment com Docker
 
-🚀 **Complete containerized Portuguese Brazilian transcription and diarization system**
+Este guia fornece instruções para configurar e rodar a aplicação TranscrevAI usando Docker. A abordagem utiliza um cache de modelos local para garantir que a aplicação seja autossuficiente e funcione 100% offline no runtime.
 
-## Quick Start (1-Command Deploy)
+## Pré-requisitos
 
-Anyone with Docker can test TranscrevAI immediately:
+- Docker e Docker Compose
+- Git
+- Python 3.11+
+- Um token de acesso do Hugging Face (para o download inicial dos modelos)
 
-```bash
-# Clone and run TranscrevAI
-git clone <repository-url>
-cd TranscrevAI_windows
-docker-compose up -d
-```
+## 🚀 Passo 1: Setup Inicial (Apenas uma vez)
 
-**Access**: http://localhost:8000
+Após clonar o repositório, o passo mais importante é popular o cache de modelos local. Este cache viverá dentro do seu projeto na pasta `models/.cache/`, tornando a aplicação totalmente portátil.
 
-## Features
+1.  **Navegue até a pasta do projeto:**
+    ```bash
+    cd TranscrevAI_windows
+    ```
 
-✅ **Universal Compatibility**: Windows/Linux/macOS (including Silicon)
-✅ **Portuguese Brazilian Optimized**: Specialized for PT-BR transcription
-✅ **Auto SRT Download**: Automatic file download with path display
-✅ **Live Recording**: MP4 or WAV format choice
-✅ **CPU-Only Optimized**: INT8 quantization for efficient CPU processing
-✅ **Minimum Specs**: 4 cores, 8GB RAM
+2.  **Crie um arquivo `.env`:**
+    Crie um arquivo chamado `.env` na raiz do projeto e adicione seu token do Hugging Face:
+    ```
+    HUGGING_FACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    ```
 
-## System Requirements
+3.  **Execute o script de download:**
+    Este comando irá baixar todos os modelos necessários para a pasta `models/.cache/`.
+    ```bash
+    python download_models.py
+    ```
 
-### Minimum Requirements
-- **CPU**: 4 cores
-- **RAM**: 8GB DDR3
-- **Storage**: 5GB free space
-- **OS**: Windows 10/11, Linux, macOS
+Com os modelos baixados localmente, você está pronto para rodar a aplicação em qualquer um dos modos abaixo.
 
-### Recommended Requirements
-- **CPU**: 8+ cores
-- **RAM**: 16GB
-- **Storage**: 10GB SSD
+--- 
 
-## Installation Methods
+## 📦 Modo 1: Rodando em Produção
 
-### Method 1: Production Deployment (Recommended)
+Este é o modo padrão para usar a aplicação. Ele usa a imagem Docker otimizada.
 
 ```bash
-# Production deployment with persistent data
-docker-compose up -d
+# Constrói a imagem (se não existir) e inicia o container em background
+docker-compose up -d --build
 
-# Check status
-docker-compose ps
+# Para ver os logs
+docker-compose logs -f
 
-# View logs
-docker-compose logs -f transcrevai
-```
-
-### Method 2: Development Mode
-
-```bash
-# Development with hot reload
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-```
-
-### Method 3: Direct Docker Run
-
-```bash
-# Build image
-docker build -t transcrevai .
-
-# Run container
-docker run -d \
-  --name transcrevai \
-  -p 8000:8000 \
-  -v $(pwd)/data:/app/data \
-  transcrevai
-```
-
-## Usage Guide
-
-### 1. Upload Audio Files
-
-```bash
-# Test upload via curl
-curl -X POST -F "file=@your-audio.wav" http://localhost:8000/upload
-```
-
-### 2. Live Recording
-
-1. Access http://localhost:8000
-2. Choose MP4 or WAV format
-3. Start recording
-4. Stop when finished
-5. SRT file automatically downloads
-
-### 3. WebSocket Real-time Updates
-
-```javascript
-const ws = new WebSocket('ws://localhost:8000/ws/SESSION_ID');
-ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    console.log('Progress:', data.progress);
-};
-```
-
-## API Endpoints
-
-- **Upload**: `POST /upload` - Upload audio files
-- **Health**: `GET /health` - Health check
-- **WebSocket**: `ws://localhost:8000/ws/{session_id}` - Real-time updates
-- **Download**: `GET /download/srt/{session_id}` - Download SRT files
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Production settings
-ENVIRONMENT=production
-LOG_LEVEL=INFO
-DATA_DIR=/app/data
-WHISPER_MODEL_DIR=/app/data/models/whisper
-```
-
-### Volume Mappings
-
-```yaml
-volumes:
-  - ./data/uploads:/app/data/uploads      # Uploaded files
-  - ./data/transcripts:/app/data/transcripts  # Generated transcripts
-  - ./data/srt:/app/data/srt              # SRT files
-  - ./data/recordings:/app/data/recordings    # Live recordings
-```
-
-## Performance Optimization
-
-### FASE 10: Production-Ready Optimizations
-
-#### Model Pre-Download (Build Time)
-
-Models are pre-downloaded during Docker build to eliminate cold start download time:
-
-- **Faster-Whisper medium model** (~1.5GB) cached in `/root/.cache/huggingface`
-- **Impact**: Cold start reduced from 209s → 20-25s (eliminates model download time)
-- **Implementation**: Automatic during `docker build`
-
-#### Lazy Unload Memory Management (Sprint 2 Dia 2.1)
-
-Configure `MODEL_UNLOAD_DELAY` environment variable for intelligent memory management:
-
-```bash
-# Default: Unload after 60s idle (recommended)
-docker run -e MODEL_UNLOAD_DELAY=60 transcrevai
-
-# Disable lazy unload (keep model loaded)
-docker run -e MODEL_UNLOAD_DELAY=0 transcrevai
-
-# More aggressive (30s idle)
-docker run -e MODEL_UNLOAD_DELAY=30 transcrevai
-
-# Or in docker-compose.yml:
-environment:
-  - MODEL_UNLOAD_DELAY=60
-```
-
-**How it works**:
-- Timer resets on each transcription request
-- Model unloads only after configured idle period
-- Zero overhead during continuous use
-- Automatic reload on next request
-
-**Trade-offs**:
-- ✅ **Pros**: Zero overhead in continuous use, frees ~400-500MB when idle
-- ✅ **Best of both worlds**: Fast warm start + memory efficiency
-- ⚖️ **Use case**: Any usage pattern (automatic adaptation)
-- 🎯 **Default**: `60` (unload after 60s idle)
-
-#### Batch Processing (Sprint 2 Dia 2.2)
-
-Process multiple audio files simultaneously for 12.5x speedup:
-
-```python
-# Enable batch mode
-engine.enable_batch_mode()
-
-# Process multiple files
-results = engine.transcribe_batch([
-    "audio1.wav",
-    "audio2.wav",
-    "audio3.wav"
-])
-```
-
-**Performance**:
-- **12.5x faster** than sequential processing
-- Processes 16 audio chunks simultaneously
-- Ideal for: Batch jobs, playlist transcription, background processing
-
-#### Shared Memory Multiprocessing (Sprint 2 Dia 2.3)
-
-Optimized for large audio files (>100MB):
-
-```python
-from src.performance_optimizer import process_with_shared_memory
-
-# Avoids pickling overhead
-result = process_with_shared_memory(audio_data, worker_func)
-```
-
-**Performance**:
-- **20-30% faster** multiprocessing for large files
-- Eliminates pickling overhead
-- Automatic fallback to normal processing if shared memory fails
-
-**Performance Targets**:
-- **Cold start**: ≤2.8x real-time (with model pre-download)
-- **Warm start**: ≤1.0x real-time (models cached in memory)
-- **Batch processing**: ≤0.08x real-time (12.5x speedup)
-
-### CPU-Only Optimization
-
-The system uses optimized CPU-only processing with INT8 quantization:
-
-- **faster-whisper**: CTranslate2 backend with INT8 quantization
-- **Adaptive beam size**: Optimized for audio duration
-- **VAD filtering**: Silero VAD with automatic fallback
-- **Memory efficient**: Progressive model loading and optional auto-unload
-
-### Memory Management
-
-- **Peak Usage**: <2GB for 8GB systems
-- **Model Loading**: Progressive loading for browser safety
-- **Emergency Mode**: Automatic fallback if memory pressure
-- **Lazy Unload**: Intelligent memory recycling (~400-500MB freed after idle)
-- **Shared Memory**: Zero-copy multiprocessing for large files
-
-## Troubleshooting
-
-### Common Issues
-
-**1. Port Already in Use**
-```bash
-# Check what's using port 8000
-docker ps
-sudo lsof -i :8000
-
-# Use different port
-docker-compose up -d -p 8001:8000
-```
-
-**2. Memory Issues**
-```bash
-# Check memory usage
-docker stats transcrevai
-
-# Restart with more memory
+# Para parar o container
 docker-compose down
-docker-compose up -d
 ```
 
-**3. Performance Issues**
-```bash
-# Check CPU usage
-docker stats transcrevai
+**Acesse a aplicação em:** [http://localhost:8000](http://localhost:8000)
 
-# Check model loading status
-docker-compose logs transcrevai | grep "model loaded"
+--- 
 
-# Verify INT8 quantization is active
-docker-compose logs transcrevai | grep "INT8"
-```
+## 💻 Modo 2: Rodando em Desenvolvimento (com Hot-Reload)
 
-### Health Checks
+Este modo é ideal para desenvolvimento. Ele monta o seu código local dentro do container, então qualquer mudança que você fizer nos arquivos `.py` será refletida automaticamente sem precisar reconstruir a imagem.
 
 ```bash
-# Check container health
-docker-compose ps
+# Constrói a imagem base e inicia o container de desenvolvimento
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
-# Test health endpoint
-curl http://localhost:8000/health
+# Para ver os logs com hot-reload
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
 
-# View detailed logs
-docker-compose logs --tail=50 transcrevai
+# Para parar os containers
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml down
 ```
 
-## Production Deployment
+--- 
 
-### Security Considerations
+## 🧪 Modo 3: Rodando a Suíte de Testes (Pytest)
 
-1. **Firewall**: Only expose necessary ports
-2. **SSL/TLS**: Use reverse proxy for HTTPS
-3. **Resource Limits**: Set appropriate memory/CPU limits
-4. **Monitoring**: Implement health monitoring
+Este modo usa um ambiente Docker específico para testes, que inclui o `pytest` e outras dependências de desenvolvimento. Ele garante que os testes rodem em um ambiente Linux limpo, idêntico ao de produção.
 
-### Reverse Proxy Example (Nginx)
-
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    location / {
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location /ws/ {
-        proxy_pass http://localhost:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-    }
-}
-```
-
-## Testing & Validation
-
-### Automated Testing
-
+**1. Construa a imagem de teste:**
+Este comando precisa ser executado apenas uma vez ou sempre que o `Dockerfile.test` mudar.
 ```bash
-# Run health check
-curl -f http://localhost:8000/health
-
-# Test upload functionality
-curl -X POST -F "file=@test-audio.wav" http://localhost:8000/upload
-
-# Check response time
-curl -w "@curl-format.txt" -o /dev/null -s http://localhost:8000/health
+docker-compose -f docker-compose.test.yml build
 ```
 
-### Performance Benchmarks
-
-Expected performance on minimum specs (4 cores, 8GB RAM) with CPU-only INT8:
-
-- **Startup Time**: <30s (including model loading with pre-download)
-- **Cold Start Processing**: ≤2.8x real-time
-- **Warm Start Processing**: ≤1.0x real-time
-- **Memory Usage**: <2GB peak
-- **Accuracy**: ≥90% for PT-BR transcription and diarization
-
-## Support & Maintenance
-
-### Container Management
-
+**2. Execute os testes:**
+Este comando inicia um container temporário, roda o `pytest`, e remove o container ao finalizar.
 ```bash
-# Update container
-docker-compose pull
-docker-compose up -d
+# Para rodar a suíte de testes completa
+docker-compose -f docker-compose.test.yml run --rm transcrevai-test python -m pytest tests/test_unit.py -v
 
-# Backup data
-docker run --rm -v transcrevai_data:/data -v $(pwd):/backup busybox tar czf /backup/transcrevai-backup.tar.gz /data
-
-# Restore data
-docker run --rm -v transcrevai_data:/data -v $(pwd):/backup busybox tar xzf /backup/transcrevai-backup.tar.gz -C /
+# Para rodar um teste específico (ex: o de performance)
+docker-compose -f docker-compose.test.yml run --rm transcrevai-test python -m pytest tests/test_unit.py::test_pipeline_quality_and_performance -v
 ```
-
-### Monitoring
-
-```bash
-# Resource usage
-docker stats transcrevai
-
-# Log monitoring
-docker-compose logs -f --tail=100 transcrevai
-
-# Health monitoring
-watch -n 30 'curl -s http://localhost:8000/health'
-```
-
-## License & Contributing
-
-TranscrevAI is designed for Portuguese Brazilian transcription and diarization with cross-platform Docker deployment capabilities.
-
-For issues or contributions, please refer to the project repository.
-
----
-
-**Ready to test TranscrevAI? Run `docker-compose up -d` and visit http://localhost:8000**

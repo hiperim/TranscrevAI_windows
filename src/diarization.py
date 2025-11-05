@@ -85,7 +85,8 @@ class PyannoteDiarizer:
             num_speakers = len(diarization_result.labels())
             logger.info(f"✓ pyannote.audio detected {num_speakers} speakers")
             aligned_segments = align_speakers_by_word(transcription_segments, diarization_result)
-            return {"segments": aligned_segments, "num_speakers": int(num_speakers)}
+            result = {"segments": aligned_segments, "num_speakers": int(num_speakers)}
+            return result
         except Exception as e:
             logger.error(f"Diarization with pyannote.audio failed: {e}", exc_info=True)
             for seg in transcription_segments:
