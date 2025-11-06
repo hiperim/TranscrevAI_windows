@@ -5,41 +5,42 @@ import librosa
 
 from src.subtitle_generator import generate_srt
 from src.websocket_enhancements import MessagePriority
-
-# Type hinting for AppState without causing circular imports
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from main import AppState
+from src.dependencies import (
+    get_transcription_service,
+    get_diarization_service,
+    get_file_manager,
+    get_session_manager
+)
 
 logger = logging.getLogger(__name__)
 
-async def process_audio_pipeline(app_state: 'AppState', audio_path: str, session_id: str) -> None:
+async def process_audio_pipeline(audio_path: str, session_id: str) -> None:
     """Complete, non-blocking pipeline for processing a single audio file."""
-    try:
-        # Explicitly check for required services to ensure runtime safety
-        if not app_state.transcription_service:
-            raise RuntimeError("Transcription service not initialized")
-        if not app_state.diarization_service:
-            raise RuntimeError("Diarization service not initialized")
-        if not app_state.file_manager:
-            raise RuntimeError("File manager not initialized")
-        if not app_state.session_manager:
-            raise RuntimeError("Session manager not initialized")
+    # Get services via DI
+    transcription_service = get_transcription_service()
+    diarization_service = get_diarization_service()
+    file_manager = get_file_manager()
+    session_manager = get_session_manager()
 
+    try:
         audio_duration = librosa.get_duration(path=audio_path)
         pipeline_start_time = time.time()
 
-        await app_state.send_message(session_id, {'type': 'progress', 'stage': 'start', 'percentage': 5, 'message': 'Analisando qualidade do áudio...'})
-        
-        transcription_result = await app_state.transcription_service.transcribe_with_enhancements(audio_path)
+        session = await session_manager.get_session(session_id)
+        if session and session.websocket:
+            await session.websocket.send_json({'type': 'progress', 'stage': 'start', 'percentage': 5, 'message': 'Analisando qualidade do áudio...'})
 
-        await app_state.send_message(session_id, {'type': 'progress', 'stage': 'diarization', 'percentage': 50, 'message': 'Transcrição concluída. Identificando falantes...'})
+        transcription_result = await transcription_service.transcribe_with_enhancements(audio_path)
 
-        diarization_result = await app_state.diarization_service.diarize(audio_path, transcription_result.segments)
+        if session and session.websocket:
+            await session.websocket.send_json({'type': 'progress', 'stage': 'diarization', 'percentage': 50, 'message': 'Transcrição concluída. Identificando falantes...'})
 
-        await app_state.send_message(session_id, {'type': 'progress', 'stage': 'srt', 'percentage': 80, 'message': 'Gerando legendas...'})
+        diarization_result = await diarization_service.diarize(audio_path, transcription_result.segments)
 
-        srt_path = await generate_srt(diarization_result["segments"], file_manager=app_state.file_manager, filename=f"{session_id}.srt")
+        if session and session.websocket:
+            await session.websocket.send_json({'type': 'progress', 'stage': 'srt', 'percentage': 80, 'message': 'Gerando legendas...'})
+
+        srt_path = await generate_srt(diarization_result["segments"], file_manager=file_manager, filename=f"{session_id}.srt")
 
         pipeline_end_time = time.time()
         actual_processing_time = pipeline_end_time - pipeline_start_time
@@ -48,7 +49,10 @@ async def process_audio_pipeline(app_state: 'AppState', audio_path: str, session
         logger.info(f"Processing complete for {session_id}: {actual_processing_time:.2f}s for {audio_duration:.2f}s audio (ratio: {processing_ratio:.2f}x)")
     except Exception as e:
         logger.error(f"Error in audio processing pipeline: {str(e)}", exc_info=True)
-        await app_state.send_message(session_id, {'type': 'error', 'message': f"Erro no pipeline: {str(e)}"}, MessagePriority.CRITICAL)
+        session = await session_manager.get_session(session_id)
+        if session and session.websocket:
+            await session.websocket.send_json({'type': 'error', 'message': f"Erro no pipeline: {str(e)}"})
+        return
 
     final_result = {
         "segments": diarization_result["segments"],
@@ -59,19 +63,19 @@ async def process_audio_pipeline(app_state: 'AppState', audio_path: str, session
     }
 
     try:
-        if app_state.session_manager:
-            # Correctly await the session object
-            session = await app_state.session_manager.get_session(session_id)
-            if session:
-                # Use the `files` attribute of the SessionData object
-                session.files["audio"] = audio_path
-                session.files["subtitles"] = str(srt_path)
-                logger.info(f"File paths stored in SessionManager for {session_id}")
+        session = await session_manager.get_session(session_id)
+        if session:
+            session.files["audio"] = audio_path
+            session.files["subtitles"] = str(srt_path)
+            logger.info(f"File paths stored in SessionManager for {session_id}")
 
-        await app_state.send_message(session_id, {'type': 'complete', 'result': final_result}, MessagePriority.CRITICAL)
+            if session.websocket:
+                await session.websocket.send_json({'type': 'complete', 'result': final_result})
 
     except Exception as e:
         logger.error(f"Audio pipeline failed during finalization for session {session_id}: {e}", exc_info=True)
-        await app_state.send_message(session_id, {'type': 'error', 'message': str(e)}, MessagePriority.CRITICAL)
+        session = await session_manager.get_session(session_id)
+        if session and session.websocket:
+            await session.websocket.send_json({'type': 'error', 'message': str(e)})
 
 
