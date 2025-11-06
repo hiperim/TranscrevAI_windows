@@ -6,13 +6,10 @@ import time
 import asyncio
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Any, List
+from typing import Dict, Any, List
 from concurrent.futures import Future
 
 from src.transcription import TranscriptionResult
-
-if TYPE_CHECKING:
-    from main import AppState
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +26,19 @@ class WorkerSession:
         self.total_bytes: int = 0
         self.batch_count: int = 0
 
-def transcription_worker(app_state: "AppState", loop: asyncio.AbstractEventLoop):
+def transcription_worker(
+    transcription_queue: queue.Queue,
+    file_manager,
+    live_audio_processor,
+    transcription_service,
+    session_manager,
+    loop: asyncio.AbstractEventLoop
+):
     sessions: Dict[str, WorkerSession] = {}
-
-    if not app_state.transcription_queue:
-        logger.error("Transcription queue is not initialized. Worker thread exiting.")
-        return
 
     while True:
         try:
-            job = app_state.transcription_queue.get()
+            job = transcription_queue.get()
             if job is None:  # Poison pill to exit
                 logger.info("Poison pill received. Transcription worker shutting down.")
                 break
@@ -64,12 +64,18 @@ def transcription_worker(app_state: "AppState", loop: asyncio.AbstractEventLoop)
                 worker_session.total_bytes += len(audio_chunk)
 
                 if worker_session.total_bytes >= CHUNK_BYTES_THRESHOLD:
-                    _process_audio_batch(app_state, loop, worker_session)
+                    _process_audio_batch(
+                        file_manager, live_audio_processor, transcription_service,
+                        session_manager, loop, worker_session
+                    )
 
             elif job_type == "stop":
                 logger.info(f"Stop signal received for session {session_id}. Processing final batch.")
                 if worker_session.audio_buffer:
-                    _process_audio_batch(app_state, loop, worker_session, is_final=True)
+                    _process_audio_batch(
+                        file_manager, live_audio_processor, transcription_service,
+                        session_manager, loop, worker_session, is_final=True
+                    )
                 # Clean up the session from the worker's memory
                 del sessions[session_id]
 
@@ -77,16 +83,26 @@ def transcription_worker(app_state: "AppState", loop: asyncio.AbstractEventLoop)
                 payload = job.get("payload")
                 message = {"type": "echo_response", "payload": payload}
                 asyncio.run_coroutine_threadsafe(
-                    app_state.send_message(session_id, message),
+                    _send_message(session_manager, session_id, message),
                     loop
                 )
 
-            app_state.transcription_queue.task_done()
+            transcription_queue.task_done()
 
         except Exception as e:
             logger.error(f"Error in transcription worker: {e}", exc_info=True)
 
-def _process_audio_batch(app_state: "AppState", loop: asyncio.AbstractEventLoop, worker_session: WorkerSession, is_final: bool = False):
+async def _send_message(session_manager, session_id: str, message: dict):
+    """Helper to send message via websocket"""
+    session = await session_manager.get_session(session_id)
+    if session and session.websocket:
+        await session.websocket.send_json(message)
+
+def _process_audio_batch(
+    file_manager, live_audio_processor, transcription_service,
+    session_manager, loop: asyncio.AbstractEventLoop,
+    worker_session: WorkerSession, is_final: bool = False
+):
     """Prepares and schedules a batch of audio for transcription, but does not block."""
     worker_session.batch_count += 1
     batch_num = worker_session.batch_count
@@ -102,11 +118,7 @@ def _process_audio_batch(app_state: "AppState", loop: asyncio.AbstractEventLoop,
 
     logger.info(f"Processing batch {batch_num} for session {session_id} ({len(audio_data)} bytes).")
 
-    if not app_state.file_manager or not app_state.live_audio_processor or not app_state.transcription_service:
-        logger.error("Core services (FileManager, LiveAudioProcessor, or TranscriptionService) not initialized in worker.")
-        return
-
-    temp_dir = app_state.file_manager.get_data_path("temp")
+    temp_dir = file_manager.get_data_path("temp")
 
     # Detect if data is already WAV format (starts with 'RIFF' and contains 'WAVE')
     is_wav = audio_data[:4] == b'RIFF' and b'WAVE' in audio_data[:20]
@@ -130,7 +142,7 @@ def _process_audio_batch(app_state: "AppState", loop: asyncio.AbstractEventLoop,
             with open(webm_path, 'wb') as f:
                 f.write(audio_data)
 
-            app_state.live_audio_processor._convert_webm_to_wav(str(webm_path), str(wav_path), sample_rate=16000)
+            live_audio_processor._convert_webm_to_wav(str(webm_path), str(wav_path), sample_rate=16000)
 
         except Exception as e:
             logger.error(f"Failed to prepare audio batch {batch_num} for session {session_id}: {e}", exc_info=True)
@@ -161,7 +173,7 @@ def _process_audio_batch(app_state: "AppState", loop: asyncio.AbstractEventLoop,
                     "is_final_batch": is_final
                 }
             }
-            asyncio.run_coroutine_threadsafe(app_state.send_message(session_id, message), loop)
+            asyncio.run_coroutine_threadsafe(_send_message(session_manager, session_id, message), loop)
             logger.info(f"Sent transcription for batch {batch_num} of session {session_id}.")
 
         except Exception as e:
@@ -172,7 +184,7 @@ def _process_audio_batch(app_state: "AppState", loop: asyncio.AbstractEventLoop,
                 "message": f"Erro ao processar áudio: {str(e)}",
                 "batch": batch_num
             }
-            asyncio.run_coroutine_threadsafe(app_state.send_message(session_id, error_message), loop)
+            asyncio.run_coroutine_threadsafe(_send_message(session_manager, session_id, error_message), loop)
         finally:
             # --- Cleanup ---
             try:
@@ -189,7 +201,7 @@ def _process_audio_batch(app_state: "AppState", loop: asyncio.AbstractEventLoop,
 
     # --- Schedule Transcription ---
     future = asyncio.run_coroutine_threadsafe(
-        app_state.transcription_service.transcribe_with_enhancements(str(wav_path)),
+        transcription_service.transcribe_with_enhancements(str(wav_path)),
         loop
     )
     future.add_done_callback(on_transcription_complete)
