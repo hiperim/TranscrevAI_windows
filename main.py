@@ -166,13 +166,45 @@ async def upload_audio(request: Request, background_tasks: BackgroundTasks, file
     if not app_state.session_manager or not app_state.file_manager:
         raise HTTPException(status_code=503, detail="Core services not initialized")
 
+    # Validate file size (500MB limit for 60min audio)
+    MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500MB
+    file_size = 0
+
+    # Read file to check size
+    content = await file.read()
+    file_size = len(content)
+
+    if file_size > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Arquivo muito grande. Tamanho máximo: 500MB. Tamanho recebido: {file_size / (1024*1024):.1f}MB"
+        )
+
+    # Reset file pointer for later processing
+    await file.seek(0)
+
     # Use the provided session_id if it exists, otherwise create a new one.
     session_id = session_id or str(uuid.uuid4())
-    logger.info(f"Upload received, processing for session {session_id}")
+    logger.info(f"Upload received ({file_size / (1024*1024):.1f}MB), processing for session {session_id}")
 
     try:
         # Save the uploaded file asynchronously
         file_path = await app_state.file_manager.save_uploaded_file(file, file.filename or f"{session_id}.wav")
+
+        # Validate audio duration (60min max)
+        import librosa
+        try:
+            duration = librosa.get_duration(path=str(file_path))
+            if duration > 3600:  # 60 minutes
+                Path(file_path).unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Áudio muito longo. Duração máxima: 60 minutos. Duração: {duration/60:.1f} min"
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Could not validate duration for {file_path}: {e}")
 
         # Create a session data object for this upload
         session_data = SessionData(
@@ -368,7 +400,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 validator.validate_chunk_size(chunk_b64)
                 estimated_chunk_size = len(chunk_b64) * 3 / 4
                 validator.validate_total_size(int(total_data_received + estimated_chunk_size))
-                validator.validate_recording_duration(recording_start_time)
+
+                # Check if 60min limit reached - auto-stop if so
+                if validator.validate_recording_duration(recording_start_time):
+                    await websocket.send_json({
+                        "type": "duration_limit_reached",
+                        "message": "Gravação atingiu o limite de 60 minutos. Processando áudio gravado..."
+                    })
+                    # Trigger auto-stop (will process on next iteration)
+                    action = "stop"
 
             # --- Handling ---
             if action == "start":

@@ -64,14 +64,14 @@ class WebSocketValidator:
         return None
 
     def validate_recording_duration(self, recording_start_time: Optional[float]):
-        """Validates recording duration, raising ValidationError on failure."""
+        """Checks if recording reached 60min limit. Returns True if limit reached (should auto-stop)."""
         if recording_start_time is None:
-            return None
+            return False
         elapsed_time = time.time() - recording_start_time
         if elapsed_time > MAX_RECORDING_DURATION:
-            logger.warning("Recording duration exceeded", extra={"duration": elapsed_time, "limit": MAX_RECORDING_DURATION})
-            raise ValidationError(get_user_message("duration_exceeded", max_duration=MAX_RECORDING_DURATION // 60))
-        return None
+            logger.warning("Recording duration reached 60min limit", extra={"duration": elapsed_time, "limit": MAX_RECORDING_DURATION})
+            return True  # Signal auto-stop needed
+        return False
 
 class WebSocketHandler:
     """Handles the business logic for WebSocket actions."""

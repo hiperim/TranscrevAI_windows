@@ -180,6 +180,8 @@ class LiveRecorder {
 
     pauseRecording() {
         if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+            // Force send any accumulated audio data before pausing
+            this.mediaRecorder.requestData();
             this.mediaRecorder.pause();
             this.ws.send(JSON.stringify({ action: 'pause' }));
             this.stopTimer();
@@ -198,9 +200,16 @@ class LiveRecorder {
 
     stopRecording() {
         if (this.mediaRecorder) {
-            this.mediaRecorder.stop();
-            this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
-            this.ws.send(JSON.stringify({ action: 'stop' }));
+            // Force send any accumulated audio data before stopping
+            this.mediaRecorder.requestData();
+
+            // Small delay to ensure data is sent before stopping
+            setTimeout(() => {
+                this.mediaRecorder.stop();
+                this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                this.ws.send(JSON.stringify({ action: 'stop' }));
+            }, 100);
+
             this.stopTimer();
             this.updateStatus('Processando...', 'processing');
             this.recordingState = 'processing';
