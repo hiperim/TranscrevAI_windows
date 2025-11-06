@@ -76,31 +76,21 @@ class WebSocketValidator:
 class WebSocketHandler:
     """Handles the business logic for WebSocket actions."""
 
-    def __init__(self, app_state: 'AppState'):
-        self.app_state = app_state
+    def __init__(self, session_manager, live_audio_processor):
+        self.session_manager = session_manager
+        self.live_audio_processor = live_audio_processor
 
     async def handle_start(self, data: Dict[str, Any], session_id: str, websocket: WebSocket):
         """Handles the 'start' action and returns the initial recording state."""
         logger.info(f"▶️ Starting recording for session {session_id}")
-        
-        if not self.app_state.session_manager:
-            raise SessionError("SessionManager not initialized")
 
-        session = await self.app_state.session_manager.get_session(session_id)
+        session = await self.session_manager.get_session(session_id)
         if not session:
             raise SessionError(f"Session not found during start: {session_id}")
 
-        # The processor should be created and assigned when the session is created,
-        # not retrieved here. This logic needs to be revisited in TIER 2.
-        # For now, we assume it exists if the session exists.
-
         audio_format = data.get("format", "wav").lower()
         session.status = "recording"
-        # The format is now part of the SessionData object
         session.format = audio_format
-        
-        # The LiveAudioProcessor is now part of the session logic, not directly handled here.
-        # This part of the code is becoming coupled and will be addressed in TIER 2.
 
         await websocket.send_json({
             "type": "recording_started",
@@ -112,12 +102,6 @@ class WebSocketHandler:
 
     async def handle_chunk(self, data: Dict[str, Any], session_id: str, websocket: WebSocket):
         """Handles the 'audio_chunk' action. Returns the number of bytes received."""
-        if not self.app_state.session_manager:
-            raise SessionError("SessionManager not initialized")
-
-        # No need to get the session here, the chunk processing logic should handle it.
-        # This indicates a need for further refactoring.
-
         chunk_b64 = data.get("data", "")
         try:
             audio_data = base64.b64decode(chunk_b64)
@@ -126,21 +110,15 @@ class WebSocketHandler:
                 "type": "error",
                 "message": "Dados de áudio inválidos (base64 decode falhou)"
             })
-            return 0, True # Return 0 bytes and error=True
+            return 0, True
 
-        # This logic should be moved to a dedicated session/processor class in a future refactor.
-        # For now, we assume a processor exists and can handle the chunk.
-        # await processor.process_audio_chunk(session_id, audio_data)
-        return len(audio_data), False # Return bytes received and error=False
+        return len(audio_data), False
 
     async def handle_stop(self, session_id: str, websocket: WebSocket):
         """Handles the 'stop' action, finalizing the recording and starting the background processing."""
         logger.info(f"⏹️ Stopping recording for session {session_id}")
 
-        if not self.app_state.session_manager:
-            raise SessionError("SessionManager not initialized")
-
-        session = await self.app_state.session_manager.get_session(session_id)
+        session = await self.session_manager.get_session(session_id)
         if not session:
             raise SessionError(f"Session not found during stop: {session_id}")
 
@@ -157,7 +135,7 @@ class WebSocketHandler:
             raise AudioProcessingError("Arquivo de áudio gravado não encontrado para processamento.", context={"session_id": session_id})
 
         # Run the processing pipeline in the background without blocking
-        asyncio.create_task(process_audio_pipeline(self.app_state, audio_path, session_id))
+        asyncio.create_task(process_audio_pipeline(audio_path, session_id))
 
         await websocket.send_json({
             "type": "processing_started",
