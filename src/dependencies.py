@@ -18,7 +18,7 @@ from config.app_config import get_config
 
 # Global service instances (singleton pattern)
 _services = {}
-_lock = threading.Lock()
+_lock = threading.RLock()  # Reentrant lock to allow nested get_* calls
 
 
 @lru_cache()
@@ -86,12 +86,13 @@ def get_transcription_queue() -> queue.Queue:
         return _services['transcription_queue']
 
 
-def get_worker_thread() -> threading.Thread:
+def get_worker_thread(loop: asyncio.AbstractEventLoop = None) -> threading.Thread:
     """Get or create worker thread"""
     with _lock:
         if 'worker_thread' not in _services:
             from src.worker import transcription_worker
-            main_loop = asyncio.get_event_loop()
+            if loop is None:
+                loop = asyncio.get_running_loop()
 
             # Create worker thread
             worker_thread = threading.Thread(
@@ -102,7 +103,7 @@ def get_worker_thread() -> threading.Thread:
                     get_live_audio_processor(),
                     get_transcription_service(),
                     get_session_manager(),
-                    main_loop
+                    loop
                 ),
                 daemon=True
             )

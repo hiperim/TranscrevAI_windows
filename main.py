@@ -23,7 +23,7 @@ import torch
 import psutil
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import (FastAPI, Request, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, BackgroundTasks)
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -65,6 +65,7 @@ from src.dependencies import (
     get_file_manager,
     get_transcription_service,
     get_diarization_service,
+    get_audio_quality_analyzer,
     get_session_manager,
     get_live_audio_processor,
     get_transcription_queue,
@@ -86,7 +87,10 @@ async def lifespan(app: FastAPI):
     get_session_manager()
     get_live_audio_processor()
     get_transcription_queue()
-    get_worker_thread()
+
+    # Get running loop and pass to worker
+    loop = asyncio.get_running_loop()
+    get_worker_thread(loop)
 
     logger.info("Services and worker initialized successfully.")
     yield
@@ -275,6 +279,17 @@ ws_connection_tracker = defaultdict(list)
 WS_RATE_LIMIT = 20  # connections per minute
 WS_RATE_WINDOW = 60  # seconds
 
+@app.post("/test/reset-rate-limit", status_code=200)
+async def reset_rate_limit_for_testing():
+    """Reset rate limiters - FOR TESTING ONLY"""
+    ws_connection_tracker.clear()
+    # Reset slowapi limiter storage
+    try:
+        limiter.reset()
+    except:
+        pass
+    return {"status": "rate limits reset"}
+
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -420,34 +435,19 @@ async def websocket_endpoint(
             elif action == "stop":
                 logger.info(f"⏹️ Stop action received for session {session_id}")
 
-                # Stop the recording and get the audio file path
-                audio_path = await loop.run_in_executor(None, live_audio_processor.stop_recording, session_id)
-
-                if not audio_path or not Path(audio_path).exists():
-                    logger.error(f"Audio file not found for session {session_id} at path: {audio_path}")
-                    raise AudioProcessingError("Arquivo de áudio gravado não encontrado para processamento.", context={"session_id": session_id})
-
                 # Update session status
                 current_session_data.status = "processing"
 
                 # Send stop confirmation
                 await websocket.send_json({
                     "type": "recording_stopped",
-                    "message": "Gravação finalizada. Processando..."
+                    "message": "Gravação finalizada. Processando batch final..."
                 })
 
-                # Queue final transcription job for any remaining audio chunks
+                # Queue final transcription job for any remaining audio chunks in worker buffer
                 stop_job = {"type": "stop", "session_id": session_id}
                 transcription_queue.put(stop_job)
-
-                # Start the full processing pipeline in background
-                asyncio.create_task(process_audio_pipeline(audio_path, session_id))
-
-                await websocket.send_json({
-                    "type": "processing_started",
-                    "message": "Processamento iniciado em background"
-                })
-                logger.info(f"Audio processing pipeline started for session {session_id}")
+                logger.info(f"Stop job queued for session {session_id} - worker will process final batch")
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected by client: {session_id}")

@@ -63,6 +63,18 @@ PROF_DIR = Path(__file__).parent / "prof"
 PROF_DIR.mkdir(parents=True, exist_ok=True)
 
 
+@pytest.fixture(scope="module")
+def transcription_service():
+    """Shared TranscriptionService for all tests"""
+    return TranscriptionService(model_name="medium", device="cpu")
+
+
+@pytest.fixture(scope="module")
+def diarizer():
+    """Shared PyannoteDiarizer for all tests"""
+    return PyannoteDiarizer(device="cpu")
+
+
 def load_ground_truth(file_path: Path) -> str:
     """Load and return ground truth text."""
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -74,7 +86,7 @@ def get_audio_duration(audio_path: Path) -> float:
     return librosa.get_duration(path=str(audio_path))
 
 
-async def test_single_audio(
+async def _process_single_audio(
     audio_config: Dict[str, Any],
     transcription_service: TranscriptionService,
     diarizer: PyannoteDiarizer
@@ -204,7 +216,7 @@ async def test_transcription_diarization_accuracy():
     # Test each audio file
     results_list = []
     for audio_config in AUDIO_FILES:
-        result = await test_single_audio(
+        result = await _process_single_audio(
             audio_config,
             transcription_service,
             diarizer

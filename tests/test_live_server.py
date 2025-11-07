@@ -9,10 +9,11 @@ import subprocess
 import time
 import websockets
 import json
+import requests
 from pathlib import Path
 
 SERVER_URL = "ws://localhost:8000"
-STARTUP_TIMEOUT = 30  # seconds
+STARTUP_TIMEOUT = 60  # seconds - increased for DI initialization
 
 @pytest.fixture(scope="module")
 def server_process():

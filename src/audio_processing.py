@@ -419,10 +419,10 @@ class LiveAudioProcessor:
     def start_recording(self, session_id: str, sample_rate: int = 16000) -> Dict[str, Any]:
         """Start a new recording session with disk buffering"""
         with self._lock:
+            # Allow restarting session (override any previous state)
+            # This handles reconnection after abrupt disconnect
             if session_id in self.sessions:
-                current_state = self.sessions[session_id].get("state")
-                if current_state and current_state != RecordingState.IDLE:
-                    raise ValueError(f"Session {session_id} already active with state: {current_state.value}")
+                logger.info(f"Overriding existing session state for {session_id}")
 
             temp_file = self.temp_dir / f"{session_id}_{int(time.time())}.wav"
 
