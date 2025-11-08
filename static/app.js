@@ -8,6 +8,9 @@ let liveRecorder = null;
 
 // --- UI AND TAB MANAGEMENT ---
 function switchTab(tabName) {
+    // Clear previous results when switching tabs
+    clearResults();
+
     document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
     });
@@ -26,6 +29,9 @@ function switchTab(tabName) {
 // --- FILE UPLOAD WORKFLOW ---
 async function processUpload() {
     if (!currentFile) return;
+
+    // Clear previous results when starting new upload
+    clearResults();
 
     const uploadBtn = document.getElementById('upload-btn');
     uploadBtn.disabled = true;
@@ -140,6 +146,10 @@ class LiveRecorder {
 
     async startRecording() {
         console.log('[DEBUG] LiveRecorder.startRecording() called');
+
+        // Clear previous results when starting new recording
+        clearResults();
+
         try {
             // Connect automatically if not already connected
             if (!this.ws) {
@@ -445,6 +455,31 @@ function showStatus(text, progress) {
     status.classList.add('show');
     statusText.innerHTML = text;
     progressFill.style.width = progress + '%';
+}
+
+function clearResults() {
+    const results = document.getElementById('results');
+    const stats = document.getElementById('stats');
+    const transcriptionResults = document.getElementById('transcription-results');
+    const status = document.getElementById('status');
+    const downloadBtn = document.getElementById('download-btn');
+    const downloadAudioBtn = document.getElementById('download-audio-btn');
+
+    // Hide results section
+    if (results) results.classList.remove('show');
+
+    // Clear stats
+    if (stats) stats.innerHTML = '';
+
+    // Clear transcription
+    if (transcriptionResults) transcriptionResults.innerHTML = '';
+
+    // Hide status
+    if (status) status.classList.remove('show');
+
+    // Disable download buttons
+    if (downloadBtn) downloadBtn.disabled = true;
+    if (downloadAudioBtn) downloadAudioBtn.style.display = 'none';
 }
 
 function showResults(data, sessionId) {

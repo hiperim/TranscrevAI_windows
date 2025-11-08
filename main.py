@@ -208,15 +208,22 @@ async def upload_audio(
         except Exception as e:
             logger.warning(f"Could not validate duration for {file_path}: {e}")
 
-        # Create a session data object for this upload
-        session_data = SessionData(
-            session_id=session_id,
-            websocket=None, # No websocket for uploads
-            format=Path(file_path).suffix,
-            started_at=datetime.now(),
-            temp_file=str(file_path) # The uploaded file is the temp file
-        )
-        await session_manager.create_session(session_id, session_data)
+        # Get existing session (created by WebSocket) or create new one
+        session = await session_manager.get_session(session_id)
+        if not session:
+            # Create a session data object for this upload
+            session_data = SessionData(
+                session_id=session_id,
+                websocket=None, # No websocket for uploads
+                format=Path(file_path).suffix,
+                started_at=datetime.now(),
+                temp_file=str(file_path) # The uploaded file is the temp file
+            )
+            await session_manager.create_session(session_id, session_data)
+        else:
+            # Update existing session with file path
+            session.temp_file = str(file_path)
+            session.format = Path(file_path).suffix
 
         # Run the processing pipeline in the background without blocking
         asyncio.create_task(process_audio_pipeline(str(file_path), session_id))
