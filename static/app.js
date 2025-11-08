@@ -132,19 +132,6 @@ class LiveRecorder {
         } else if (data.type === 'error') {
             this.updateStatus(`Erro: ${data.message}`, 'error');
             if (spinner) spinner.style.display = 'none';
-        } else if (data.type === 'transcription_chunk') {
-            // Handle transcription result from live recording
-            document.getElementById('loading-spinner').style.display = 'none';
-            document.getElementById('status').classList.remove('show');
-
-            this.handleTranscriptionComplete({
-                transcription: data.data.text,
-                num_speakers: 1,
-                segments: [{text: data.data.text, speaker: 'SPEAKER_01', start: 0, end: 0}],
-                processing_time: data.data.processing_time || 'N/A',
-                processing_ratio: data.data.processing_ratio || 'N/A',
-                audio_duration: data.data.audio_duration || 'N/A'
-            });
         } else if (data.type === 'complete') {
             if (spinner) spinner.style.display = 'none';
             this.handleTranscriptionComplete(data.result);

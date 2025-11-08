@@ -4,24 +4,8 @@ import logging
 import queue
 import time
 import asyncio
-import os
-from pathlib import Path
-from typing import Dict, Any, List
-from concurrent.futures import Future
-
-from src.transcription import TranscriptionResult
 
 logger = logging.getLogger(__name__)
-
-# --- Constants ---
-CHUNK_SECONDS = 5  # We will test with 5 and 15 seconds later
-# Assuming 16kHz, 16-bit mono audio, so 32,000 bytes per second.
-CHUNK_BYTES_THRESHOLD = 16000 * 2 * CHUNK_SECONDS
-
-class WorkerSession:
-    """Manages the state of a single session within the worker."""
-    def __init__(self, session_id: str):
-        self.session_id = session_id
 
 def transcription_worker(
     transcription_queue: queue.Queue,
@@ -31,8 +15,6 @@ def transcription_worker(
     session_manager,
     loop: asyncio.AbstractEventLoop
 ):
-    sessions: Dict[str, WorkerSession] = {}
-
     while True:
         try:
             job = transcription_queue.get()
@@ -44,11 +26,6 @@ def transcription_worker(
             if not session_id:
                 logger.warning("Invalid job received (no session_id), skipping.")
                 continue
-
-            # Get or create a session state within the worker
-            if session_id not in sessions:
-                sessions[session_id] = WorkerSession(session_id)
-            worker_session = sessions[session_id]
 
             job_type = job.get("type", "audio_chunk")
 
@@ -70,13 +47,9 @@ def transcription_worker(
 
                     if not session_exists:
                         logger.warning(f"Session {session_id} no longer exists. Skipping final processing.")
-                        if session_id in sessions:
-                            del sessions[session_id]
                         continue
                 except Exception as e:
                     logger.warning(f"Failed to validate session {session_id}: {e}. Skipping final processing.")
-                    if session_id in sessions:
-                        del sessions[session_id]
                     continue
 
                 # Run complete transcription + diarization + SRT generation
@@ -96,9 +69,6 @@ def transcription_worker(
                     logger.info(f"Scheduled final processing for session {session_id}")
                 else:
                     logger.warning(f"No WAV path provided for session {session_id}, skipping processing")
-
-                # Clean up the session from the worker's memory
-                del sessions[session_id]
 
             elif job_type == "echo":
                 payload = job.get("payload")

@@ -107,19 +107,6 @@
         </div>
     </div>
 
-    <script>
-        // Inline test to verify JavaScript is running
-        console.log('✅ INLINE TEST: JavaScript is working!');
-        console.log('📄 Current URL:', window.location.href);
-        console.log('📁 Document ready state:', document.readyState);
-    </script>
     <script src="/static/app.js?v={{ static_hashes['app.js'] }}"></script>
-    <script>
-        // Verify app.js loaded
-        window.addEventListener('load', () => {
-            console.log('🔍 Window loaded, checking if app.js functions exist...');
-            console.log('LiveRecorder class exists:', typeof LiveRecorder !== 'undefined');
-        });
-    </script>
 </body>
 </html>
