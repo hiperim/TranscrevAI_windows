@@ -95,7 +95,7 @@ class FileManager:
 
     def _ensure_directory_structure(self) -> None:
         """Create required subdirectories if they don't exist."""
-        subdirs = ["uploads", "transcripts", "srt", "recordings", "temp", "inputs"]
+        subdirs = ["uploads", "transcripts", "srt", "subtitles", "recordings", "temp", "inputs"]
         for subdir in subdirs:
             path = self.data_dir / subdir
             path.mkdir(parents=True, exist_ok=True)

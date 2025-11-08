@@ -558,45 +558,6 @@ class LiveAudioProcessor:
             logger.info(f"Recording stopped for session {session_id}. Duration: {duration:.2f}s, File: {temp_file_path}")
 
             return temp_file_path
-        session = self.sessions[session_id]
-        batch_num = session["batch_count"] + 1
-        session["batch_count"] = batch_num
-
-        audio_data = b''.join(session["audio_buffer"])
-        session["audio_buffer"].clear()
-        session["total_bytes"] = 0
-
-        if not audio_data:
-            logger.warning(f"Attempted to process an empty batch for session {session_id}")
-            return
-
-        try:
-            # Define temporary file paths for this batch
-            webm_path = self.temp_dir / f"{session_id}_batch_{batch_num}.webm"
-            wav_path = self.temp_dir / f"{session_id}_batch_{batch_num}.wav"
-
-            # Write raw WebM data to a temporary file
-            with open(webm_path, 'wb') as f:
-                f.write(audio_data)
-
-            # Convert the WebM batch to a WAV file
-            self._convert_webm_to_wav(str(webm_path), str(wav_path), session["sample_rate"])
-
-            # Create a job for the transcription worker
-            job = {
-                "session_id": session_id,
-                "wav_file_path": str(wav_path),
-                "is_final": is_final
-            }
-            transcription_queue.put(job)
-            logger.info(f"Queued batch {batch_num} for session {session_id} for transcription.")
-
-        except Exception as e:
-            logger.error(f"Failed to process batch {batch_num} for session {session_id}: {e}", exc_info=True)
-        finally:
-            # Clean up the temporary WebM file
-            if 'webm_path' in locals() and Path(webm_path).exists():
-                Path(webm_path).unlink()
 
     def _convert_webm_to_wav(self, input_path: str, output_path: str, sample_rate: int = 16000):
         """

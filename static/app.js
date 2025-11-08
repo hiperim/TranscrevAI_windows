@@ -44,7 +44,8 @@ async function processUpload() {
     showStatus('Enviando arquivo...', 5);
 
     try {
-        await setupWebSocketConnection(currentSessionId, handleUploadWebSocketMessage);
+        const connection = await setupWebSocketConnection(currentSessionId, handleUploadWebSocketMessage);
+        websocket = connection.ws;
 
         const formData = new FormData();
         formData.append('file', currentFile);
@@ -107,11 +108,15 @@ class LiveRecorder {
         this.ws = null;
         this.sessionId = 'live_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
         this.recordingState = 'idle'; // idle, recording, paused
+        this.isStopping = false; // prevent chunks after stop
         this.timer = null;
+        this.heartbeatInterval = null;
     }
 
     async init() {
-        this.ws = await setupWebSocketConnection(this.sessionId, (data) => this.handleServerMessage(data));
+        const connection = await setupWebSocketConnection(this.sessionId, (data) => this.handleServerMessage(data));
+        this.ws = connection.ws;
+        this.heartbeatInterval = connection.heartbeatInterval;
         this.updateStatus('Conectado', 'success');
     }
 
@@ -127,6 +132,19 @@ class LiveRecorder {
         } else if (data.type === 'error') {
             this.updateStatus(`Erro: ${data.message}`, 'error');
             if (spinner) spinner.style.display = 'none';
+        } else if (data.type === 'transcription_chunk') {
+            // Handle transcription result from live recording
+            document.getElementById('loading-spinner').style.display = 'none';
+            document.getElementById('status').classList.remove('show');
+
+            this.handleTranscriptionComplete({
+                transcription: data.data.text,
+                num_speakers: 1,
+                segments: [{text: data.data.text, speaker: 'SPEAKER_01', start: 0, end: 0}],
+                processing_time: data.data.processing_time || 'N/A',
+                processing_ratio: data.data.processing_ratio || 'N/A',
+                audio_duration: data.data.audio_duration || 'N/A'
+            });
         } else if (data.type === 'complete') {
             if (spinner) spinner.style.display = 'none';
             this.handleTranscriptionComplete(data.result);
@@ -149,6 +167,7 @@ class LiveRecorder {
             this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
 
             this.mediaRecorder.ondataavailable = async (event) => {
+                if (this.isStopping) return; // Don't send chunks after stop
                 if (event.data.size > 0) {
                     const reader = new FileReader();
                     reader.onloadend = () => {
@@ -200,15 +219,24 @@ class LiveRecorder {
 
     stopRecording() {
         if (this.mediaRecorder) {
+            // Cancel heartbeat to prevent ping after stop
+            if (this.heartbeatInterval) {
+                clearInterval(this.heartbeatInterval);
+                this.heartbeatInterval = null;
+            }
+
             // Force send any accumulated audio data before stopping
             this.mediaRecorder.requestData();
 
             // Small delay to ensure data is sent before stopping
             setTimeout(() => {
+                // Set flag NOW to prevent chunks from stop() event
+                this.isStopping = true;
+
                 this.mediaRecorder.stop();
                 this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
                 this.ws.send(JSON.stringify({ action: 'stop' }));
-            }, 100);
+            }, 150);
 
             this.stopTimer();
             this.updateStatus('Processando...', 'processing');
@@ -341,8 +369,8 @@ async function setupWebSocketConnection(sessionId, onMessageHandler, retryCount 
 
                 setTimeout(() => {
                     setupWebSocketConnection(sessionId, onMessageHandler, retryCount + 1)
-                        .then(newWs => {
-                            websocket = newWs;  // Update global reference
+                        .then(connection => {
+                            websocket = connection.ws;  // Update global reference
                         });
                 }, delay);
             } else if (retryCount >= WS_CONFIG.RETRY_ATTEMPTS) {
@@ -368,7 +396,7 @@ async function setupWebSocketConnection(sessionId, onMessageHandler, retryCount 
             ws.onerror = reject;
         });
 
-        return ws;
+        return { ws, heartbeatInterval };
     } catch (error) {
         console.error(`WebSocket setup failed for session ${sessionId}:`, error);
 
@@ -441,7 +469,7 @@ function showResults(data, sessionId) {
     stats.innerHTML = `
         <div class="stat-card"><div class="stat-value">${data.num_speakers || 0}</div><div class="stat-label">Falantes</div></div>
         <div class="stat-card"><div class="stat-value">${data.segments ? data.segments.length : 0}</div><div class="stat-label">Segmentos</div></div>
-        <div class="stat-card"><div class="stat-value">${data.processing_time || 'N/A'}s</div><div class="stat-label">Tempo</div></div>
+        <div class="stat-card"><div class="stat-value">${data.audio_duration || 'N/A'}s</div><div class="stat-label">Duração do áudio</div></div>
         <div class="stat-card"><div class="stat-value">${data.processing_ratio ? data.processing_ratio + 'x' : 'N/A'}</div><div class="stat-label">Ratio</div></div>
     `;
 
@@ -457,6 +485,25 @@ function showResults(data, sessionId) {
             `;
             transcriptionResults.appendChild(segmentDiv);
         });
+    } else if (data.transcription) {
+        // Show plain transcription for live recording (no diarization yet)
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'segment';
+        infoDiv.style.backgroundColor = '#f0f8ff';
+        infoDiv.style.borderLeft = '4px solid #2196F3';
+        infoDiv.innerHTML = `
+            <div class="segment-text" style="font-style: italic; color: #666;">
+                ℹ️ Transcrição em tempo real. Diarização disponível no arquivo .srt para download.
+            </div>
+        `;
+        transcriptionResults.appendChild(infoDiv);
+
+        const segmentDiv = document.createElement('div');
+        segmentDiv.className = 'segment';
+        segmentDiv.innerHTML = `
+            <div class="segment-text">${data.transcription}</div>
+        `;
+        transcriptionResults.appendChild(segmentDiv);
     }
 
     if (downloadBtn) {

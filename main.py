@@ -14,6 +14,7 @@ import threading
 import base64
 import uuid
 import queue
+import hashlib
 from src.worker import transcription_worker
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
@@ -49,6 +50,21 @@ app_config = get_config()
 logging.basicConfig(level=app_config.log_level.upper(), format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# --- Cache Busting: File hash calculation ---
+def calculate_file_hash(file_path: Path) -> str:
+    """Calculate MD5 hash of file content for cache busting."""
+    try:
+        with open(file_path, 'rb') as f:
+            return hashlib.md5(f.read()).hexdigest()[:8]
+    except:
+        return str(int(time.time()))  # Fallback to timestamp
+
+# Calculate static file hashes at startup
+STATIC_HASHES = {
+    'app.js': calculate_file_hash(Path('static/app.js')),
+    'styles.css': calculate_file_hash(Path('static/styles.css'))
+}
+
 # Adaptive Performance Tuning (Hardware-Aware)
 # Automatically configures optimal thread counts based on available hardware
 from src.audio_processing import configure_adaptive_threads
@@ -81,7 +97,13 @@ async def lifespan(app: FastAPI):
 
     # Initialize services via DI - triggers singleton creation
     get_file_manager()
-    get_transcription_service()
+
+    # Get transcription service and pre-load Whisper model
+    transcription_service = get_transcription_service()
+    logger.info("Pre-loading Whisper model...")
+    await transcription_service.initialize()
+    logger.info("Whisper model loaded successfully")
+
     get_diarization_service()
     get_audio_quality_analyzer()
     get_session_manager()
@@ -130,7 +152,10 @@ templates = Jinja2Templates(directory="templates")
 # === API Endpoints ===
 @app.get("/")
 async def read_root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "static_hashes": STATIC_HASHES
+    })
 
 @app.post("/upload")
 @limiter.limit("10/minute")
@@ -411,6 +436,11 @@ async def websocket_endpoint(
             elif action == "audio_chunk":
                 try:
                     audio_bytes = base64.b64decode(message.get("data", ""))
+
+                    # Send to LiveAudioProcessor for buffering (generates final WAV)
+                    await loop.run_in_executor(None, live_audio_processor.process_audio_chunk, session_id, audio_bytes)
+
+                    # Send to worker for real-time transcription
                     job = {
                         "session_id": session_id,
                         "type": "audio_chunk",
@@ -444,10 +474,18 @@ async def websocket_endpoint(
                     "message": "Gravação finalizada. Processando batch final..."
                 })
 
-                # Queue final transcription job for any remaining audio chunks in worker buffer
-                stop_job = {"type": "stop", "session_id": session_id}
+                # Call LiveAudioProcessor to generate final WAV file from accumulated chunks
+                try:
+                    wav_path = await loop.run_in_executor(None, live_audio_processor.stop_recording, session_id)
+                    logger.info(f"Final WAV file generated: {wav_path}")
+                except Exception as e:
+                    logger.error(f"Failed to generate final WAV for session {session_id}: {e}", exc_info=True)
+                    wav_path = None
+
+                # Queue final transcription job with WAV path for diarization
+                stop_job = {"type": "stop", "session_id": session_id, "wav_path": wav_path}
                 transcription_queue.put(stop_job)
-                logger.info(f"Stop job queued for session {session_id} - worker will process final batch")
+                logger.info(f"Stop job queued for session {session_id} with WAV path: {wav_path}")
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected by client: {session_id}")

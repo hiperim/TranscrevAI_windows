@@ -22,9 +22,6 @@ class WorkerSession:
     """Manages the state of a single session within the worker."""
     def __init__(self, session_id: str):
         self.session_id = session_id
-        self.audio_buffer: List[bytes] = []
-        self.total_bytes: int = 0
-        self.batch_count: int = 0
 
 def transcription_worker(
     transcription_queue: queue.Queue,
@@ -56,26 +53,50 @@ def transcription_worker(
             job_type = job.get("type", "audio_chunk")
 
             if job_type == "audio_chunk":
-                audio_chunk = job.get("audio_chunk_bytes")
-                if not audio_chunk:
-                    continue
-
-                worker_session.audio_buffer.append(audio_chunk)
-                worker_session.total_bytes += len(audio_chunk)
-
-                if worker_session.total_bytes >= CHUNK_BYTES_THRESHOLD:
-                    _process_audio_batch(
-                        file_manager, live_audio_processor, transcription_service,
-                        session_manager, loop, worker_session
-                    )
+                # Audio chunks are buffered by LiveAudioProcessor
+                # No real-time transcription - all processing happens at stop
+                continue
 
             elif job_type == "stop":
-                logger.info(f"Stop signal received for session {session_id}. Processing final batch.")
-                if worker_session.audio_buffer:
-                    _process_audio_batch(
-                        file_manager, live_audio_processor, transcription_service,
-                        session_manager, loop, worker_session, is_final=True
+                logger.info(f"Stop signal received for session {session_id}. Starting final processing.")
+                wav_path = job.get("wav_path")
+
+                # Validate session still exists before processing
+                try:
+                    session_check_future = asyncio.run_coroutine_threadsafe(
+                        session_manager.get_session(session_id), loop
                     )
+                    session_exists = session_check_future.result(timeout=1)
+
+                    if not session_exists:
+                        logger.warning(f"Session {session_id} no longer exists. Skipping final processing.")
+                        if session_id in sessions:
+                            del sessions[session_id]
+                        continue
+                except Exception as e:
+                    logger.warning(f"Failed to validate session {session_id}: {e}. Skipping final processing.")
+                    if session_id in sessions:
+                        del sessions[session_id]
+                    continue
+
+                # Run complete transcription + diarization + SRT generation
+                if wav_path:
+                    # Import diarization service
+                    from src.dependencies import get_diarization_service
+                    diarization_service = get_diarization_service()
+
+                    # Schedule finalization in event loop
+                    asyncio.run_coroutine_threadsafe(
+                        _finalize_live_recording(
+                            session_manager, session_id,
+                            wav_path, file_manager, diarization_service, transcription_service
+                        ),
+                        loop
+                    )
+                    logger.info(f"Scheduled final processing for session {session_id}")
+                else:
+                    logger.warning(f"No WAV path provided for session {session_id}, skipping processing")
+
                 # Clean up the session from the worker's memory
                 del sessions[session_id]
 
@@ -97,111 +118,102 @@ async def _send_message(session_manager, session_id: str, message: dict):
     session = await session_manager.get_session(session_id)
     if session and session.websocket:
         await session.websocket.send_json(message)
-
-def _process_audio_batch(
-    file_manager, live_audio_processor, transcription_service,
-    session_manager, loop: asyncio.AbstractEventLoop,
-    worker_session: WorkerSession, is_final: bool = False
-):
-    """Prepares and schedules a batch of audio for transcription, but does not block."""
-    worker_session.batch_count += 1
-    batch_num = worker_session.batch_count
-    session_id = worker_session.session_id
-
-    audio_data = b''.join(worker_session.audio_buffer)
-    worker_session.audio_buffer.clear()
-    worker_session.total_bytes = 0
-
-    if not audio_data:
-        logger.warning(f"Attempted to process an empty batch for session {session_id}")
-        return
-
-    logger.info(f"Processing batch {batch_num} for session {session_id} ({len(audio_data)} bytes).")
-
-    temp_dir = file_manager.get_data_path("temp")
-
-    # Detect if data is already WAV format (starts with 'RIFF' and contains 'WAVE')
-    is_wav = audio_data[:4] == b'RIFF' and b'WAVE' in audio_data[:20]
-
-    if is_wav:
-        # Data is already WAV, save directly
-        wav_path = temp_dir / f"{session_id}_batch_{batch_num}.wav"
-        webm_path = None
-        try:
-            with open(wav_path, 'wb') as f:
-                f.write(audio_data)
-        except Exception as e:
-            logger.error(f"Failed to save WAV batch {batch_num} for session {session_id}: {e}", exc_info=True)
-            return
     else:
-        # Data is WebM, needs conversion
-        webm_path = temp_dir / f"{session_id}_batch_{batch_num}.webm"
-        wav_path = temp_dir / f"{session_id}_batch_{batch_num}.wav"
+        logger.warning(f"Cannot send message to {session_id}: session removed or WebSocket closed")
 
-        try:
-            with open(webm_path, 'wb') as f:
-                f.write(audio_data)
+async def _finalize_live_recording(
+    session_manager, session_id: str,
+    wav_path: str, file_manager, diarization_service, transcription_service
+):
+    """
+    Final processing step for live recordings:
+    - Transcribes complete audio with word timestamps
+    - Diarizes audio using transcription segments
+    - Generates SRT file
+    - Stores file paths in session for downloads
+    - Sends complete result to UI
+    """
+    try:
+        from src.subtitle_generator import generate_srt
+        import librosa
+        import time
 
-            live_audio_processor._convert_webm_to_wav(str(webm_path), str(wav_path), sample_rate=16000)
+        logger.info(f"Finalizing live recording for session {session_id}...")
 
-        except Exception as e:
-            logger.error(f"Failed to prepare audio batch {batch_num} for session {session_id}: {e}", exc_info=True)
-            # Cleanup failed files
-            try:
-                if webm_path and webm_path.exists():
-                    webm_path.unlink()
-            except Exception as cleanup_err:
-                logger.warning(f"Failed to cleanup WebM after error: {cleanup_err}")
-
-            try:
-                if wav_path.exists():
-                    wav_path.unlink()
-            except Exception as cleanup_err:
-                logger.warning(f"Failed to cleanup WAV after error: {cleanup_err}")
+        # Get session data
+        session = await session_manager.get_session(session_id)
+        if not session:
+            logger.warning(f"Session {session_id} not found during finalization")
             return
 
-    def on_transcription_complete(future: Future[TranscriptionResult]):
-        """Callback executed in the main event loop thread once transcription is done."""
-        try:
-            transcription_result = future.result()
+        # Get audio duration for metrics
+        audio_duration = librosa.get_duration(path=wav_path)
 
-            # --- Send Result ---
-            message = {
-                "type": "transcription_chunk",
-                "data": {
-                    "text": transcription_result.text,
-                    "is_final_batch": is_final
-                }
-            }
-            asyncio.run_coroutine_threadsafe(_send_message(session_manager, session_id, message), loop)
-            logger.info(f"Sent transcription for batch {batch_num} of session {session_id}.")
+        # Transcribe complete audio WITH word timestamps for SRT generation
+        logger.info(f"Transcribing complete audio with word timestamps for session {session_id}...")
+        processing_start = time.time()
 
-        except Exception as e:
-            logger.error(f"Error in transcription callback for batch {batch_num} of session {session_id}: {e}", exc_info=True)
-            # Notify user via WebSocket
-            error_message = {
-                "type": "processing_error",
-                "message": f"Erro ao processar áudio: {str(e)}",
-                "batch": batch_num
-            }
-            asyncio.run_coroutine_threadsafe(_send_message(session_manager, session_id, error_message), loop)
-        finally:
-            # --- Cleanup ---
-            try:
-                if wav_path.exists():
-                    wav_path.unlink()
-            except Exception as e:
-                logger.warning(f"Failed to cleanup WAV file {wav_path}: {e}")
+        transcription_result = await transcription_service.transcribe_with_enhancements(
+            wav_path,
+            word_timestamps=True  # Enable for precise diarization alignment
+        )
 
-            try:
-                if webm_path and webm_path.exists():
-                    webm_path.unlink()
-            except Exception as e:
-                logger.warning(f"Failed to cleanup WebM file {webm_path}: {e}")
+        processing_time = time.time() - processing_start
+        processing_ratio = processing_time / audio_duration if audio_duration > 0 else 0.0
 
-    # --- Schedule Transcription ---
-    future = asyncio.run_coroutine_threadsafe(
-        transcription_service.transcribe_with_enhancements(str(wav_path)),
-        loop
-    )
-    future.add_done_callback(on_transcription_complete)
+        # Debug: Log transcription segments count
+        logger.info(f"Whisper returned {len(transcription_result.segments) if transcription_result.segments else 0} segments for session {session_id}")
+
+        # Run diarization on complete audio with detailed segments (containing word timestamps)
+        logger.info(f"Running diarization on complete audio: {wav_path}")
+        diarization_result = await diarization_service.diarize(wav_path, transcription_result.segments)
+
+        # Debug: Log diarization segments count
+        logger.info(f"Diarization returned {len(diarization_result['segments'])} segments for session {session_id}")
+
+        # Fallback: if diarization returns empty segments, create synthetic segment
+        if not diarization_result["segments"] and transcription_result.text:
+            logger.warning(f"No segments from diarization, creating fallback segment for {session_id}")
+            diarization_result["segments"] = [{
+                "start": 0.0,
+                "end": audio_duration,
+                "text": transcription_result.text.strip(),
+                "speaker": "SPEAKER_00"
+            }]
+            diarization_result["num_speakers"] = 1
+
+        # Generate SRT file
+        srt_path = await generate_srt(diarization_result["segments"], file_manager=file_manager, filename=f"{session_id}.srt")
+        logger.info(f"SRT file generated: {srt_path}")
+
+        # Store file paths in session for download endpoints
+        session.files["audio"] = wav_path
+        session.files["subtitles"] = str(srt_path)
+        session.files["transcript"] = transcription_result.text.strip()
+        logger.info(f"File paths stored in session.files for {session_id}")
+
+        # Send complete result to UI
+        final_result = {
+            "segments": diarization_result["segments"],
+            "num_speakers": diarization_result["num_speakers"],
+            "transcription": transcription_result.text.strip(),
+            "processing_time": round(processing_time, 2),
+            "processing_ratio": round(processing_ratio, 2),
+            "audio_duration": round(audio_duration, 2)
+        }
+
+        if session.websocket:
+            await session.websocket.send_json({
+                "type": "complete",
+                "result": final_result
+            })
+            logger.info(f"Final result sent to UI for session {session_id}")
+
+    except Exception as e:
+        logger.error(f"Error finalizing live recording for {session_id}: {e}", exc_info=True)
+        session = await session_manager.get_session(session_id)
+        if session and session.websocket:
+            await session.websocket.send_json({
+                "type": "error",
+                "message": f"Erro ao finalizar processamento: {str(e)}"
+            })
