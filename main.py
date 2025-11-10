@@ -357,6 +357,11 @@ async def websocket_endpoint(
             message = await websocket.receive_json()
             action = message.get("action")
 
+            # Handle heartbeat ping (keep connection alive)
+            if action == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
             # --- Validation
             current_session_data = await session_manager.get_session(session_id)
 
