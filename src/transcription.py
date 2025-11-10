@@ -1,10 +1,3 @@
-
-"""
-Enhanced Transcription Module with complete PT-BR corrections, advanced confidence
-scoring, automatic model unloading for memory optimization, and production-ready
-thread-safety mechanisms.
-"""
-
 import asyncio
 import logging
 import threading
@@ -12,8 +5,6 @@ import gc
 import time
 import re
 import functools
-import unicodedata
-import os
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from src.exceptions import TranscriptionError, AudioProcessingError
@@ -23,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TranscriptionResult:
-    """Standardized transcription result data structure."""
+    """Standardized transcription result data structure"""
     text: str
     segments: List[Dict[str, Any]]
     language: str
@@ -32,32 +23,26 @@ class TranscriptionResult:
     word_count: int
 
 class TranscriptionService:
-    """Handles the core transcription logic using faster-whisper with automatic model unloading."""
-
     def __init__(self, model_name: str = "pierreguillou/whisper-medium-portuguese", device: str = "cpu"):
         self.model_name = model_name
         self.device = device
-        self.compute_type = "int8" # Default compute type
+        self.compute_type = "int8"
         self.model = None
         self.last_used = time.time()
-        self.model_unload_delay = 600  # 10 minutes (optimized from 30min for web usage)
+        self.model_unload_delay = 600  # 10 minutes
         self._model_lock = threading.Lock()  # Thread-safety for model operations
         self.model_loads_count = 0  # Monitoring metric
         self.model_unloads_count = 0  # Monitoring metric
         self._init_ptbr_corrections()
 
     async def initialize(self, model_unload_delay: int = 600, compute_type: str = "int8"):
-        """Loads the transcription model."""
         self.model_unload_delay = model_unload_delay
         self.compute_type = compute_type
         await self._load_model(compute_type=compute_type)
 
     def _init_ptbr_corrections(self):
-        # OPTIMIZED VERSION: 25 essential PT-BR corrections + improved capitalization
-        # Based on: 20251015_expanded_ptbr_rules_25_final.md
-        # Result: 86% accuracy with generic capitalization (Oct 23, 2025)
         self.ptbr_corrections = {
-            # Original 12 accent corrections (safe, unambiguous)
+            # accent corrections (safe, unambiguous)
             "nao": "não",
             "voce": "você",
             "esta": "está",
@@ -71,13 +56,12 @@ class TranscriptionService:
             "ate": "até",
             "sao": "são",
 
-            # 11 PT-BR colloquial elisions
-            # REVERSED normalization (formal→colloquial) based on CORAA analysis
-            "para": "pra",       # 32 CORAA occurrences - most common
-            "para o": "pro",     # Common colloquial contraction
-            "para a": "pra",     # Common colloquial contraction
-            "para os": "pros",   # Common colloquial contraction
-            "para as": "pras",   # Common colloquial contraction
+            # PT-BR colloquial elisions
+            "para": "pra",       
+            "para o": "pro",     
+            "para a": "pra",     
+            "para os": "pros",   
+            "para as": "pras",   
             "ta": "está",
             "tava": "estava",
             "tao": "tão",
@@ -87,8 +71,7 @@ class TranscriptionService:
             "num": "não"
         }
 
-        # PRE-COMPILE REGEX PATTERNS
-        # Compiling once at initialization
+        # Pre-compile regex patterns at init
         self.correction_patterns = [
             (re.compile(rf'\b{re.escape(wrong)}\b', re.IGNORECASE), correct)
             for wrong, correct in self.ptbr_corrections.items()
@@ -97,10 +80,7 @@ class TranscriptionService:
 
     def _apply_ptbr_corrections(self, text: str) -> str:
         """
-        IMPROVED: Applies PT-BR corrections while preserving proper capitalization.
-        - Capitalizes sentence starts (after . ! ?)
-        - Preserves proper nouns (mid-sentence capitals from Whisper)
-        - Generic logic that works for ANY audio file (no hard-coded words)
+        PT-BR corrections while preserving proper capitalization
         """
         if not text: return ""
 
@@ -111,23 +91,19 @@ class TranscriptionService:
             # Remove punctuation for matching
             word_clean = word.strip('.,;:!?').lower()
 
-            # Apply corrections using PRE-COMPILED PATTERNS (5-10x faster)
+            # Apply corrections
             corrected = word_clean
             for pattern, replacement in self.correction_patterns:
                 if pattern.search(corrected):
                     corrected = pattern.sub(replacement, corrected)
                     break
 
-            # Capitalize logic (GENERIC - no hard-coded words):
-            # 1. First word always capitalize
+            # Capitalization logic
             if i == 0:
                 corrected = corrected.capitalize()
-            # 2. After sentence-ending punctuation
             elif i > 0 and any(corrected_words[i-1].endswith(p) for p in '.!?'):
                 corrected = corrected.capitalize()
-            # 3. Preserve proper nouns (if Whisper capitalized mid-sentence)
             elif word[0].isupper() and i > 0 and not corrected_words[i-1].endswith(('.', '!', '?')):
-                # Whisper capitalized mid-sentence = probably proper noun
                 corrected = corrected.capitalize()
 
             # Re-add punctuation
@@ -145,7 +121,7 @@ class TranscriptionService:
         logprobs = [s.get('avg_logprob', -2.0) for s in segments if s.get('avg_logprob') is not None]
         if not logprobs: return 0.0
         confidences = [np.exp(lp) for lp in logprobs]
-        # Cast numpy float to standard Python float for JSON compatibility
+        # numpy float to standard python float for .json compatibility
         return float(np.mean(confidences))
 
     def _transcribe_sync(
@@ -153,11 +129,11 @@ class TranscriptionService:
         audio_path: str,
         transcribe_args: Dict[str, Any]
     ) -> Tuple[List[Dict[str, Any]], Any, str, float]:
-        """Synchronous transcription (runs in executor thread)."""
+        """Sync transcription - runs in executor thread"""
         if not self.model:
             raise RuntimeError("Model not loaded")
 
-        # Operação bloqueante
+        # Blocking operation
         segments_generator, info = self.model.transcribe(audio_path, **transcribe_args)
 
         raw_segments = []
@@ -188,7 +164,7 @@ class TranscriptionService:
         word_timestamps: bool = False,
         whisper_params: Optional[Dict[str, Any]] = None
     ) -> TranscriptionResult:
-        """Async transcription with executor."""
+        """Async transcription with executor"""
         start_time = time.time()
         requested_compute_type = quantization or self.compute_type
 
@@ -196,13 +172,13 @@ class TranscriptionService:
         if not self.model or self.compute_type != requested_compute_type:
             await self._load_model(compute_type=requested_compute_type)
 
-        # Lock apenas para setup
+        # Lock for setup only
         with self._model_lock:
             self.last_used = time.time()
             if not self.model:
                 raise TranscriptionError("Model not loaded")
 
-            # Preparar argumentos
+            # Prepare args
             vad_parameters = dict(
                 threshold=0.5,
                 min_speech_duration_ms=250,
@@ -216,11 +192,8 @@ class TranscriptionService:
                 "vad_filter": True,
                 "vad_parameters": vad_parameters
             }
-            if whisper_params:
-                # Merge custom params...
-                pass
 
-            # Executar em thread separado
+            # Execute in separate thread
             loop = asyncio.get_running_loop()
             try:
                 sync_func = functools.partial(
@@ -248,7 +221,7 @@ class TranscriptionService:
         )
 
     async def _load_model(self, compute_type: str = "int8"):
-        """Load model asynchronously with retry logic."""
+        """Load model asynchronously with retry logic"""
         loop = asyncio.get_running_loop()
         max_retries = 3
         for attempt in range(max_retries):
@@ -258,7 +231,7 @@ class TranscriptionService:
                 logger.info(f"Loading Whisper model (attempt {attempt+1}/{max_retries}): {self.model_name} with {self.compute_type} precision...")
                 load_start = time.time()
 
-                # Create a partial function with keyword arguments to pass to the executor
+                # Create partial function with keyword args to pass to executor
                 loader_func = functools.partial(
                     WhisperModel, 
                     model_size_or_path=self.model_name, 
@@ -280,8 +253,8 @@ class TranscriptionService:
                 await asyncio.sleep(2 ** attempt)
 
     def unload_model(self):
-        """Unload model from memory with thread-safety to free ~1.5GB RAM."""
-        with self._model_lock:  # CRITICAL: Prevent race conditions during unload
+        """Unload model from memory with thread-safety"""
+        with self._model_lock:  # Prevent race conditions during unload
             if self.model is not None:
                 logger.info("Unloading Whisper model due to inactivity...")
                 self.model = None
@@ -290,6 +263,6 @@ class TranscriptionService:
                 logger.info(f"Model unloaded successfully (total unloads: {self.model_unloads_count})")
 
     def should_unload(self) -> bool:
-        """Check if model should be unloaded based on inactivity period."""
+        """Check if model should be unloaded based on inactivity period"""
         return (self.model is not None and
                 time.time() - self.last_used > self.model_unload_delay)

@@ -29,12 +29,7 @@ def transcription_worker(
 
             job_type = job.get("type", "audio_chunk")
 
-            if job_type == "audio_chunk":
-                # Audio chunks are buffered by LiveAudioProcessor
-                # No real-time transcription - all processing happens at stop
-                continue
-
-            elif job_type == "stop":
+            if job_type == "stop":
                 logger.info(f"Stop signal received for session {session_id}. Starting final processing.")
                 wav_path = job.get("wav_path")
 
@@ -43,9 +38,9 @@ def transcription_worker(
                     session_check_future = asyncio.run_coroutine_threadsafe(
                         session_manager.get_session(session_id), loop
                     )
-                    session_exists = session_check_future.result(timeout=1)
+                    session_obj = session_check_future.result(timeout=1)
 
-                    if not session_exists:
+                    if not session_obj:
                         logger.warning(f"Session {session_id} no longer exists. Skipping final processing.")
                         continue
                 except Exception as e:
@@ -78,6 +73,9 @@ def transcription_worker(
                     loop
                 )
 
+            else:
+                logger.debug(f"Unhandled job type '{job_type}' for session {session_id}, skipping.")
+
             transcription_queue.task_done()
 
         except Exception as e:
@@ -95,14 +93,7 @@ async def _finalize_live_recording(
     session_manager, session_id: str,
     wav_path: str, file_manager, diarization_service, transcription_service
 ):
-    """
-    Final processing step for live recordings:
-    - Transcribes complete audio with word timestamps
-    - Diarizes audio using transcription segments
-    - Generates SRT file
-    - Stores file paths in session for downloads
-    - Sends complete result to UI
-    """
+    """ Final processing step for live recordings """
     try:
         from src.subtitle_generator import generate_srt
         import librosa
@@ -119,13 +110,13 @@ async def _finalize_live_recording(
         # Get audio duration for metrics
         audio_duration = librosa.get_duration(path=wav_path)
 
-        # Transcribe complete audio WITH word timestamps for SRT generation
+        # Transcribe complete audio with word timestamps for .srt generation
         logger.info(f"Transcribing complete audio with word timestamps for session {session_id}...")
         processing_start = time.time()
 
         transcription_result = await transcription_service.transcribe_with_enhancements(
             wav_path,
-            word_timestamps=True  # Enable for precise diarization alignment
+            word_timestamps=True  # for diarization alignment
         )
 
         processing_time = time.time() - processing_start
@@ -134,7 +125,7 @@ async def _finalize_live_recording(
         # Debug: Log transcription segments count
         logger.info(f"Whisper returned {len(transcription_result.segments) if transcription_result.segments else 0} segments for session {session_id}")
 
-        # Run diarization on complete audio with detailed segments (containing word timestamps)
+        # Run diarization on complete audio with detailed segments (with word timestamps)
         logger.info(f"Running diarization on complete audio: {wav_path}")
         diarization_result = await diarization_service.diarize(wav_path, transcription_result.segments)
 

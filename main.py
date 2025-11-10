@@ -1,28 +1,14 @@
-"""
-TranscrevAI Main Application - Final, Optimized Architecture.
-
-This version uses a single-process, async model, which has been proven to be the
-most performant for single-file processing. It initializes ML models once at startup
-and runs the CPU-bound pipeline as a non-blocking background task.
-"""
-
 import asyncio
+import base64
 import logging
 import os
 import time
-import threading
-import base64
 import uuid
-import queue
 import hashlib
-from src.worker import transcription_worker
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
-
-# Eagerly import torch and set threads at the very beginning
 import torch
 import psutil
-
 import uvicorn
 from fastapi import (FastAPI, Request, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, BackgroundTasks)
 from fastapi.responses import JSONResponse, FileResponse
@@ -32,25 +18,21 @@ from pathlib import Path
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-
-# Core application modules
 from src.transcription import TranscriptionService
 from src.diarization import PyannoteDiarizer
 from src.audio_processing import AudioQualityAnalyzer, SessionManager, LiveAudioProcessor, SessionData
 from datetime import datetime
-from src.subtitle_generator import generate_srt
 from src.file_manager import FileManager
-from src.websocket_enhancements import get_websocket_safety_manager, MessagePriority
 from src.pipeline import process_audio_pipeline
 from src.exceptions import TranscrevAIError, TranscriptionError, DiarizationError, AudioProcessingError, SessionError, ValidationError
 from config.app_config import get_config
 
-# --- Global Configuration & Tuning ---
+# --- Global Configuration & Tuning
 app_config = get_config()
 logging.basicConfig(level=app_config.log_level.upper(), format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Cache Busting: File hash calculation ---
+# --- Dynamic cache busting
 def calculate_file_hash(file_path: Path) -> str:
     """Calculate MD5 hash of file content for cache busting."""
     try:
@@ -65,16 +47,14 @@ STATIC_HASHES = {
     'styles.css': calculate_file_hash(Path('static/styles.css'))
 }
 
-# Adaptive Performance Tuning (Hardware-Aware)
-# Automatically configures optimal thread counts based on available hardware
+# Hardware-aware adaptive performance tuning
 from src.audio_processing import configure_adaptive_threads
 
 torch_threads, omp_threads = configure_adaptive_threads()
 torch.set_num_threads(torch_threads)
 os.environ["OMP_NUM_THREADS"] = str(omp_threads)
 logger.info(f"PERFORMANCE TUNING APPLIED: OMP_NUM_THREADS={omp_threads}, torch_threads={torch_threads}")
-
-DEVICE = "cpu"  # This is a CPU-only application
+DEVICE = "cpu"
 
 # Import DI functions
 from src.dependencies import (
@@ -89,7 +69,7 @@ from src.dependencies import (
     cleanup_services
 )
 
-# --- Lifespan Manager (for startup and shutdown) ---
+# --- Lifespan manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("TranscrevAI Server Starting...")
@@ -98,7 +78,7 @@ async def lifespan(app: FastAPI):
     # Initialize services via DI - triggers singleton creation
     get_file_manager()
 
-    # Get transcription service and pre-load Whisper model
+    # Get transcription service and pre-load whisper model
     transcription_service = get_transcription_service()
     logger.info("Pre-loading Whisper model...")
     await transcription_service.initialize()
@@ -110,14 +90,14 @@ async def lifespan(app: FastAPI):
     get_live_audio_processor()
     get_transcription_queue()
 
-    # Get running loop and pass to worker
+    # Get running loop - pass to worker
     loop = asyncio.get_running_loop()
     get_worker_thread(loop)
 
     logger.info("Services and worker initialized successfully.")
     yield
 
-    # --- Shutdown Logic ---
+    # --- Shutdown logic
     logger.info("Shutting down TranscrevAI...")
 
     # Cleanup sessions before shutting down services
@@ -131,10 +111,10 @@ async def lifespan(app: FastAPI):
     # Cleanup all services
     cleanup_services()
 
-# --- FastAPI App Setup ---
+# --- FastAPI app setup
 app = FastAPI(title="TranscrevAI Single-Process", version="6.0.0", lifespan=lifespan)
 
-# Rate Limiting Configuration
+# Rate limiting configuration
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
@@ -149,7 +129,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# === API Endpoints ===
+# --- API endpoints
 @app.get("/")
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {
@@ -168,11 +148,9 @@ async def upload_audio(
     session_manager: SessionManager = Depends(get_session_manager)
 ):
 
-    # Validate file size (500MB limit for 60min audio)
+    # File size validation
     MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500MB
     file_size = 0
-
-    # Read file to check size
     content = await file.read()
     file_size = len(content)
 
@@ -185,19 +163,18 @@ async def upload_audio(
     # Reset file pointer for later processing
     await file.seek(0)
 
-    # Use the provided session_id if it exists, otherwise create a new one.
+    # Use the provided session_id if it exists - otherwise create new
     session_id = session_id or str(uuid.uuid4())
     logger.info(f"Upload received ({file_size / (1024*1024):.1f}MB), processing for session {session_id}")
 
     try:
-        # Save the uploaded file asynchronously
         file_path = await file_manager.save_uploaded_file(file, file.filename or f"{session_id}.wav")
 
-        # Validate audio duration (60min max)
+        # Validate audio duration
         import librosa
         try:
             duration = librosa.get_duration(path=str(file_path))
-            if duration > 3600:  # 60 minutes
+            if duration > 3600:  # 60 min
                 Path(file_path).unlink(missing_ok=True)
                 raise HTTPException(
                     status_code=413,
@@ -208,7 +185,7 @@ async def upload_audio(
         except Exception as e:
             logger.warning(f"Could not validate duration for {file_path}: {e}")
 
-        # Get existing session (created by WebSocket) or create new one
+        # Get existing session or create new one
         session = await session_manager.get_session(session_id)
         if not session:
             # Create a session data object for this upload
@@ -217,7 +194,7 @@ async def upload_audio(
                 websocket=None, # No websocket for uploads
                 format=Path(file_path).suffix,
                 started_at=datetime.now(),
-                temp_file=str(file_path) # The uploaded file is the temp file
+                temp_file=str(file_path) # Uploaded file
             )
             await session_manager.create_session(session_id, session_data)
         else:
@@ -225,7 +202,7 @@ async def upload_audio(
             session.temp_file = str(file_path)
             session.format = Path(file_path).suffix
 
-        # Run the processing pipeline in the background without blocking
+        # Run the processing pipeline in background
         asyncio.create_task(process_audio_pipeline(str(file_path), session_id))
         
         logger.info(f"Job accepted for session {session_id}. Processing started in background.")
@@ -240,8 +217,7 @@ async def upload_audio(
 async def download_srt(session_id: str, session_manager: SessionManager = Depends(get_session_manager)):
     session = await session_manager.get_session(session_id)
     
-    # The new SessionData object stores file paths in a `files` dictionary.
-    # This path is populated by the pipeline.
+    # The new SessionData object stores file paths in a 'files' dictionary
     srt_path = session.files.get("subtitles") if session else None
 
     if not srt_path or not os.path.exists(srt_path):
@@ -251,9 +227,6 @@ async def download_srt(session_id: str, session_manager: SessionManager = Depend
 
 @app.get("/api/download/{session_id}/{file_type}")
 async def download_file(session_id: str, file_type: str, session_manager: SessionManager = Depends(get_session_manager)):
-    """
-    Download recorded files from live recording sessions.
-    """
     valid_types = ['audio', 'transcript', 'subtitles']
     if file_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"Invalid file type. Must be one of: {valid_types}")
@@ -262,7 +235,7 @@ async def download_file(session_id: str, file_type: str, session_manager: Sessio
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Get file path from the session's `files` dictionary
+    # Get file path from the session's 'files' dictionary
     file_path_str = session.files.get(file_type)
     if not file_path_str or not Path(file_path_str).exists():
         raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} file not found for this session")
@@ -270,7 +243,7 @@ async def download_file(session_id: str, file_type: str, session_manager: Sessio
     file_path = Path(file_path_str)
     audio_format = getattr(session, 'format', 'wav') # Get format from session
 
-    # On-demand MP4 conversion for audio files
+    # MP4 conversion for audio files
     if file_type == 'audio' and audio_format == 'mp4' and file_path.suffix.lower() == '.wav':
         from src.audio_processing import convert_wav_to_mp4
         mp4_path = file_path.with_suffix(".mp4")
@@ -302,14 +275,14 @@ async def download_file(session_id: str, file_type: str, session_manager: Sessio
 async def health_check():
     return {"status": "ok"}
 
-from src.websocket_handler import WebSocketValidator, WebSocketHandler
+from src.websocket_handler import WebSocketValidator
 from collections import defaultdict
 from time import time as current_time
 
-# WebSocket rate limiting (manual implementation as slowapi doesn't support WS)
+# WebSocket rate limiting - manual implementation - slowapi doesn't support direct implementation
 ws_connection_tracker = defaultdict(list)
-WS_RATE_LIMIT = 20  # connections per minute
-WS_RATE_WINDOW = 60  # seconds
+WS_RATE_LIMIT = 20  # connections per min
+WS_RATE_WINDOW = 60  # sec
 
 @app.post("/test/reset-rate-limit", status_code=200)
 async def reset_rate_limit_for_testing():
@@ -327,14 +300,10 @@ async def websocket_endpoint(
     websocket: WebSocket,
     session_id: str,
     session_manager: SessionManager = Depends(get_session_manager),
-    live_audio_processor: LiveAudioProcessor = Depends(get_live_audio_processor),
-    transcription_queue: queue.Queue = Depends(get_transcription_queue)
+    live_audio_processor: LiveAudioProcessor = Depends(get_live_audio_processor)
 ):
     """
-    WebSocket endpoint for live audio recording, refactored for centralized session management.
-
-    Creates and removes sessions exclusively through the SessionManager, ensuring a single
-    source of truth and proper resource cleanup.
+    WebSocket endpoint for live audio recording - creates and removes sessions exclusively through the SessionManager
     """
     # Rate limiting check
     client_ip = websocket.client.host if websocket.client else "unknown"
@@ -366,8 +335,7 @@ async def websocket_endpoint(
     )
 
     try:
-        # Defensively check for and remove any lingering session with the same ID.
-        # This can happen if a client disconnects improperly and reconnects quickly.
+        # Defensively check for and remove any lingering session with the same ID
         if await session_manager.session_exists(session_id):
             logger.warning(f"Session {session_id} already exists. Removing old session before creating new one.")
             await session_manager.remove_session(session_id)
@@ -379,58 +347,36 @@ async def websocket_endpoint(
         await websocket.close(code=1011, reason=f"Failed to create session: {e}")
         return
 
-    # Instantiate helpers
+    # Instantiate helpers - validator resulted from class instantiation, validates actions and formats
     validator = WebSocketValidator()
 
-    # Recording state variables
-    recording_start_time: Optional[float] = None
-    total_data_received: int = 0
-    
     try:
         loop = asyncio.get_running_loop()
+
         while True:
             message = await websocket.receive_json()
-            
             action = message.get("action")
 
-            # --- Validation ---
+            # --- Validation
             current_session_data = await session_manager.get_session(session_id)
+
             if not current_session_data:
                 logger.warning(f"Session {session_id} not found during message processing. Closing connection.")
                 break
 
             session_state = live_audio_processor.get_session_state(session_id)
-            session_dict_for_validator = session_state if session_state else {"status": "idle"}
-
             validator.validate_action(action)
-            
+
             if action == "start":
                 audio_format = message.get("format", "wav").lower()
                 validator.validate_audio_format(audio_format)
 
-            elif action == "audio_chunk":
-                # State validation is now handled by the worker/processor, removing the check here
-                # to prevent race conditions during testing.
-                chunk_b64 = message.get("data", "")
-                validator.validate_chunk_size(chunk_b64)
-                estimated_chunk_size = len(chunk_b64) * 3 / 4
-                validator.validate_total_size(int(total_data_received + estimated_chunk_size))
-
-                # Check if 60min limit reached - auto-stop if so
-                if validator.validate_recording_duration(recording_start_time):
-                    await websocket.send_json({
-                        "type": "duration_limit_reached",
-                        "message": "Gravação atingiu o limite de 60 minutos. Processando áudio gravado..."
-                    })
-                    # Trigger auto-stop (will process on next iteration)
-                    action = "stop"
-
-            # --- Handling ---
+            # --- Handling
             if action == "start":
                 current_session_data.format = message.get("format", "wav").lower()
 
                 start_result = await loop.run_in_executor(None, live_audio_processor.start_recording, session_id, 16000)
-                recording_start_time = start_result["start_time"]
+
                 current_session_data.temp_file = start_result["temp_file"]
 
                 await websocket.send_json({
@@ -443,23 +389,9 @@ async def websocket_endpoint(
             elif action == "audio_chunk":
                 try:
                     audio_bytes = base64.b64decode(message.get("data", ""))
-
-                    # Send to LiveAudioProcessor for buffering (generates final WAV)
                     await loop.run_in_executor(None, live_audio_processor.process_audio_chunk, session_id, audio_bytes)
-
-                    # Send to worker for real-time transcription
-                    job = {
-                        "session_id": session_id,
-                        "type": "audio_chunk",
-                        "audio_chunk_bytes": audio_bytes
-                    }
-                    transcription_queue.put(job)
                 except Exception:
                     await websocket.send_json({"type": "error", "message": "Dados de áudio inválidos (base64 decode falhou)"})
-
-            elif action == "custom_job":
-                job = {"session_id": session_id, **message}
-                transcription_queue.put(job)
 
             elif action == "pause":
                 await loop.run_in_executor(None, live_audio_processor.pause_recording, session_id)
@@ -478,21 +410,20 @@ async def websocket_endpoint(
                 # Send stop confirmation
                 await websocket.send_json({
                     "type": "recording_stopped",
-                    "message": "Gravação finalizada. Processando batch final..."
+                    "message": "Gravação finalizada. Processando áudio gravado..."
                 })
 
-                # Call LiveAudioProcessor to generate final WAV file from accumulated chunks
-                try:
-                    wav_path = await loop.run_in_executor(None, live_audio_processor.stop_recording, session_id)
-                    logger.info(f"Final WAV file generated: {wav_path}")
-                except Exception as e:
-                    logger.error(f"Failed to generate final WAV for session {session_id}: {e}", exc_info=True)
-                    wav_path = None
+                # Stop recording and get WAV path (converts WebM → WAV)
+                wav_path = await loop.run_in_executor(None, live_audio_processor.stop_recording, session_id)
+                current_session_data.temp_file = wav_path
 
-                # Queue final transcription job with WAV path for diarization
-                stop_job = {"type": "stop", "session_id": session_id, "wav_path": wav_path}
-                transcription_queue.put(stop_job)
-                logger.info(f"Stop job queued for session {session_id} with WAV path: {wav_path}")
+                if not wav_path or not os.path.exists(wav_path):
+                    logger.error(f"Audio file not found for session {session_id} at path: {wav_path}")
+                    raise AudioProcessingError("Arquivo de áudio gravado não encontrado para processamento.", context={"session_id": session_id})
+
+                # Run the processing pipeline in background 
+                asyncio.create_task(process_audio_pipeline(wav_path, session_id))
+                logger.info(f"Audio processing started for session {session_id}.")
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected by client: {session_id}")
@@ -514,12 +445,10 @@ async def websocket_endpoint(
         try:
             await websocket.send_json({"error": "Erro interno do servidor", "type": "internal_error"})
         except Exception:
-            pass # Ignore errors on a closed socket
+            pass # ignore errors on a closed socket
     
     finally:
-        # This block is the safety net. It guarantees that the session and its
-        # associated resources are cleaned up, no matter how the connection
-        # terminates (cleanly, with an error, or a disconnect).
+        # Guarantees session and associated resources clean-up
         logger.info(f"Cleaning up session due to WebSocket closure: {session_id}")
         await session_manager.remove_session(session_id)
         logger.info(f"WebSocket cleanup complete: {session_id}")

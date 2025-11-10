@@ -1,6 +1,5 @@
 """
-Dependency Injection for FastAPI
-Manages service lifecycle and provides instances to routes.
+Dependency injection for FastAPI
 """
 import os
 import queue
@@ -9,7 +8,6 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 from functools import lru_cache
-
 from src.transcription import TranscriptionService
 from src.diarization import PyannoteDiarizer
 from src.audio_processing import AudioQualityAnalyzer, SessionManager, LiveAudioProcessor
@@ -86,13 +84,15 @@ def get_transcription_queue() -> queue.Queue:
         return _services['transcription_queue']
 
 
-def get_worker_thread(loop: asyncio.AbstractEventLoop = None) -> threading.Thread:
+def get_worker_thread(loop: Optional[asyncio.AbstractEventLoop] = None) -> threading.Thread:
     """Get or create worker thread"""
     with _lock:
         if 'worker_thread' not in _services:
             from src.worker import transcription_worker
             if loop is None:
                 loop = asyncio.get_running_loop()
+            
+            assert loop is not None # Ensure loop is not None for the type checker
 
             # Create worker thread
             worker_thread = threading.Thread(

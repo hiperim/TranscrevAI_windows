@@ -1,10 +1,8 @@
-import asyncio
 import logging
 import time
 import librosa
 
 from src.subtitle_generator import generate_srt
-from src.websocket_enhancements import MessagePriority
 from src.dependencies import (
     get_transcription_service,
     get_diarization_service,
@@ -15,8 +13,7 @@ from src.dependencies import (
 logger = logging.getLogger(__name__)
 
 async def process_audio_pipeline(audio_path: str, session_id: str) -> None:
-    """Complete, non-blocking pipeline for processing a single audio file."""
-    # Get services via DI
+    """Non-blocking pipeline via directio inhections for processing single audio file"""
     transcription_service = get_transcription_service()
     diarization_service = get_diarization_service()
     file_manager = get_file_manager()

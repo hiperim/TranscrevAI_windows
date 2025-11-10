@@ -1,21 +1,9 @@
-"""
-Handles the generation of SRT subtitle files from transcription segments.
-
-This module is designed to create well-formatted SRT files with robust support
-for Portuguese characters and Windows-compatible UTF-8 encoding (UTF-8-SIG).
-It includes logic for line splitting, duration management, and text cleaning.
-"""
-
 import logging
-import asyncio
-import os
 import time
 import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union, Callable, cast
-from dataclasses import dataclass
 import threading
-
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.file_manager import FileManager
@@ -23,36 +11,31 @@ import aiofiles
 
 logger = logging.getLogger(__name__)
 
-
-
 class SRTGenerator:
-    """Enhanced SRT generator with comprehensive UTF-8 Windows support"""
+    """UTF-8 Windows support"""
     
     def __init__(self):
         # Thread safety for concurrent subtitle generation
         self._generation_lock = threading.RLock()
         
-        # SRT formatting parameters
-        self.max_line_length = 42  # Characters per line for readability
+        # .srt formatting parameters
+        self.max_line_length = 42
         self.max_lines_per_subtitle = 2
-        self.min_subtitle_duration = 0.5  # Minimum subtitle display time
-        self.max_subtitle_duration = 6.0  # Maximum subtitle display time
+        self.min_subtitle_duration = 0.5  
+        self.max_subtitle_duration = 6.0  
         
-        # Portuguese-specific character handling
+        # PT-BR specific character handling
         self._init_portuguese_formatting()
 
     def _init_portuguese_formatting(self):
-        """Initialize Portuguese-specific formatting rules"""
-        
-        # Common Portuguese punctuation and formatting
         self.portuguese_punctuation = {
             '"': '"',  # Smart quotes
             '"': '"',
             ''': "'",
             ''': "'",
             '…': '...',  # Ellipsis normalization
-            '–': '-',   # En dash to hyphen
-            '—': '-',   # Em dash to hyphen
+            '–': '-',   # small dash to hyphen
+            '—': '-',   # big dash to hyphen
         }
         
 
@@ -67,11 +50,11 @@ class SRTGenerator:
         return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
     def _clean_text_for_subtitle(self, text: str) -> str:
-        """Clean and format text for subtitle display with Portuguese support"""
+        """Clean and format text for subtitle display with PT-BR support"""
         if not text:
             return ""
         
-        # Normalize Unicode for consistent Portuguese character handling
+        # Normalize unicode for consistent PT-BR char handling
         import unicodedata
         text = unicodedata.normalize('NFC', text)
         
@@ -79,7 +62,7 @@ class SRTGenerator:
         for old, new in self.portuguese_punctuation.items():
             text = text.replace(old, new)
         
-        # Clean up extra whitespace
+        # Clean up extra whitespaces
         text = ' '.join(text.split())
         
         # Ensure proper capitalization
@@ -93,13 +76,11 @@ class SRTGenerator:
         return text
 
     def _fix_transcription_artifacts(self, text: str) -> str:
-        """Fix common transcription artifacts in Portuguese"""
-        
-        # Helper callback with proper typing for Pylance/mypy
+        # Helper callback with proper typing for pylance/mypy
         def _capitalize_after_sentence(m: re.Match[str]) -> str:
             return m.group(1) + ' ' + m.group(2).upper()
         
-        # Annotate the fixes list so the type checker knows replacement may be a string or a callable
+        # Annotate the fixes list so type checker knows replacement may be a string or a callable
         fixes: List[tuple[str, Union[str, Callable[[re.Match[str]], str]]]] = [
             # Fix repeated words
             (r'\b(\w+)\s+\1\b', r'\1'),
@@ -111,7 +92,7 @@ class SRTGenerator:
             # Fix multiple spaces
             (r'\s{2,}', ' '),
             
-            # Fix common Portuguese transcription errors
+            # Fix common PT-BR transcription errors
             (r'\bé\s+([aeiou])', r'é \1'),  # Fix accent spacing
             (r'\bão\s+([bcdfgjklmnpqrstvwxyz])', r'ão \1'),  # Fix nasal spacing
             
@@ -122,7 +103,7 @@ class SRTGenerator:
         
         for pattern, replacement in fixes:
             if callable(replacement):
-                # Cast replacement to the precise callable signature so the type checker accepts it
+                # Cast replacement to callable signature so the type checker accepts it
                 text = re.sub(pattern, cast(Callable[[re.Match[str]], str], replacement), text)
             else:
                 text = re.sub(pattern, replacement, text)
@@ -130,7 +111,7 @@ class SRTGenerator:
         return text
 
     def _split_text_into_lines(self, text: str) -> List[str]:
-        """Split text into appropriate subtitle lines respecting Portuguese word boundaries"""
+        """Split text into appropriate subtitle lines respecting PT-BR word boundaries"""
         if len(text) <= self.max_line_length:
             return [text]
         
@@ -139,7 +120,7 @@ class SRTGenerator:
         current_line = ""
         
         for word in words:
-            # Check if adding this word would exceed line length
+            # Check if adding a word would exceed line length
             test_line = f"{current_line} {word}".strip()
             
             if len(test_line) <= self.max_line_length:
@@ -166,25 +147,25 @@ class SRTGenerator:
         return lines[:self.max_lines_per_subtitle]
 
     def _optimize_line_breaks(self, lines: List[str]) -> List[str]:
-        """Optimize line breaks for better readability in Portuguese"""
+        """Optimize line breaks for better readability in PT-BR"""
         if len(lines) <= self.max_lines_per_subtitle:
             return lines
         
-        # Strategy: combine shorter lines while respecting max line length
+        # Combine shorter lines while respecting max line length
         optimized = []
         i = 0
         
         while i < len(lines):
             current_line = lines[i]
             
-            # Try to combine with next line if possible
+            # If possible, try to combine with next line
             if i + 1 < len(lines):
                 next_line = lines[i + 1]
                 combined = f"{current_line} {next_line}"
                 
                 if len(combined) <= self.max_line_length:
                     optimized.append(combined)
-                    i += 2  # Skip next line as it's been combined
+                    i += 2  # Skip next line
                     continue
             
             optimized.append(current_line)
@@ -193,7 +174,7 @@ class SRTGenerator:
         return optimized
 
     def _create_srt_content(self, segments: List[Dict[str, Any]]) -> str:
-        """Create SRT content from segments with proper UTF-8 encoding"""
+        """Create .srt content from segments with UTF-8 encoding"""
         srt_entries = []
         subtitle_index = 1
         
@@ -229,11 +210,11 @@ class SRTGenerator:
             lines = self._split_text_into_lines(clean_text)
             subtitle_text = "\n".join(lines)
             
-            # Format time stamps
+            # Format timestamps
             start_formatted = self._format_time_srt(start_time)
             end_formatted = self._format_time_srt(end_time)
             
-            # Create SRT entry
+            # Create .srt entry
             srt_entry = f"{subtitle_index}\n{start_formatted} --> {end_formatted}\n{subtitle_text}\n"
             srt_entries.append(srt_entry)
             
@@ -244,17 +225,7 @@ class SRTGenerator:
     async def generate_srt_file(self, segments: List[Dict[str, Any]], 
                                file_manager: "FileManager",
                                filename: Optional[str] = None) -> Optional[str]:
-        """
-        Generate SRT file with comprehensive UTF-8 Windows support
-        
-        Args:
-            segments: List of transcription segments
-            file_manager: The application's file manager instance.
-            filename: Output filename
-            
-        Returns:
-            Path to generated SRT file or None if failed
-        """
+        """Generate .srt from segments"""
         with self._generation_lock:
             try:
                 # Determine output path using the file manager
@@ -270,14 +241,13 @@ class SRTGenerator:
                 # Full file path
                 srt_file_path = output_path / filename
                 
-                # Generate SRT content
+                # Generate .srt content
                 srt_content = self._create_srt_content(segments)
                 
                 if not srt_content.strip():
                     logger.warning("No valid segments to generate SRT file")
                     return None
                 
-                # Write SRT file with UTF-8 encoding and BOM for Windows compatibility
                 await self._write_srt_file_safe(srt_file_path, srt_content)
                 
                 logger.info(f"SRT file generated successfully: {srt_file_path}")
@@ -288,7 +258,6 @@ class SRTGenerator:
                 return None
 
     async def _write_srt_file_safe(self, file_path: Path, content: str):
-        """Write SRT file safely with UTF-8 encoding and Windows compatibility"""
         
         encoding_strategies = [
             ('utf-8-sig', 'UTF-8 with BOM (best Windows compatibility)'),
@@ -327,15 +296,15 @@ class SRTGenerator:
             raise RuntimeError(f"Failed to write SRT file with any encoding strategy: {last_error}")
 
     async def _write_file_with_encoding(self, file_path: Path, content: str, encoding: str):
-        """Write file with specific encoding asynchronously."""
+        """Async write file with specific encoding"""
         async with aiofiles.open(file_path, 'w', encoding=encoding, newline='\r\n') as f:
             await f.write(content)
 
     def _clean_content_for_encoding(self, content: str) -> str:
-        """Clean content to preserve PT-BR characters with UTF-8 encoding"""
+        """Clean content to preserve PT-BR characters with UTF8"""
         import unicodedata
 
-        # Normalize unicode to NFC (composed form) for better compatibility
+        # Normalize unicode to Composed Normalized Form (NFC) for better compatibility
         content = unicodedata.normalize('NFC', content)
 
         # Replace only truly problematic Vietnamese-style characters with PT-BR equivalents
@@ -349,13 +318,12 @@ class SRTGenerator:
         for old, new in problematic_chars.items():
             content = content.replace(old, new)
 
-        # NO ASCII ENCODING - Preserve PT-BR characters (á, é, í, ó, ú, ã, õ, ç, etc.)
-        # UTF-8 encoding (used in _write_file_with_encoding) handles all PT-BR characters correctly
+        # No ASCII encoding - Preserve PT-BR characters (á, é, í, ó, ú, ã, õ, ç, etc.)
 
         return content
 
     def validate_srt_content(self, segments: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate segments before SRT generation"""
+        """Validate segments before .srt generation"""
         
         validation_result = {
             "valid": True,
@@ -423,24 +391,13 @@ class SRTGenerator:
         
         return validation_result
 
-
-# Global SRT generator instance
+# Global .srt generator
 srt_generator = SRTGenerator()
 
 async def generate_srt(segments: List[Dict[str, Any]], 
                       file_manager: "FileManager",
                       filename: Optional[str] = None) -> Optional[str]:
-    """
-    Convenience function to generate SRT file.
     
-    Args:
-        segments: List of transcription segments.
-        file_manager: The application's file manager instance.
-        filename: Output filename.
-        
-    Returns:
-        Path to generated SRT file or None if failed.
-    """
     try:
         # Validate segments first
         validation = srt_generator.validate_srt_content(segments)
@@ -452,7 +409,7 @@ async def generate_srt(segments: List[Dict[str, Any]],
         if validation["valid_segments"] < validation["total_segments"]:
             logger.warning(f"Only {validation['valid_segments']}/{validation['total_segments']} segments are valid")
         
-        # Generate SRT file by passing the file_manager instance
+        # Generate .srt file by passing 'file_manager' instance
         return await srt_generator.generate_srt_file(segments, file_manager, filename)
         
     except Exception as e:

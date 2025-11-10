@@ -1,10 +1,5 @@
-# download_models.py
 """
-Downloads all required models from Hugging Face Hub into a project-local cache
-directory (`models/.cache`), making the project self-contained and portable.
-
-This script ensures the application can run 100% offline in any environment
-(local, Docker) by populating a predictable, local cache.
+Downloads all required models from Hugging Face Hub into a project-local cache directory (`models/.cache`). Ensures the application can run 100% offline in any environment (local, Docker).
 """
 
 import os
@@ -15,15 +10,13 @@ from dotenv import load_dotenv
 # Load environment variables (for HF_TOKEN)
 load_dotenv()
 
-# --- Configuration ---
-# This script will create a cache structure inside `models/.cache` that mimics
-# the official Hugging Face cache. This is the key to making the app portable.
+# --- Configuration
 LOCAL_CACHE_DIR = Path(__file__).parent / "models" / ".cache"
 os.environ['HF_HOME'] = str(LOCAL_CACHE_DIR)
 
 print(f"Target local cache directory set via HF_HOME: {LOCAL_CACHE_DIR}")
 
-# List of all models required by the application
+# List of all models required
 MODELS_TO_DOWNLOAD = [
     "guillaumekln/faster-whisper-medium",
     "pyannote/speaker-diarization-3.1",
@@ -42,21 +35,19 @@ def download_models():
         print(f"Downloading model: {repo_id}")
         
         try:
-            # Using cache_dir forces downloads to our project-local cache
+            # cache_dir forces downloads to project-local cache
             snapshot_download(
                 repo_id=repo_id,
                 token=hf_token,
                 resume_download=True
             )
-            print(f"✓ Successfully downloaded {repo_id} to local cache.")
+            print(f"Successfully downloaded {repo_id} to local cache.")
         except Exception as e:
-            print(f"❌ FAILED to download {repo_id}. Error: {e}")
+            print(f"FAILED to download {repo_id}. Error: {e}")
             print("Please check your internet connection and Hugging Face token.")
-            # In a CI/CD environment, you might want to exit on failure
-            # exit(1)
 
 if __name__ == "__main__":
     print("Starting download of all required models into the project-local cache...")
     LOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     download_models()
-    print("\n✅ All model downloads attempted.")
+    print("\nAll model downloads attempted.")

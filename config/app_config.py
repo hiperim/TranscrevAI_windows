@@ -1,9 +1,3 @@
-# config/app_config.py
-"""
-Enhanced Application Configuration for TranscrevAI
-Production-ready configuration management with environment support
-"""
-
 import os
 import logging
 from pathlib import Path
@@ -17,7 +11,7 @@ logger = logging.getLogger(__name__)
 class AppConfig:
     """Application configuration with validation and defaults - portable paths"""
 
-    # === CORE DIRECTORIES (portable, relative to project root) ===
+    # --- Core directories
     base_dir: Path = field(init=False)
     src_dir: Path = field(init=False)
     data_dir: Path = field(init=False)
@@ -27,39 +21,39 @@ class AppConfig:
     models_dir: Path = field(init=False)
     changes_dir: Path = field(init=False)
     
-    # === MODEL CONFIGURATION ===
+    # --- Model config
     model_name: str = "medium"
     model_language: str = "pt"
     device: str = "cpu"
     compute_type: str = "int8"
     
-    # === PERFORMANCE SETTINGS ===
+    # --- Performance settings
     max_memory_gb: float = 2.0
     max_workers: int = 4
     processing_timeout: float = 300.0  # 5 minutes
     
-    # === WEBSOCKET SETTINGS ===
+    # --- Websocket settings
     websocket_timeout: float = 30.0
     max_message_size: int = 16 * 1024 * 1024  # 16MB
     heartbeat_interval: float = 10.0
     
-    # === AUDIO SETTINGS ===
+    # --- Audio settings
     sample_rate: int = 16000
     chunk_size: int = 1024
     max_audio_duration: float = 3600.0  # 1 hour
     
-    # === LOGGING SETTINGS ===
+    # --- Logging settings
     log_level: str = "INFO"
     log_max_bytes: int = 10 * 1024 * 1024  # 10MB
     log_backup_count: int = 5
     
-    # === DEVELOPMENT SETTINGS ===
+    # --- Dev settings
     debug_mode: bool = False
     force_cpu: bool = False
     enable_performance_monitoring: bool = True
     enable_memory_profiling: bool = False
 
-    # === SERVER SETTINGS ===
+    # --- Server settings
     host: str = "0.0.0.0"
     port: int = 8000
     ssl_cert_path: Optional[str] = "certs/localhost+2.pem"

@@ -1,8 +1,4 @@
-"""Error message translations for user-facing responses.
-
-Developer logs are always in English. User-facing messages are in Portuguese.
-This module provides translation mappings from technical errors to user-friendly messages.
-"""
+"""Error message translations for user-facing responses in PT-BR"""
 
 ERROR_MESSAGES_PT = {
     # Validation errors
@@ -29,18 +25,13 @@ ERROR_MESSAGES_PT = {
 }
 
 def get_user_message(error_key: str, **kwargs) -> str:
-    """Get user-facing error message in Portuguese.
+    """Get user-facing error message in PT-BR:
 
     Args:
         error_key: Error message key from ERROR_MESSAGES_PT
         **kwargs: Values to format into message template
 
     Returns:
-        Formatted Portuguese error message
-
-    Example:
-        >>> get_user_message("file_too_large", max_size=500)
-        "Arquivo muito grande. Tamanho máximo: 500MB"
-    """
+        Formatted Portuguese error message"""
     template = ERROR_MESSAGES_PT.get(error_key, ERROR_MESSAGES_PT["unknown_error"])
     return template.format(**kwargs)

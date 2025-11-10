@@ -1,8 +1,5 @@
 """
-Speaker Diarization using the state-of-the-art pyannote.audio library.
-
-This module implements a robust, 100% offline speaker diarization solution by
-leveraging a project-local Hugging Face cache.
+Project's Hugging Face cache for local diarization pipeline - run file "'projectRootFolder'/setup_certs_SSL_ModelsCache/download_models.py"
 """
 
 import os
@@ -11,8 +8,7 @@ import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 
-# CRITICAL: Set HF_HOME *before* importing pyannote.audio or torch.
-# This forces the library to use our local, embedded cache directory.
+# Set HF_HOME before importing pyannote.audio or torch - forces the library to use local embedded cache directory
 MODELS_CACHE_DIR = Path(__file__).parent.parent / "models" / ".cache"
 os.environ['HF_HOME'] = str(MODELS_CACHE_DIR)
 
@@ -25,8 +21,6 @@ load_dotenv()
 
 
 class PyannoteDiarizer:
-    """Implements diarization using a cached pyannote.audio pipeline."""
-
     def __init__(self, device: str = "cpu", embedding_batch_size: int = 8):
         logger.info(f"Initializing pyannote.audio pipeline from local cache: {MODELS_CACHE_DIR}")
         self.device = device
@@ -34,13 +28,11 @@ class PyannoteDiarizer:
         self.pipeline: Optional[Pipeline] = None
 
         try:
-            # 1. Load pipeline from pretrained repo ID.
-            #    pyannote automatically uses the cache defined by HF_HOME.
+            # Load pipeline from pretrained repo ID - pyannote automatically uses the cache defined by HF_HOME.
             self.pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
-            logger.info("✓ Pipeline loaded from cache.")
+            logger.info("Pipeline loaded from cache.")
 
-            # 2. Instantiate with custom hyperparameters for accuracy.
-            #    The default threshold is too high and merges distinct speakers.
+            # Instantiate with custom hyperparameters for accuracy - default threshold is too high and merges distinct speakers
             self.pipeline.instantiate({
                 "clustering": {
                     "method": "centroid",
@@ -48,13 +40,13 @@ class PyannoteDiarizer:
                     "threshold": 0.35
                 }
             })
-            logger.info("✓ Pipeline instantiated with custom clustering threshold.")
+            logger.info("Pipeline instantiated with custom clustering threshold.")
 
-            # 3. Move to device and set batch size
+            # Move to device and set batch size
             self.pipeline.to(torch.device(self.device))
             self.pipeline.embedding_batch_size = self.embedding_batch_size
 
-            logger.info("✓ Diarization pipeline initialized successfully.")
+            logger.info("Diarization pipeline initialized successfully.")
 
         except Exception as e:
             logger.error(f"Failed to load diarization pipeline: {e}", exc_info=True)
@@ -83,7 +75,7 @@ class PyannoteDiarizer:
         try:
             diarization_result = self.pipeline(audio_path)
             num_speakers = len(diarization_result.labels())
-            logger.info(f"✓ pyannote.audio detected {num_speakers} speakers")
+            logger.info(f"pyannote.audio detected {num_speakers} speakers")
             aligned_segments = align_speakers_by_word(transcription_segments, diarization_result)
             result = {"segments": aligned_segments, "num_speakers": int(num_speakers)}
             return result
@@ -156,5 +148,5 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
         else:
             segment['speaker'] = 'SPEAKER_XX'
 
-    logger.info("✓ Speaker alignment completed successfully")
+    logger.info("Speaker alignment completed successfully")
     return transcription_segments

@@ -1,12 +1,12 @@
-// TranscrevAI Unified Frontend Logic
+// TranscrevAI Frontend Logic
 
-// --- GLOBAL VARIABLES AND STATE ---
+// --- Global variables and state
 let currentSessionId = null;
 let websocket = null;
 let currentFile = null;
 let liveRecorder = null;
 
-// --- UI AND TAB MANAGEMENT ---
+// --- UI and tab management
 function switchTab(tabName) {
     // Clear previous results when switching tabs
     clearResults();
@@ -19,16 +19,36 @@ function switchTab(tabName) {
     });
 
     document.getElementById(tabName + '-tab').classList.add('active');
-    // Use a more robust way to get the clicked tab
+    // Get the clicked tab
     const clickedTab = Array.from(document.querySelectorAll('.tab')).find(t => t.getAttribute('onclick').includes(tabName));
     if(clickedTab) {
         clickedTab.classList.add('active');
     }
 }
 
-// --- FILE UPLOAD WORKFLOW ---
+// --- File upload workflow
 async function processUpload() {
     if (!currentFile) return;
+
+    // Check if live recording is in progress
+    if (liveRecorder && (liveRecorder.recordingState === 'recording' || liveRecorder.recordingState === 'paused')) {
+        if (!confirm('Há uma gravação em andamento. Iniciar upload cancelará a gravação. Continuar?')) {
+            return; // User cancelled
+        }
+        console.log('[DEBUG] Stopping active recording...');
+        // Force stop recording and close WebSocket
+        if (liveRecorder.mediaRecorder) {
+            liveRecorder.mediaRecorder.stop();
+            liveRecorder.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        }
+        if (liveRecorder.ws && liveRecorder.ws.readyState === WebSocket.OPEN) {
+            liveRecorder.ws.close();
+            liveRecorder.ws = null;
+        }
+        liveRecorder.recordingState = 'idle';
+        liveRecorder.stopTimer();
+        liveRecorder.updateButtonStates();
+    }
 
     // Clear previous results when starting new upload
     clearResults();
@@ -36,7 +56,7 @@ async function processUpload() {
     const uploadBtn = document.getElementById('upload-btn');
     uploadBtn.disabled = true;
     uploadBtn.textContent = 'Processando...';
-    
+
     document.getElementById('loading-spinner').style.display = 'block';
 
 
@@ -107,7 +127,7 @@ function showFirstTimeNotice() {
     }, 15000);
 }
 
-// --- LIVE RECORDER WORKFLOW ---
+// --- Live recorder workflow
 class LiveRecorder {
     constructor() {
         this.mediaRecorder = null;
@@ -147,16 +167,38 @@ class LiveRecorder {
     async startRecording() {
         console.log('[DEBUG] LiveRecorder.startRecording() called');
 
+        // Check if upload is in progress
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+            if (!confirm('Há um upload em andamento. Iniciar gravação cancelará o upload. Continuar?')) {
+                return; // User cancelled
+            }
+            console.log('[DEBUG] Closing upload WebSocket...');
+            websocket.close();
+            websocket = null;
+        }
+
         // Clear previous results when starting new recording
         clearResults();
 
         try {
-            // Connect automatically if not already connected
-            if (!this.ws) {
-                console.log('[DEBUG] No WebSocket connection, calling init()...');
-                await this.init();
-                console.log('[DEBUG] init() completed, WebSocket connected');
+            // Close previous WebSocket if exists
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                console.log('[DEBUG] Closing previous WebSocket...');
+                this.ws.close();
             }
+
+            // Generate new session ID for each recording
+            this.sessionId = 'live_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+            console.log('[DEBUG] New session ID:', this.sessionId);
+
+            // Reset state for new recording
+            this.isStopping = false;
+            this.recordingState = 'idle';
+
+            // Always create fresh WebSocket connection
+            console.log('[DEBUG] Creating new WebSocket connection...');
+            await this.init();
+            console.log('[DEBUG] WebSocket connected');
 
             console.log('[DEBUG] Requesting microphone access...');
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -180,8 +222,8 @@ class LiveRecorder {
             const audioFormat = selectedFormat ? selectedFormat.value : 'wav';
             console.log('[DEBUG] Selected audio format:', audioFormat);
 
-            const chunkDurationMs = 5000; // Configurable for 5s vs 15s testing
-            this.mediaRecorder.start(chunkDurationMs); // Send chunks at this interval
+            const chunkDurationMs = 5000; // Send chunks every 5 seconds
+            this.mediaRecorder.start(chunkDurationMs); // Start recording with chunk interval
             this.ws.send(JSON.stringify({ action: 'start', format: audioFormat }));
             this.recordingState = 'recording';
             this.updateButtonStates();
@@ -232,17 +274,29 @@ class LiveRecorder {
 
                 this.mediaRecorder.stop();
                 this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+                // Final command to backend
                 this.ws.send(JSON.stringify({ action: 'stop' }));
+
+                //Update UI state
+                this.stopTimer();
+                this.updateStatus('Processando...', 'processing');
+                this.recordingState = 'processing';
+                this.updateButtonStates();
+
+                document.getElementById('status').classList.add('show');
+                document.getElementById('loading-spinner').style.display = 'block';
+                document.getElementById('status-text').textContent = 'Processando áudio gravado...';
+
+                // Close WebSocket after small delay to ensure stop message was sent
+                setTimeout(() => {
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        console.log('[DEBUG] Closing WebSocket after stop command');
+                        this.ws.close();
+                        this.ws = null; // Clear reference
+                    }
+                }, 500);
             }, 150);
-
-            this.stopTimer();
-            this.updateStatus('Processando...', 'processing');
-            this.recordingState = 'processing';
-            this.updateButtonStates();
-
-            document.getElementById('status').classList.add('show');
-            document.getElementById('loading-spinner').style.display = 'block';
-            document.getElementById('status-text').textContent = 'Processando áudio gravado...';
         }
     }
 
@@ -299,6 +353,7 @@ class LiveRecorder {
     handleTranscriptionComplete(result) {
         this.updateStatus('Concluído!', 'success');
         this.recordingState = 'idle';
+        this.isStopping = false; // Reset flag for next recording
         this.updateButtonStates();
         showResults(result, this.sessionId);
 
@@ -309,13 +364,20 @@ class LiveRecorder {
             downloadAudioBtn.disabled = false;
             downloadAudioBtn.onclick = () => downloadAudio(this.sessionId);
         }
+
+        // Clean up WebSocket if still open
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            console.log('[DEBUG] Closing WebSocket after completion');
+            this.ws.close();
+            this.ws = null;
+        }
     }
 }
 
-// --- GENERAL WEBSOCKET AND UI LOGIC ---
+// --- General websocket and UI logic
 const WS_CONFIG = {
     TIMEOUT: 30000,           // 30s connection timeout
-    RETRY_ATTEMPTS: 3,        // Max retry attempts
+    RETRY_ATTEMPTS: 3,        // max retry attempts
     RETRY_DELAY: 2000,        // 2s initial delay
     HEARTBEAT_INTERVAL: 15000 // 15s heartbeat
 };
@@ -367,7 +429,7 @@ async function setupWebSocketConnection(sessionId, onMessageHandler, retryCount 
                 setTimeout(() => {
                     setupWebSocketConnection(sessionId, onMessageHandler, retryCount + 1)
                         .then(connection => {
-                            websocket = connection.ws;  // Update global reference
+                            websocket = connection.ws;  // update global reference
                         });
                 }, delay);
             } else if (retryCount >= WS_CONFIG.RETRY_ATTEMPTS) {
@@ -507,25 +569,6 @@ function showResults(data, sessionId) {
             `;
             transcriptionResults.appendChild(segmentDiv);
         });
-    } else if (data.transcription) {
-        // Show plain transcription for live recording (no diarization yet)
-        const infoDiv = document.createElement('div');
-        infoDiv.className = 'segment';
-        infoDiv.style.backgroundColor = '#f0f8ff';
-        infoDiv.style.borderLeft = '4px solid #2196F3';
-        infoDiv.innerHTML = `
-            <div class="segment-text" style="font-style: italic; color: #666;">
-                ℹ️ Transcrição em tempo real. Diarização disponível no arquivo .srt para download.
-            </div>
-        `;
-        transcriptionResults.appendChild(infoDiv);
-
-        const segmentDiv = document.createElement('div');
-        segmentDiv.className = 'segment';
-        segmentDiv.innerHTML = `
-            <div class="segment-text">${data.transcription}</div>
-        `;
-        transcriptionResults.appendChild(segmentDiv);
     }
 
     if (downloadBtn) {
@@ -591,7 +634,7 @@ async function downloadAudio(sessionId) {
     }
 }
 
-// --- INITIALIZATION ---
+// --- Initialization
 document.addEventListener('DOMContentLoaded', () => {
     console.log('[DEBUG] DOM Content Loaded - Initializing app...');
     // File Upload Listeners
