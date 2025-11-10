@@ -1,149 +1,178 @@
-# src/worker.py
-
-"""
-Dedicated worker process for handling the CPU-intensive audio processing pipeline.
-This runs in a separate process to avoid blocking the main web server.
-"""
-
-import asyncio
 import logging
+import queue
 import time
-import psutil
-import gc
-from typing import Dict, Any, Optional
+import asyncio
 
-from src.audio_processing import AudioQualityAnalyzer
-from src.diarization import PyannoteDiarizer
-from src.transcription import TranscriptionService
-from src.subtitle_generator import generate_srt
-from src.file_manager import FileManager
-
-# Configure logging for the worker process
-logging.basicConfig(level="INFO", format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Worker-Global Services ---
-# These will be initialized once per worker process by the initializer
-transcription_service: Optional[TranscriptionService] = None
-diarization_service: Optional[PyannoteDiarizer] = None
-audio_quality_analyzer: Optional[AudioQualityAnalyzer] = None
-file_manager: Optional[FileManager] = None
+def transcription_worker(
+    transcription_queue: queue.Queue,
+    file_manager,
+    live_audio_processor,
+    transcription_service,
+    session_manager,
+    loop: asyncio.AbstractEventLoop
+):
+    while True:
+        try:
+            job = transcription_queue.get()
+            if job is None:  # Poison pill to exit
+                logger.info("Poison pill received. Transcription worker shutting down.")
+                break
 
-def init_worker(config: Dict[str, Any]):
-    """
-    Initializer function for each worker process in the pool.
-    Loads expensive models once per process.
-    """
-    global transcription_service, diarization_service, audio_quality_analyzer, file_manager
-    
-    logger.info(f"Initializing worker process...")
+            session_id = job.get("session_id")
+            if not session_id:
+                logger.warning("Invalid job received (no session_id), skipping.")
+                continue
+
+            job_type = job.get("type", "audio_chunk")
+
+            if job_type == "stop":
+                logger.info(f"Stop signal received for session {session_id}. Starting final processing.")
+                wav_path = job.get("wav_path")
+
+                # Validate session still exists before processing
+                try:
+                    session_check_future = asyncio.run_coroutine_threadsafe(
+                        session_manager.get_session(session_id), loop
+                    )
+                    session_obj = session_check_future.result(timeout=1)
+
+                    if not session_obj:
+                        logger.warning(f"Session {session_id} no longer exists. Skipping final processing.")
+                        continue
+                except Exception as e:
+                    logger.warning(f"Failed to validate session {session_id}: {e}. Skipping final processing.")
+                    continue
+
+                # Run complete transcription + diarization + SRT generation
+                if wav_path:
+                    # Import diarization service
+                    from src.dependencies import get_diarization_service
+                    diarization_service = get_diarization_service()
+
+                    # Schedule finalization in event loop
+                    asyncio.run_coroutine_threadsafe(
+                        _finalize_live_recording(
+                            session_manager, session_id,
+                            wav_path, file_manager, diarization_service, transcription_service
+                        ),
+                        loop
+                    )
+                    logger.info(f"Scheduled final processing for session {session_id}")
+                else:
+                    logger.warning(f"No WAV path provided for session {session_id}, skipping processing")
+
+            elif job_type == "echo":
+                payload = job.get("payload")
+                message = {"type": "echo_response", "payload": payload}
+                asyncio.run_coroutine_threadsafe(
+                    _send_message(session_manager, session_id, message),
+                    loop
+                )
+
+            else:
+                logger.debug(f"Unhandled job type '{job_type}' for session {session_id}, skipping.")
+
+            transcription_queue.task_done()
+
+        except Exception as e:
+            logger.error(f"Error in transcription worker: {e}", exc_info=True)
+
+async def _send_message(session_manager, session_id: str, message: dict):
+    """Helper to send message via websocket"""
+    session = await session_manager.get_session(session_id)
+    if session and session.websocket:
+        await session.websocket.send_json(message)
+    else:
+        logger.warning(f"Cannot send message to {session_id}: session removed or WebSocket closed")
+
+async def _finalize_live_recording(
+    session_manager, session_id: str,
+    wav_path: str, file_manager, diarization_service, transcription_service
+):
+    """ Final processing step for live recordings """
     try:
-        transcription_service = TranscriptionService(model_name=config["model_name"], device=config["device"])
-        diarization_service = PyannoteDiarizer(device=config["device"])
-        audio_quality_analyzer = AudioQualityAnalyzer()
-        file_manager = FileManager()
-        logger.info("Worker process initialized successfully.")
-    except Exception as e:
-        logger.error(f"Error during worker initialization: {e}", exc_info=True)
-        # Re-raise to ensure the pool knows the worker failed to initialize
-        raise
-
-def process_audio_task(audio_path: str, session_id: str, config: Dict[str, Any], communication_queue):
-    """The entry point and main logic for the audio processing worker."""
-    try:
-        # Check if services are initialized
-        if not all([transcription_service, diarization_service, audio_quality_analyzer, file_manager]):
-            raise RuntimeError("Worker services not initialized. The pool initializer may have failed.")
-
-        logger.info(f"[Worker-{session_id}] Starting audio processing task.")
-        
-        # Run the asyncio pipeline within the synchronous worker function
-        # Services are now passed from the worker's global scope
-        asyncio.run(run_async_pipeline(
-            audio_path, 
-            session_id, 
-            config, 
-            communication_queue,
-            transcription_service,
-            diarization_service,
-            audio_quality_analyzer,
-            file_manager
-        ))
-        logger.info(f"[Worker-{session_id}] Task completed successfully.")
-    except Exception as e:
-        logger.error(f"[Worker-{session_id}] An error occurred: {e}", exc_info=True)
-        communication_queue.put({'type': 'error', 'message': str(e)})
-
-async def run_async_pipeline(audio_path: str, session_id: str, config: Dict[str, Any], communication_queue, transcription_service, diarization_service, audio_quality_analyzer, file_manager):
-    """The core audio processing pipeline, adapted to use a queue for communication."""
-    
-    def send_message(message: Dict[str, Any]):
-        """Helper to put a message on the communication queue."""
-        communication_queue.put(message)
-
-    try:
-        process = psutil.Process()
-        mem_baseline = process.memory_info().rss / (1024 * 1024)
-        peak_mem_mb = mem_baseline
-        logger.info(f"[MEMORY PROFILING] Worker Baseline: {mem_baseline:.2f} MB")
-
+        from src.subtitle_generator import generate_srt
         import librosa
-        audio_duration = librosa.get_duration(path=audio_path)
-        pipeline_start_time = time.time()
+        import time
 
-        send_message({'type': 'progress', 'stage': 'start', 'percentage': 5, 'message': 'Analisando qualidade do áudio...'})
-        
-        quality_metrics = audio_quality_analyzer.analyze_audio_quality(audio_path)
-        if quality_metrics.has_issues and quality_metrics.warnings:
-            for warning in quality_metrics.warnings:
-                send_message({'type': 'warning', 'message': warning})
-            await asyncio.sleep(4)
+        logger.info(f"Finalizing live recording for session {session_id}...")
 
-        send_message({'type': 'progress', 'stage': 'transcription', 'percentage': 10, 'message': 'Iniciando transcrição...'})
-        
-        transcription_result = await transcription_service.transcribe_with_enhancements(audio_path, word_timestamps=True)
-        peak_mem_mb = max(peak_mem_mb, process.memory_info().rss / (1024 * 1024))
-        logger.info(f"[MEMORY PROFILING] After Transcription: {peak_mem_mb:.2f} MB")
+        # Get session data
+        session = await session_manager.get_session(session_id)
+        if not session:
+            logger.warning(f"Session {session_id} not found during finalization")
+            return
 
-        send_message({'type': 'progress', 'stage': 'diarization', 'percentage': 50, 'message': 'Transcrição concluída. Identificando falantes...'})
+        # Get audio duration for metrics
+        audio_duration = librosa.get_duration(path=wav_path)
 
-        diarization_result = await diarization_service.diarize(audio_path, transcription_result.segments)
-        peak_mem_mb = max(peak_mem_mb, process.memory_info().rss / (1024 * 1024))
-        logger.info(f"[MEMORY PROFILING] After Diarization: {peak_mem_mb:.2f} MB")
+        # Transcribe complete audio with word timestamps for .srt generation
+        logger.info(f"Transcribing complete audio with word timestamps for session {session_id}...")
+        processing_start = time.time()
 
-        send_message({'type': 'progress', 'stage': 'srt', 'percentage': 80, 'message': 'Gerando legendas...'})
+        transcription_result = await transcription_service.transcribe_with_enhancements(
+            wav_path,
+            word_timestamps=True  # for diarization alignment
+        )
 
-        srt_path = await generate_srt(diarization_result["segments"], output_path=file_manager.get_data_path("temp"), filename=f"{session_id}.srt")
+        processing_time = time.time() - processing_start
+        processing_ratio = processing_time / audio_duration if audio_duration > 0 else 0.0
 
-        pipeline_end_time = time.time()
-        actual_processing_time = pipeline_end_time - pipeline_start_time
-        processing_ratio = actual_processing_time / audio_duration if audio_duration > 0 else 0
+        # Debug: Log transcription segments count
+        logger.info(f"Whisper returned {len(transcription_result.segments) if transcription_result.segments else 0} segments for session {session_id}")
 
-        logger.info(f"Processing complete: {actual_processing_time:.2f}s for {audio_duration:.2f}s audio (ratio: {processing_ratio:.2f}x)")
+        # Run diarization on complete audio with detailed segments (with word timestamps)
+        logger.info(f"Running diarization on complete audio: {wav_path}")
+        diarization_result = await diarization_service.diarize(wav_path, transcription_result.segments)
 
+        # Debug: Log diarization segments count
+        logger.info(f"Diarization returned {len(diarization_result['segments'])} segments for session {session_id}")
+
+        # Fallback: if diarization returns empty segments, create synthetic segment
+        if not diarization_result["segments"] and transcription_result.text:
+            logger.warning(f"No segments from diarization, creating fallback segment for {session_id}")
+            diarization_result["segments"] = [{
+                "start": 0.0,
+                "end": audio_duration,
+                "text": transcription_result.text.strip(),
+                "speaker": "SPEAKER_00"
+            }]
+            diarization_result["num_speakers"] = 1
+
+        # Generate SRT file
+        srt_path = await generate_srt(diarization_result["segments"], file_manager=file_manager, filename=f"{session_id}.srt")
+        logger.info(f"SRT file generated: {srt_path}")
+
+        # Store file paths in session for download endpoints
+        session.files["audio"] = wav_path
+        session.files["subtitles"] = str(srt_path)
+        session.files["transcript"] = transcription_result.text.strip()
+        logger.info(f"File paths stored in session.files for {session_id}")
+
+        # Send complete result to UI
         final_result = {
             "segments": diarization_result["segments"],
             "num_speakers": diarization_result["num_speakers"],
-            "processing_time": round(actual_processing_time, 2),
+            "transcription": transcription_result.text.strip(),
+            "processing_time": round(processing_time, 2),
             "processing_ratio": round(processing_ratio, 2),
-            "audio_duration": round(audio_duration, 2),
-            "srt_path": srt_path, # Pass the srt_path back to the main process
-            "peak_memory_mb": round(peak_mem_mb, 2)
+            "audio_duration": round(audio_duration, 2)
         }
 
-        send_message({'type': 'complete', 'result': final_result})
+        if session.websocket:
+            await session.websocket.send_json({
+                "type": "complete",
+                "result": final_result
+            })
+            logger.info(f"Final result sent to UI for session {session_id}")
 
     except Exception as e:
-        logger.error(f"Pipeline failed for session {session_id}: {e}", exc_info=True)
-        send_message({'type': 'error', 'message': str(e)})
-    finally:
-        logger.info(f"[Worker-{session_id}] Task finished. Triggering aggressive garbage collection.")
-        # Explicitly delete large objects to aid garbage collection in long-lived workers
-        if 'transcription_result' in locals():
-            del transcription_result
-        if 'diarization_result' in locals():
-            del diarization_result
-        if 'final_result' in locals():
-            del final_result
-        # Force garbage collection
-        gc.collect()
+        logger.error(f"Error finalizing live recording for {session_id}: {e}", exc_info=True)
+        session = await session_manager.get_session(session_id)
+        if session and session.websocket:
+            await session.websocket.send_json({
+                "type": "error",
+                "message": f"Erro ao finalizar processamento: {str(e)}"
+            })

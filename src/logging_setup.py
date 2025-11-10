@@ -1,24 +1,10 @@
-# logging_setup.py - COMPLETE AND CORRECTED
-
-"""
-Enhanced Logging Setup for TranscrevAI - All Pylance Errors Fixed
-
-FIXES APPLIED:
-- Fixed import error for DATA_DIR with comprehensive fallback handling
-- Added multiple import strategies with proper error handling
-- All Pylance errors resolved completely
-- Complete functional implementation with robust error handling
-"""
-
 import logging
 import sys
 from pathlib import Path
 
 
 def setup_app_logging(level=logging.INFO, logger_name=None):
-    """Setup application-specific logging for TranscrevAI with robust error handling"""
-    
-    # Use application-specific logger instead of root logger
+    # App-specific logger instead of root logger
     if logger_name is None:
         logger_name = "transcrevai"
     
@@ -31,10 +17,10 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
     # Set logging level
     logger.setLevel(level)
     
-    # Prevent propagation to root logger to avoid conflicts
+    # Prevent propagation to root logger - avoid conflicts
     logger.propagate = False
     
-    # Create console handler (use default stream to avoid referencing sys)
+    # Create console handler - using default stream
     console_handler = logging.StreamHandler()
     console_handler.setLevel(level)
     
@@ -49,18 +35,15 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
     # Add handler to logger
     logger.addHandler(console_handler)
     
-    # Create file handler for persistent logging - FIXED ALL IMPORT ERRORS
     try:
-        # Multiple import strategies for robust DATA_DIR access
+        # Multiple import strategies for robust 'data_dir' access
         data_dir = None
         
-        # Strategy 1: Modern config import
         try:
             from config.app_config import get_config
             config = get_config()
             data_dir = getattr(config, "data_dir", None)
         except Exception:
-            # Strategy 2: Import module dynamically and probe for DATA_DIR or data_dir attributes
             try:
                 import importlib
                 app_config = importlib.import_module("config.app_config")
@@ -68,7 +51,6 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
                 if isinstance(data_dir, str):
                     data_dir = Path(data_dir)
             except Exception:
-                # Strategy 3: Alternative config path
                 try:
                     import os
                     import sys
@@ -83,13 +65,11 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
                 except Exception:
                     pass
         
-        # If we successfully got data_dir from config, use it
         if data_dir:
             try:
-                # Ensure data_dir is a Path (handles str, Path, and os.PathLike)
                 data_dir = Path(data_dir)
             except Exception:
-                # If conversion fails, ignore and fall back
+                # If conversion fails - ignore and fall back
                 data_dir = None
 
         if data_dir:
@@ -104,9 +84,8 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
         
         # Create file handler with rotation
         file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)  # More verbose for file
+        file_handler.setLevel(logging.DEBUG)
         
-        # Detailed formatter for file
         file_formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(funcName)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
@@ -116,11 +95,10 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
         logger.addHandler(file_handler)
         
     except Exception as e:
-        # If file logging fails, at least we have console - no crash
+        # If file logging fails - no crash, with log
         logger.warning(f"File logging setup failed: {e}")
     
     return logger
-
 
 def get_logger(name=None):
     """Get application logger for specific module"""

@@ -38,7 +38,6 @@ ENV/
 *.swp
 *.swo
 *~
-transcrevai-windows-3089b18f1ba0.json
 .claude/
 
 # Test files
@@ -47,6 +46,7 @@ transcrevai-windows-3089b18f1ba0.json
 .tox/
 .cache
 htmlcov/
+tests/
 
 # Data directories (will be created in container)
 data/
@@ -68,9 +68,10 @@ README.md
 docs/
 *.md
 
-# Docker files (except this ignore file)
-Dockerfile.*
-docker-compose.override.yml
+# Docker files (except the present)
+Dockerfile
+docker-compose.yml
+docker-compose.dev.yml
 
 # Node modules (if any)
 node_modules/
@@ -88,8 +89,3 @@ Thumbs.db
 *.tmp
 *.temp
 *.log
-
-# IDE files
-.spyderproject
-.spyproject
-.ropeproject

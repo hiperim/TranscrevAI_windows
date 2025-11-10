@@ -1,10 +1,10 @@
-version: '3.8'
-
 services:
   transcrevai:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
     ports:
       - "8000:8000"
     volumes:

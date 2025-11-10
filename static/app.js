@@ -1,13 +1,16 @@
-// TranscrevAI Unified Frontend Logic
+// TranscrevAI Frontend Logic
 
-// --- GLOBAL VARIABLES AND STATE ---
+// --- Global variables and state
 let currentSessionId = null;
 let websocket = null;
 let currentFile = null;
 let liveRecorder = null;
 
-// --- UI AND TAB MANAGEMENT ---
+// --- UI and tab management
 function switchTab(tabName) {
+    // Clear previous results when switching tabs
+    clearResults();
+
     document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
     });
@@ -16,21 +19,44 @@ function switchTab(tabName) {
     });
 
     document.getElementById(tabName + '-tab').classList.add('active');
-    // Use a more robust way to get the clicked tab
+    // Get the clicked tab
     const clickedTab = Array.from(document.querySelectorAll('.tab')).find(t => t.getAttribute('onclick').includes(tabName));
     if(clickedTab) {
         clickedTab.classList.add('active');
     }
 }
 
-// --- FILE UPLOAD WORKFLOW ---
+// --- File upload workflow
 async function processUpload() {
     if (!currentFile) return;
+
+    // Check if live recording is in progress
+    if (liveRecorder && (liveRecorder.recordingState === 'recording' || liveRecorder.recordingState === 'paused')) {
+        if (!confirm('Há uma gravação em andamento. Iniciar upload cancelará a gravação. Continuar?')) {
+            return; // User cancelled
+        }
+        console.log('[DEBUG] Stopping active recording...');
+        // Force stop recording and close WebSocket
+        if (liveRecorder.mediaRecorder) {
+            liveRecorder.mediaRecorder.stop();
+            liveRecorder.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        }
+        if (liveRecorder.ws && liveRecorder.ws.readyState === WebSocket.OPEN) {
+            liveRecorder.ws.close();
+            liveRecorder.ws = null;
+        }
+        liveRecorder.recordingState = 'idle';
+        liveRecorder.stopTimer();
+        liveRecorder.updateButtonStates();
+    }
+
+    // Clear previous results when starting new upload
+    clearResults();
 
     const uploadBtn = document.getElementById('upload-btn');
     uploadBtn.disabled = true;
     uploadBtn.textContent = 'Processando...';
-    
+
     document.getElementById('loading-spinner').style.display = 'block';
 
 
@@ -44,7 +70,8 @@ async function processUpload() {
     showStatus('Enviando arquivo...', 5);
 
     try {
-        await setupWebSocketConnection(currentSessionId, handleUploadWebSocketMessage);
+        const connection = await setupWebSocketConnection(currentSessionId, handleUploadWebSocketMessage);
+        websocket = connection.ws;
 
         const formData = new FormData();
         formData.append('file', currentFile);
@@ -100,18 +127,22 @@ function showFirstTimeNotice() {
     }, 15000);
 }
 
-// --- LIVE RECORDER WORKFLOW ---
+// --- Live recorder workflow
 class LiveRecorder {
     constructor() {
         this.mediaRecorder = null;
         this.ws = null;
         this.sessionId = 'live_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
         this.recordingState = 'idle'; // idle, recording, paused
+        this.isStopping = false; // prevent chunks after stop
         this.timer = null;
+        this.heartbeatInterval = null;
     }
 
     async init() {
-        await setupWebSocketConnection(this.sessionId, (data) => this.handleServerMessage(data));
+        const connection = await setupWebSocketConnection(this.sessionId, (data) => this.handleServerMessage(data));
+        this.ws = connection.ws;
+        this.heartbeatInterval = connection.heartbeatInterval;
         this.updateStatus('Conectado', 'success');
     }
 
@@ -134,11 +165,48 @@ class LiveRecorder {
     }
 
     async startRecording() {
+        console.log('[DEBUG] LiveRecorder.startRecording() called');
+
+        // Check if upload is in progress
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+            if (!confirm('Há um upload em andamento. Iniciar gravação cancelará o upload. Continuar?')) {
+                return; // User cancelled
+            }
+            console.log('[DEBUG] Closing upload WebSocket...');
+            websocket.close();
+            websocket = null;
+        }
+
+        // Clear previous results when starting new recording
+        clearResults();
+
         try {
+            // Close previous WebSocket if exists
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                console.log('[DEBUG] Closing previous WebSocket...');
+                this.ws.close();
+            }
+
+            // Generate new session ID for each recording
+            this.sessionId = 'live_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+            console.log('[DEBUG] New session ID:', this.sessionId);
+
+            // Reset state for new recording
+            this.isStopping = false;
+            this.recordingState = 'idle';
+
+            // Always create fresh WebSocket connection
+            console.log('[DEBUG] Creating new WebSocket connection...');
+            await this.init();
+            console.log('[DEBUG] WebSocket connected');
+
+            console.log('[DEBUG] Requesting microphone access...');
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            console.log('[DEBUG] Microphone access granted');
             this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
 
             this.mediaRecorder.ondataavailable = async (event) => {
+                if (this.isStopping) return; // Don't send chunks after stop
                 if (event.data.size > 0) {
                     const reader = new FileReader();
                     reader.onloadend = () => {
@@ -149,8 +217,17 @@ class LiveRecorder {
                 }
             };
 
-            this.mediaRecorder.start(1000); // 1-second chunks
-            this.ws.send(JSON.stringify({ action: 'start' }));
+            // Get selected audio format from UI
+            const selectedFormat = document.querySelector('input[name="audio-format"]:checked');
+            const audioFormat = selectedFormat ? selectedFormat.value : 'wav';
+            console.log('[DEBUG] Selected audio format:', audioFormat);
+
+            const chunkDurationMs = 5000; // Send chunks every 5 seconds
+            this.mediaRecorder.start(chunkDurationMs); // Start recording with chunk interval
+            this.ws.send(JSON.stringify({ action: 'start', format: audioFormat }));
+            this.recordingState = 'recording';
+            this.updateButtonStates();
+            this.resetTimer();  // Reset timer for new recording
             this.startTimer();
             this.updateStatus('Gravando...', 'recording');
         } catch (error) {
@@ -161,6 +238,8 @@ class LiveRecorder {
 
     pauseRecording() {
         if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+            // Force send any accumulated audio data before pausing
+            this.mediaRecorder.requestData();
             this.mediaRecorder.pause();
             this.ws.send(JSON.stringify({ action: 'pause' }));
             this.stopTimer();
@@ -179,32 +258,67 @@ class LiveRecorder {
 
     stopRecording() {
         if (this.mediaRecorder) {
-            this.mediaRecorder.stop();
-            this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
-            this.ws.send(JSON.stringify({ action: 'stop' }));
-            this.stopTimer();
-            this.updateStatus('Processando...', 'processing');
-            this.recordingState = 'processing';
-            this.updateButtonStates();
+            // Cancel heartbeat to prevent ping after stop
+            if (this.heartbeatInterval) {
+                clearInterval(this.heartbeatInterval);
+                this.heartbeatInterval = null;
+            }
 
-            document.getElementById('status').classList.add('show');
-            document.getElementById('loading-spinner').style.display = 'block';
-            document.getElementById('status-text').textContent = 'Processando áudio gravado...';
+            // Force send any accumulated audio data before stopping
+            this.mediaRecorder.requestData();
+
+            // Small delay to ensure data is sent before stopping
+            setTimeout(() => {
+                // Set flag NOW to prevent chunks from stop() event
+                this.isStopping = true;
+
+                this.mediaRecorder.stop();
+                this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+                // Final command to backend
+                this.ws.send(JSON.stringify({ action: 'stop' }));
+
+                //Update UI state
+                this.stopTimer();
+                this.updateStatus('Processando...', 'processing');
+                this.recordingState = 'processing';
+                this.updateButtonStates();
+
+                document.getElementById('status').classList.add('show');
+                document.getElementById('loading-spinner').style.display = 'block';
+                document.getElementById('status-text').textContent = 'Processando áudio gravado...';
+
+                // DON'T close WebSocket here - pipeline needs it for progress updates
+                // WebSocket will be closed in handleTranscriptionComplete()
+            }, 150);
         }
     }
 
     startTimer() {
-        let seconds = 0;
+        // Initialize elapsed seconds if not set (first start)
+        if (this.elapsedSeconds === undefined) {
+            this.elapsedSeconds = 0;
+        }
+
         this.timer = setInterval(() => {
-            seconds++;
-            const mins = Math.floor(seconds / 60);
-            const secs = seconds % 60;
+            this.elapsedSeconds++;
+            const mins = Math.floor(this.elapsedSeconds / 60);
+            const secs = this.elapsedSeconds % 60;
             document.getElementById('recording-timer').textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
         }, 1000);
     }
 
     stopTimer() {
-        if (this.timer) clearInterval(this.timer);
+        if (this.timer) {
+            clearInterval(this.timer);
+            this.timer = null;
+        }
+    }
+
+    resetTimer() {
+        this.stopTimer();
+        this.elapsedSeconds = 0;
+        document.getElementById('recording-timer').textContent = '00:00';
     }
 
     updateButtonStates() {
@@ -233,31 +347,118 @@ class LiveRecorder {
     handleTranscriptionComplete(result) {
         this.updateStatus('Concluído!', 'success');
         this.recordingState = 'idle';
+        this.isStopping = false; // Reset flag for next recording
         this.updateButtonStates();
         showResults(result, this.sessionId);
+
+        // Enable and show download audio button for live recordings
+        const downloadAudioBtn = document.getElementById('download-audio-btn');
+        if (downloadAudioBtn) {
+            downloadAudioBtn.style.display = 'inline-block';
+            downloadAudioBtn.disabled = false;
+            downloadAudioBtn.onclick = () => downloadAudio(this.sessionId);
+        }
+
+        // Keep WebSocket open - session persists for downloads
+        // Will be closed when starting new recording
     }
 }
 
-// --- GENERAL WEBSOCKET AND UI LOGIC ---
-async function setupWebSocketConnection(sessionId, onMessageHandler) {
+// --- General websocket and UI logic
+const WS_CONFIG = {
+    TIMEOUT: 30000,           // 30s connection timeout
+    RETRY_ATTEMPTS: 3,        // max retry attempts
+    RETRY_DELAY: 2000,        // 2s initial delay
+    HEARTBEAT_INTERVAL: 15000 // 15s heartbeat
+};
+
+async function setupWebSocketConnection(sessionId, onMessageHandler, retryCount = 0) {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws/${sessionId}`;
-    
+
     try {
-        websocket = new WebSocket(wsUrl);
-        websocket.onmessage = (event) => onMessageHandler(JSON.parse(event.data));
-        websocket.onerror = (error) => console.log('WebSocket error:', error);
-        websocket.onclose = () => console.log('WebSocket connection closed');
-        
+        const ws = new WebSocket(wsUrl);
+        let heartbeatInterval = null;
+        let connectionTimeout = null;
+
+        // Setup heartbeat to keep connection alive
+        ws.onopen = () => {
+            console.log(`WebSocket connected for session: ${sessionId}`);
+            clearTimeout(connectionTimeout);
+
+            // Send heartbeat every 15s
+            heartbeatInterval = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ action: 'ping' }));
+                }
+            }, WS_CONFIG.HEARTBEAT_INTERVAL);
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type !== 'pong') {  // Ignore pong responses
+                onMessageHandler(data);
+            }
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            clearInterval(heartbeatInterval);
+        };
+
+        ws.onclose = (event) => {
+            console.log(`WebSocket closed: ${event.code} ${event.reason}`);
+            clearInterval(heartbeatInterval);
+
+            // Auto-reconnect if not clean close and retries available
+            if (!event.wasClean && retryCount < WS_CONFIG.RETRY_ATTEMPTS) {
+                const delay = WS_CONFIG.RETRY_DELAY * Math.pow(2, retryCount);
+                console.log(`Reconnecting in ${delay}ms (attempt ${retryCount + 1}/${WS_CONFIG.RETRY_ATTEMPTS})`);
+                showStatus(`Reconectando... (tentativa ${retryCount + 1})`, 50);
+
+                setTimeout(() => {
+                    setupWebSocketConnection(sessionId, onMessageHandler, retryCount + 1)
+                        .then(connection => {
+                            websocket = connection.ws;  // update global reference
+                        });
+                }, delay);
+            } else if (retryCount >= WS_CONFIG.RETRY_ATTEMPTS) {
+                showStatus('Falha na conexão. Recarregue a página.', 0);
+            }
+        };
+
+        // Connection timeout
+        connectionTimeout = setTimeout(() => {
+            if (ws.readyState !== WebSocket.OPEN) {
+                ws.close();
+                throw new Error('Connection timeout');
+            }
+        }, WS_CONFIG.TIMEOUT);
+
+        // Wait for connection
         await new Promise((resolve, reject) => {
-            websocket.onopen = resolve;
-            websocket.onerror = reject; // Reject promise on connection error
+            const originalOnOpen = ws.onopen;
+            ws.onopen = (event) => {
+                originalOnOpen(event);
+                resolve();
+            };
+            ws.onerror = reject;
         });
-        console.log(`WebSocket connected for session: ${sessionId}`);
-        return websocket;
+
+        return { ws, heartbeatInterval };
     } catch (error) {
-        console.log(`WebSocket setup failed for session ${sessionId}:`, error);
-        showStatus('Erro de conexão com o servidor.', 0);
+        console.error(`WebSocket setup failed for session ${sessionId}:`, error);
+
+        // Retry if attempts remaining
+        if (retryCount < WS_CONFIG.RETRY_ATTEMPTS) {
+            const delay = WS_CONFIG.RETRY_DELAY * Math.pow(2, retryCount);
+            showStatus(`Tentando reconectar... (${retryCount + 1}/${WS_CONFIG.RETRY_ATTEMPTS})`, 25);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return setupWebSocketConnection(sessionId, onMessageHandler, retryCount + 1);
+        } else {
+            showStatus('Erro de conexão. Verifique sua internet.', 0);
+            throw error;
+        }
     }
 }
 
@@ -284,6 +485,13 @@ function handleUploadWebSocketMessage(data) {
                 uploadBtn.textContent = 'Processar Arquivo';
             }
             if (spinner) spinner.style.display = 'none';
+
+            // Close upload WebSocket after completion
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                console.log('[DEBUG] Closing upload WebSocket after completion');
+                websocket.close();
+                websocket = null;
+            }
             break;
         case 'error':
             showStatus('Erro: ' + (message || 'Erro desconhecido'), 0);
@@ -308,6 +516,31 @@ function showStatus(text, progress) {
     progressFill.style.width = progress + '%';
 }
 
+function clearResults() {
+    const results = document.getElementById('results');
+    const stats = document.getElementById('stats');
+    const transcriptionResults = document.getElementById('transcription-results');
+    const status = document.getElementById('status');
+    const downloadBtn = document.getElementById('download-btn');
+    const downloadAudioBtn = document.getElementById('download-audio-btn');
+
+    // Hide results section
+    if (results) results.classList.remove('show');
+
+    // Clear stats
+    if (stats) stats.innerHTML = '';
+
+    // Clear transcription
+    if (transcriptionResults) transcriptionResults.innerHTML = '';
+
+    // Hide status
+    if (status) status.classList.remove('show');
+
+    // Disable download buttons
+    if (downloadBtn) downloadBtn.disabled = true;
+    if (downloadAudioBtn) downloadAudioBtn.style.display = 'none';
+}
+
 function showResults(data, sessionId) {
     const results = document.getElementById('results');
     const stats = document.getElementById('stats');
@@ -317,7 +550,7 @@ function showResults(data, sessionId) {
     stats.innerHTML = `
         <div class="stat-card"><div class="stat-value">${data.num_speakers || 0}</div><div class="stat-label">Falantes</div></div>
         <div class="stat-card"><div class="stat-value">${data.segments ? data.segments.length : 0}</div><div class="stat-label">Segmentos</div></div>
-        <div class="stat-card"><div class="stat-value">${data.processing_time || 'N/A'}s</div><div class="stat-label">Tempo</div></div>
+        <div class="stat-card"><div class="stat-value">${data.audio_duration || 'N/A'}s</div><div class="stat-label">Duração do áudio</div></div>
         <div class="stat-card"><div class="stat-value">${data.processing_ratio ? data.processing_ratio + 'x' : 'N/A'}</div><div class="stat-label">Ratio</div></div>
     `;
 
@@ -371,8 +604,36 @@ async function downloadSRT(sessionId) {
     }
 }
 
-// --- INITIALIZATION ---
+async function downloadAudio(sessionId) {
+    if (!sessionId) return;
+    try {
+        const response = await fetch(`/api/download/${sessionId}/audio`);
+        if (response.ok) {
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+
+            // Determine file extension from content-type or default to .wav
+            const contentType = response.headers.get('content-type');
+            const extension = contentType && contentType.includes('mp4') ? '.mp4' : '.wav';
+            a.download = `gravacao_${sessionId}${extension}`;
+
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        } else {
+            alert('Erro ao baixar arquivo de áudio');
+        }
+    } catch (error) {
+        alert('Erro: ' + error.message);
+    }
+}
+
+// --- Initialization
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[DEBUG] DOM Content Loaded - Initializing app...');
     // File Upload Listeners
     const fileInput = document.getElementById('file-input');
     const fileDropZone = document.querySelector('.file-drop-zone');
@@ -413,19 +674,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Live Recorder Listeners
-    const initLiveBtn = document.getElementById('init-live-recording');
-    if (initLiveBtn) {
-        initLiveBtn.addEventListener('click', async () => {
-            if (!liveRecorder) {
-                liveRecorder = new LiveRecorder();
-                await liveRecorder.init();
-                liveRecorder.updateButtonStates();
+    console.log('[DEBUG] Registering live recording listeners...');
+    const startBtn = document.getElementById('start-live-btn');
+    console.log('[DEBUG] startBtn element:', startBtn);
+
+    if (startBtn) {
+        console.log('[DEBUG] startBtn found, adding event listener');
+        startBtn.addEventListener('click', async () => {
+            console.log('[DEBUG] Start button clicked!');
+            try {
+                if (!liveRecorder) {
+                    console.log('[DEBUG] Creating new LiveRecorder instance');
+                    liveRecorder = new LiveRecorder();
+                }
+                console.log('[DEBUG] Calling startRecording()');
+                await liveRecorder.startRecording();
+                console.log('[DEBUG] startRecording() completed');
+            } catch (error) {
+                console.error('[DEBUG] Error in startRecording:', error);
             }
         });
+    } else {
+        console.error('[DEBUG] startBtn NOT FOUND!');
     }
-
-    const startBtn = document.getElementById('start-live-btn');
-    if (startBtn) startBtn.addEventListener('click', () => liveRecorder?.startRecording());
 
     const pauseBtn = document.getElementById('pause-live-btn');
     if (pauseBtn) pauseBtn.addEventListener('click', () => liveRecorder?.pauseRecording());

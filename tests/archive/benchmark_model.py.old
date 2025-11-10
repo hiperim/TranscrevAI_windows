@@ -1,0 +1,182 @@
+# tests/benchmark_model.py
+"""
+Isolated and robust benchmark script to test a model configuration on all
+benchmark audio files. It calculates both performance and true accuracy.
+This script is designed to be easily configurable for A/B testing.
+"""
+
+import asyncio
+import time
+import sys
+import re
+import json
+from pathlib import Path
+import librosa
+from difflib import SequenceMatcher
+
+# Add root directory to path to allow src imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.transcription import TranscriptionService
+
+# --- Test Configuration Block ---
+
+TEST_CONFIG = {
+    "model_name": "medium",
+    "compute_type": "float32",
+    "beam_size": 5,
+    "best_of": 5,
+    "vad_threshold": 0.5,
+    "vad_min_speech_duration_ms": 250,
+    "vad_min_silence_duration_ms": 2000
+}
+
+# --------------------------------
+
+def _get_expected_text(audio_file_path: str) -> str:
+    """
+    Reads and parses the corresponding expected_results .txt file to get the ground truth text.
+    """
+    audio_path = Path(audio_file_path)
+    expected_text_path = audio_path.parent / f"expected_results_{audio_path.stem}.txt"
+    
+    if not expected_text_path.exists():
+        print(f"[WARNING] Expected results file not found: {expected_text_path}")
+        return ""
+
+    content = expected_text_path.read_text(encoding="utf-8")
+    transcription_section = re.search(r"TRANSCRIÇÃO ESPERADA:\n==================\n(.*?)\nRESULTADOS ESPERADOS", content, re.DOTALL)
+    if not transcription_section:
+        return ""
+
+    lines = transcription_section.group(1).strip().split('\n')
+    full_text = []
+    for line in lines:
+        match = re.search(r'\): "(.*?)"$', line)
+        if match:
+            full_text.append(match.group(1))
+            
+    return " ".join(full_text)
+
+def get_benchmark_files():
+    """Finds all .wav files in the recordings folder that have expected results txt files."""
+    recordings_dir = Path(__file__).parent.parent / "data" / "recordings"
+    if not recordings_dir.exists():
+        return []
+    
+    valid_files = [
+        p for p in recordings_dir.glob("*.wav") 
+        if (recordings_dir / f"expected_results_{p.stem}.txt").exists()
+    ]
+    
+    if not valid_files:
+        print("[ERROR] No benchmark audio files with corresponding expected_results found.")
+        return []
+    return [str(p) for p in valid_files]
+
+async def run_benchmark():
+    """Runs the benchmark for all audio files and prints a summary report."""
+    
+    report_lines = []
+    def log_and_print(message):
+        print(message)
+        report_lines.append(message)
+
+    log_and_print(f"--- Isolated Benchmark ---")
+    log_and_print(f"Test Configuration:")
+    # Use a copy to avoid modifying the global dict
+    config_to_log = TEST_CONFIG.copy()
+    log_and_print(json.dumps(config_to_log, indent=4))
+    log_and_print("--------------------------\n")
+
+    results_summary = []
+
+    try:
+        # Initialize service once
+        transcription_service = TranscriptionService(
+            model_name=TEST_CONFIG["model_name"],
+            device="cpu",
+            compute_type=TEST_CONFIG["compute_type"]
+        )
+        await transcription_service.initialize()
+
+        benchmark_files = get_benchmark_files()
+
+        for audio_path in benchmark_files:
+            file_name = Path(audio_path).name
+            log_and_print(f"--- Processing: {file_name} ---")
+            
+            audio_duration = librosa.get_duration(path=audio_path)
+            expected_text = _get_expected_text(audio_path)
+
+            # Prepare VAD parameters from config
+            vad_params = {
+                "threshold": TEST_CONFIG["vad_threshold"],
+                "min_speech_duration_ms": TEST_CONFIG["vad_min_speech_duration_ms"],
+                "min_silence_duration_ms": TEST_CONFIG["vad_min_silence_duration_ms"],
+            }
+
+            # Run transcription with all parameters from the config
+            start_time = time.time()
+            result = await transcription_service.transcribe_with_enhancements(
+                audio_path,
+                word_timestamps=True,
+                beam_size=TEST_CONFIG["beam_size"],
+                best_of=TEST_CONFIG["best_of"],
+                vad_parameters=vad_params
+            )
+            end_time = time.time()
+
+            processing_time = end_time - start_time
+            processing_ratio = processing_time / audio_duration
+            actual_text = result.text.strip()
+            
+            accuracy_ratio = SequenceMatcher(None, actual_text.lower(), expected_text.lower()).ratio()
+
+            results_summary.append({
+                "File": file_name,
+                "Ratio": f"{processing_ratio:.2f}x",
+                "Accuracy": f"{accuracy_ratio:.2%}"
+            })
+
+            log_and_print(f"  - Performance: {processing_ratio:.2f}x ({processing_time:.2f}s for {audio_duration:.2f}s audio)")
+            log_and_print(f"  - Accuracy: {accuracy_ratio:.2%}")
+            log_and_print(f"  - Expected Text: {expected_text}")
+            log_and_print(f"  - Actual Text:   {actual_text if actual_text else '[NO TEXT TRANSCRIBED]'}\n")
+
+    except Exception as e:
+        log_and_print(f"\n--- ERROR ---")
+        log_and_print(f"An error occurred during the benchmark: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Save the report
+        report_dir = Path(__file__).parent.parent / ".claude" / "test_reports"
+        report_dir.mkdir(exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        report_path = report_dir / f"benchmark_report_{timestamp}.md"
+        
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(report_lines))
+        
+        print(f"\n--- Report Saved ---")
+        print(f"Full results saved to: {report_path}")
+        print("--------------------")
+
+    # Print final summary table
+    if results_summary:
+        log_and_print("\n--- Benchmark Summary ---")
+        log_and_print(f"Model: {TEST_CONFIG['model_name']} ({TEST_CONFIG['compute_type']})")
+        header = results_summary[0].keys()
+        rows = [x.values() for x in results_summary]
+        col_widths = [max(len(str(item)) for item in col) for col in zip(*([header] + rows))]
+        header_line = " | ".join(f"{h:<{w}}" for h, w in zip(header, col_widths))
+        log_and_print(header_line)
+        log_and_print("-" * len(header_line))
+        for row in rows:
+            row_line = " | ".join(f"{item:<{w}}" for item, w in zip(row, col_widths))
+            log_and_print(row_line)
+        log_and_print("-------------------------")
+
+if __name__ == "__main__":
+    asyncio.run(run_benchmark())
