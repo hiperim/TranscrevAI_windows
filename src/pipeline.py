@@ -25,17 +25,26 @@ async def process_audio_pipeline(audio_path: str, session_id: str) -> None:
 
         session = await session_manager.get_session(session_id)
         if session and session.websocket:
-            await session.websocket.send_json({'type': 'progress', 'stage': 'start', 'percentage': 5, 'message': 'Analisando qualidade do áudio...'})
+            try:
+                await session.websocket.send_json({'type': 'progress', 'stage': 'start', 'percentage': 5, 'message': 'Analisando qualidade do áudio...'})
+            except Exception:
+                logger.warning(f"Could not send progress update to {session_id} (WebSocket closed)")
 
         transcription_result = await transcription_service.transcribe_with_enhancements(audio_path)
 
         if session and session.websocket:
-            await session.websocket.send_json({'type': 'progress', 'stage': 'diarization', 'percentage': 50, 'message': 'Transcrição concluída. Identificando falantes...'})
+            try:
+                await session.websocket.send_json({'type': 'progress', 'stage': 'diarization', 'percentage': 50, 'message': 'Transcrição concluída. Identificando falantes...'})
+            except Exception:
+                logger.warning(f"Could not send progress update to {session_id} (WebSocket closed)")
 
         diarization_result = await diarization_service.diarize(audio_path, transcription_result.segments)
 
         if session and session.websocket:
-            await session.websocket.send_json({'type': 'progress', 'stage': 'srt', 'percentage': 80, 'message': 'Gerando legendas...'})
+            try:
+                await session.websocket.send_json({'type': 'progress', 'stage': 'srt', 'percentage': 80, 'message': 'Gerando legendas...'})
+            except Exception:
+                logger.warning(f"Could not send progress update to {session_id} (WebSocket closed)")
 
         srt_path = await generate_srt(diarization_result["segments"], file_manager=file_manager, filename=f"{session_id}.srt")
 
@@ -48,7 +57,10 @@ async def process_audio_pipeline(audio_path: str, session_id: str) -> None:
         logger.error(f"Error in audio processing pipeline: {str(e)}", exc_info=True)
         session = await session_manager.get_session(session_id)
         if session and session.websocket:
-            await session.websocket.send_json({'type': 'error', 'message': f"Erro no pipeline: {str(e)}"})
+            try:
+                await session.websocket.send_json({'type': 'error', 'message': f"Erro no pipeline: {str(e)}"})
+            except Exception:
+                logger.warning(f"Could not send error to {session_id} (WebSocket closed)")
         return
 
     final_result = {
@@ -64,15 +76,22 @@ async def process_audio_pipeline(audio_path: str, session_id: str) -> None:
         if session:
             session.files["audio"] = audio_path
             session.files["subtitles"] = str(srt_path)
+            session.status = "completed"  # Mark session as completed
             logger.info(f"File paths stored in SessionManager for {session_id}")
 
             if session.websocket:
-                await session.websocket.send_json({'type': 'complete', 'result': final_result})
+                try:
+                    await session.websocket.send_json({'type': 'complete', 'result': final_result})
+                except Exception:
+                    logger.warning(f"Could not send completion to {session_id} (WebSocket closed)")
 
     except Exception as e:
         logger.error(f"Audio pipeline failed during finalization for session {session_id}: {e}", exc_info=True)
         session = await session_manager.get_session(session_id)
         if session and session.websocket:
-            await session.websocket.send_json({'type': 'error', 'message': str(e)})
+            try:
+                await session.websocket.send_json({'type': 'error', 'message': str(e)})
+            except Exception:
+                logger.warning(f"Could not send error to {session_id} (WebSocket closed)")
 
 

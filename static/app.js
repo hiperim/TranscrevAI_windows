@@ -288,14 +288,8 @@ class LiveRecorder {
                 document.getElementById('loading-spinner').style.display = 'block';
                 document.getElementById('status-text').textContent = 'Processando áudio gravado...';
 
-                // Close WebSocket after small delay to ensure stop message was sent
-                setTimeout(() => {
-                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                        console.log('[DEBUG] Closing WebSocket after stop command');
-                        this.ws.close();
-                        this.ws = null; // Clear reference
-                    }
-                }, 500);
+                // DON'T close WebSocket here - pipeline needs it for progress updates
+                // WebSocket will be closed in handleTranscriptionComplete()
             }, 150);
         }
     }
@@ -365,12 +359,8 @@ class LiveRecorder {
             downloadAudioBtn.onclick = () => downloadAudio(this.sessionId);
         }
 
-        // Clean up WebSocket if still open
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            console.log('[DEBUG] Closing WebSocket after completion');
-            this.ws.close();
-            this.ws = null;
-        }
+        // Keep WebSocket open - session persists for downloads
+        // Will be closed when starting new recording
     }
 }
 
@@ -495,6 +485,13 @@ function handleUploadWebSocketMessage(data) {
                 uploadBtn.textContent = 'Processar Arquivo';
             }
             if (spinner) spinner.style.display = 'none';
+
+            // Close upload WebSocket after completion
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                console.log('[DEBUG] Closing upload WebSocket after completion');
+                websocket.close();
+                websocket = null;
+            }
             break;
         case 'error':
             showStatus('Erro: ' + (message || 'Erro desconhecido'), 0);

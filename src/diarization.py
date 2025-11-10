@@ -28,7 +28,7 @@ class PyannoteDiarizer:
         self.pipeline: Optional[Pipeline] = None
 
         try:
-            # Load pipeline from pretrained repo ID - pyannote automatically uses the cache defined by HF_HOME.
+            # Load pipeline from pretrained repo ID - pyannote automatically uses the cache defined by HF_HOME
             self.pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
             logger.info("Pipeline loaded from cache.")
 

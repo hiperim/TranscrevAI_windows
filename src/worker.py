@@ -1,5 +1,3 @@
-# src/worker.py
-
 import logging
 import queue
 import time

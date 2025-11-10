@@ -453,10 +453,17 @@ async def websocket_endpoint(
             pass # ignore errors on a closed socket
     
     finally:
-        # Guarantees session and associated resources clean-up
-        logger.info(f"Cleaning up session due to WebSocket closure: {session_id}")
-        await session_manager.remove_session(session_id)
-        logger.info(f"WebSocket cleanup complete: {session_id}")
+        # Check session status before cleanup
+        session_data = await session_manager.get_session(session_id)
+
+        if session_data and session_data.status in ["processing", "completed"]:
+            # Keep session alive for downloads - will expire after 24h timeout
+            logger.info(f"WebSocket closed but keeping session {session_id} alive for downloads (status: {session_data.status})")
+        else:
+            # Remove session if recording was not completed
+            logger.info(f"Cleaning up session due to WebSocket closure: {session_id}")
+            await session_manager.remove_session(session_id)
+            logger.info(f"WebSocket cleanup complete: {session_id}")
 
 if __name__ == "__main__":
     # SSL configuration
