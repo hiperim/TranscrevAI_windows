@@ -111,59 +111,7 @@ async def lifespan(app: FastAPI):
     # Cleanup all services
     cleanup_services()
 
-<<<<<<< HEAD
-        await app_state.send_message(session_id, {'type': 'progress', 'stage': 'start', 'percentage': 5, 'message': 'Analisando qualidade do áudio...'})
-
-        # --- Run Pipeline Steps ---
-        # 1. Transcription
-        # Ensure the transcription service is a concrete instance for type-checkers and at runtime
-        transcription_service = app_state.transcription_service
-        if transcription_service is None:
-            raise RuntimeError("Transcription service is not initialized.")
-        transcription_result = await transcription_service.transcribe_with_enhancements(audio_path)
-
-        await app_state.send_message(session_id, {'type': 'progress', 'stage': 'diarization', 'percentage': 50, 'message': 'Transcrição concluída. Identificando falantes...'})
-
-        # 2. Diarization
-        diarization_service = app_state.diarization_service
-        if diarization_service is None:
-            raise RuntimeError("Diarization service is not initialized.")
-        diarization_result = await diarization_service.diarize(audio_path, transcription_result.segments)
-
-        await app_state.send_message(session_id, {'type': 'progress', 'stage': 'srt', 'percentage': 80, 'message': 'Gerando legendas...'})
-
-        # 3. Subtitle Generation
-        srt_path = await generate_srt(diarization_result["segments"], output_path=app_state.file_manager.get_data_path("temp"), filename=f"{session_id}.srt")
-
-        # --- Finalize and Report --- 
-        pipeline_end_time = time.time()
-        actual_processing_time = pipeline_end_time - pipeline_start_time
-        processing_ratio = actual_processing_time / audio_duration if audio_duration > 0 else 0
-
-        logger.info(f"Processing complete for {session_id}: {actual_processing_time:.2f}s for {audio_duration:.2f}s audio (ratio: {processing_ratio:.2f}x)")
-
-        final_result = {
-            "segments": diarization_result["segments"],
-            "num_speakers": diarization_result["num_speakers"],
-            "processing_time": round(actual_processing_time, 2),
-            "processing_ratio": round(processing_ratio, 2),
-            "audio_duration": round(audio_duration, 2)
-        }
-
-        with app_state._lock:
-            if session_id not in app_state.sessions: app_state.sessions[session_id] = {}
-            app_state.sessions[session_id]['srt_file_path'] = srt_path
-
-        await app_state.send_message(session_id, {'type': 'complete', 'result': final_result}, MessagePriority.CRITICAL)
-
-    except Exception as e:
-        logger.error(f"Audio pipeline failed for session {session_id}: {e}", exc_info=True)
-        await app_state.send_message(session_id, {'type': 'error', 'message': str(e)}, MessagePriority.CRITICAL)
-
-# --- FastAPI App Setup ---
-=======
 # --- FastAPI app setup
->>>>>>> enhancements-and-refactoring
 app = FastAPI(title="TranscrevAI Single-Process", version="6.0.0", lifespan=lifespan)
 
 # Rate limiting configuration
