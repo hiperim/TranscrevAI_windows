@@ -41,6 +41,12 @@ class AppConfig:
     sample_rate: int = 16000
     chunk_size: int = 1024
     max_audio_duration: float = 3600.0  # 1 hour
+
+    # --- Diarization settings
+    diarization_threshold: float = 0.335
+    diarization_min_speakers: Optional[int] = None
+    diarization_max_speakers: Optional[int] = None
+    diarization_min_cluster_size: int = 12
     
     # --- Logging settings
     log_level: str = "INFO"
@@ -93,16 +99,20 @@ class AppConfig:
             'TRANSCREVAI_HOST': 'host',
             'TRANSCREVAI_PORT': 'port',
             'TRANSCREVAI_SSL_CERT': 'ssl_cert_path',
-            'TRANSCREVAI_SSL_KEY': 'ssl_key_path'
+            'TRANSCREVAI_SSL_KEY': 'ssl_key_path',
+            'TRANSCREVAI_DIARIZATION_THRESHOLD': 'diarization_threshold',
+            'TRANSCREVAI_DIARIZATION_MIN_SPEAKERS': 'diarization_min_speakers',
+            'TRANSCREVAI_DIARIZATION_MAX_SPEAKERS': 'diarization_max_speakers',
+            'TRANSCREVAI_DIARIZATION_MIN_CLUSTER_SIZE': 'diarization_min_cluster_size'
         }
         for env_key, attr_name in env_mappings.items():
             env_value = os.getenv(env_key)
             if env_value:
                 try:
-                    if attr_name in ['max_memory_gb']:
+                    if attr_name in ['max_memory_gb', 'diarization_threshold']:
                         setattr(self, attr_name, float(env_value))
-                    elif attr_name in ['port']:
-                        setattr(self, attr_name, int(env_value))
+                    elif attr_name in ['port', 'diarization_min_speakers', 'diarization_max_speakers', 'diarization_min_cluster_size']:
+                        setattr(self, attr_name, int(env_value) if env_value.lower() != 'none' else None)
                     elif attr_name in ['debug_mode']:
                         setattr(self, attr_name, env_value.lower() in ['true', '1', 'yes'])
                     else:
