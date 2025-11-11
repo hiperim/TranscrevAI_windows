@@ -32,12 +32,12 @@ class PyannoteDiarizer:
             self.pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
             logger.info("Pipeline loaded from cache.")
 
-            # Instantiate with custom hyperparameters for accuracy - default threshold is too high and merges distinct speakers
+            # Instantiate with custom hyperparameters for accuracy - lower threshold prevents merging distinct speakers
             self.pipeline.instantiate({
                 "clustering": {
                     "method": "centroid",
-                    "min_cluster_size": 15,
-                    "threshold": 0.35
+                    "min_cluster_size": 12,
+                    "threshold": 0.35  # Optimized to detect 4+ speakers without over-clustering
                 }
             })
             logger.info("Pipeline instantiated with custom clustering threshold.")
@@ -107,23 +107,26 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
 
     sorted_speakers = sorted(speakers_found)
     speaker_mapping = {old: f"SPEAKER_{str(i+1).zfill(2)}" for i, old in enumerate(sorted_speakers)}
-    logger.debug(f"Speaker mapping: {speaker_mapping}")
+    logger.info(f"Speaker mapping: {speaker_mapping}")
 
     def find_speaker_at_timestamp(timestamp: float, margin: float = 0.0) -> Optional[str]:
-        overlapping = []
+        """Find speaker at timestamp, prioritizing closest segment center when overlapping"""
+        candidates = []
         for seg in diarization_segments:
             if seg['start'] <= timestamp + margin and seg['end'] >= timestamp - margin:
-                overlap_start = max(seg['start'], timestamp - margin)
-                overlap_end = min(seg['end'], timestamp + margin)
-                overlap_duration = overlap_end - overlap_start
-                if overlap_duration > 0:
-                    overlapping.append((seg['speaker'], overlap_duration))
-        if overlapping:
-            return max(overlapping, key=lambda x: x[1])[0]
+                # Calculate distance from timestamp to segment center
+                seg_center = (seg['start'] + seg['end']) / 2
+                distance_to_center = abs(timestamp - seg_center)
+                candidates.append((seg['speaker'], distance_to_center))
+
+        if candidates:
+            # Return speaker with closest center (smallest distance)
+            return min(candidates, key=lambda x: x[1])[0]
         return None
 
     for segment in transcription_segments:
         if 'words' not in segment or not segment['words']:
+            # Fallback: use segment midpoint if no word timestamps
             mid_timestamp = (segment['start'] + segment['end']) / 2
             speaker = find_speaker_at_timestamp(mid_timestamp, margin=0.1)
             if speaker:
@@ -132,21 +135,68 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
                 segment['speaker'] = 'SPEAKER_XX'
             continue
 
+        # Use word-level timestamps for precise alignment
         word_speaker_counts: Dict[str, int] = {}
         for word in segment['words']:
             word_mid = (word['start'] + word['end']) / 2
             speaker = find_speaker_at_timestamp(word_mid, margin=0.05)
+
+            # Debug logging for first segment only
+            if segment == transcription_segments[0] and len(word_speaker_counts) < 3:
+                logger.info(f"  Word '{word.get('word', '?')}' at {word_mid:.2f}s → speaker: {speaker}")
+
             if speaker:
                 word['speaker'] = speaker_mapping.get(speaker, speaker)
                 word_speaker_counts[speaker] = word_speaker_counts.get(speaker, 0) + 1
             else:
                 word['speaker'] = 'SPEAKER_XX'
 
+        logger.info(f"Segment {segment['start']:.2f}-{segment['end']:.2f}s votes: {word_speaker_counts}")
+
         if word_speaker_counts:
             dominant_speaker_original = max(word_speaker_counts, key=lambda spk: word_speaker_counts[spk])
             segment['speaker'] = speaker_mapping.get(dominant_speaker_original, dominant_speaker_original)
         else:
             segment['speaker'] = 'SPEAKER_XX'
+
+    # Log which speakers were actually assigned to segments
+    assigned_speakers_original = set()
+    for seg in transcription_segments:
+        mapped_speaker = seg.get('speaker', 'UNKNOWN')
+        # Reverse lookup to get original speaker
+        for orig, mapped in speaker_mapping.items():
+            if mapped == mapped_speaker:
+                assigned_speakers_original.add(orig)
+                break
+
+    assigned_speakers = set(seg.get('speaker', 'UNKNOWN') for seg in transcription_segments)
+    logger.info(f"Speakers assigned to transcription segments: {sorted(assigned_speakers)}")
+
+    # Find speakers detected by pyannote but not assigned to any transcription segment
+    unassigned_speakers = speakers_found - assigned_speakers_original
+
+    if unassigned_speakers:
+        logger.info(f"Creating synthetic segments for unassigned speakers: {sorted(unassigned_speakers)}")
+
+        for speaker in sorted(unassigned_speakers):
+            # Find all diarization segments for this speaker
+            speaker_segments = [seg for seg in diarization_segments if seg['speaker'] == speaker]
+
+            for dia_seg in speaker_segments:
+                # Create synthetic transcription segment with [inaudível] text
+                synthetic_segment = {
+                    'start': dia_seg['start'],
+                    'end': dia_seg['end'],
+                    'text': '[inaudível]',
+                    'speaker': speaker_mapping.get(speaker, speaker),
+                    'avg_logprob': -1.0,  # Low confidence marker
+                    'words': []
+                }
+                transcription_segments.append(synthetic_segment)
+                logger.info(f"  Added synthetic segment for {speaker_mapping.get(speaker, speaker)} at {dia_seg['start']:.2f}-{dia_seg['end']:.2f}s")
+
+        # Sort segments by start time
+        transcription_segments.sort(key=lambda x: x['start'])
 
     logger.info("Speaker alignment completed successfully")
     return transcription_segments

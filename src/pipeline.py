@@ -30,7 +30,7 @@ async def process_audio_pipeline(audio_path: str, session_id: str) -> None:
             except Exception:
                 logger.warning(f"Could not send progress update to {session_id} (WebSocket closed)")
 
-        transcription_result = await transcription_service.transcribe_with_enhancements(audio_path)
+        transcription_result = await transcription_service.transcribe_with_enhancements(audio_path, word_timestamps=True)
 
         if session and session.websocket:
             try:
