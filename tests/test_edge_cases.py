@@ -200,11 +200,15 @@ async def test_rate_limit_websocket(server_process):
             except (websockets.exceptions.ConnectionClosed, websockets.exceptions.InvalidStatusCode) as e:
                 # Should get rate limited at connection 21 (index 20, after 20 successful connections 0-19)
                 assert i >= 20, f"Rate limit should trigger at connection 21 (index 20), got at index {i}"
-                # InvalidStatusCode for handshake rejection (403), or ConnectionClosed with code 1008
-                if hasattr(e, 'status_code'):
+                
+                if isinstance(e, websockets.exceptions.InvalidStatusCode):
+                    # InvalidStatusCode for handshake rejection (403)
                     assert e.status_code == 403, f"Expected 403, got {e.status_code}"
-                elif hasattr(e, 'code'):
+                elif isinstance(e, websockets.exceptions.ConnectionClosed):
+                    # ConnectionClosed with code 1008 (Policy Violation)
                     assert e.code == 1008, f"Expected code 1008, got {e.code}"
+                else:
+                    pytest.fail(f"Unexpected exception type: {type(e)}")
                 break
         else:
             pytest.fail("Rate limit was not triggered after 25 connections")

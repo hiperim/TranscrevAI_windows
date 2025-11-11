@@ -466,7 +466,6 @@ async def websocket_endpoint(
             logger.info(f"WebSocket cleanup complete: {session_id}")
 
 if __name__ == "__main__":
-if __name__ == "__main__":
     # SSL configuration (pass explicitly to avoid **kwargs type-mismatch issues)
     ssl_certfile = None
     ssl_keyfile = None
