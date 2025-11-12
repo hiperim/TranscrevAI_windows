@@ -179,18 +179,12 @@ class TranscriptionService:
                 raise TranscriptionError("Model not loaded")
 
             # Prepare args
-            vad_parameters = dict(
-                threshold=0.5,
-                min_speech_duration_ms=250,
-                min_silence_duration_ms=1000
-            )
             transcribe_args = {
                 "language": "pt",
                 "beam_size": 3,
                 "best_of": 3,
                 "word_timestamps": word_timestamps,
-                "vad_filter": True,
-                "vad_parameters": vad_parameters
+                "vad_filter": False
             }
 
             # Execute in separate thread

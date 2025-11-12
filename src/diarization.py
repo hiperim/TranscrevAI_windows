@@ -206,6 +206,29 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
     assigned_speakers = set(seg.get('speaker', 'UNKNOWN') for seg in transcription_segments)
     logger.info(f"Speakers assigned to transcription segments: {sorted(assigned_speakers)}")
 
+    # Re-map speakers by first TRANSCRIPTION segment appearance (not diarization)
+    speaker_first_transcription = {}
+    for seg in transcription_segments:
+        spk = seg.get('speaker')
+        if spk and spk not in ['SPEAKER_XX'] and spk not in speaker_first_transcription:
+            speaker_first_transcription[spk] = seg['start']
+
+    # Re-number based on transcription order
+    sorted_by_transcription = sorted(speaker_first_transcription.keys(), key=lambda s: speaker_first_transcription[s])
+    final_mapping = {old: f"SPEAKER_{str(i+1).zfill(2)}" for i, old in enumerate(sorted_by_transcription)}
+
+    # Apply final mapping to all segments and words
+    for seg in transcription_segments:
+        if seg.get('speaker') in final_mapping:
+            seg['speaker'] = final_mapping[seg['speaker']]
+        # Also update word-level speakers
+        if 'words' in seg:
+            for word in seg['words']:
+                if word.get('speaker') in final_mapping:
+                    word['speaker'] = final_mapping[word['speaker']]
+
+    logger.info(f"Final speaker mapping by transcription order: {final_mapping}")
+
     # Find speakers detected by pyannote but not assigned to any transcription segment
     unassigned_speakers = speakers_found - assigned_speakers_original
 
@@ -251,28 +274,32 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
                                 logger.info(f"  Merged into existing {best_match} segment")
                                 break
                         else:
+                            mapped_spk = speaker_mapping.get(speaker, speaker)
+                            final_spk = final_mapping.get(mapped_spk, mapped_spk)
                             synthetic_segment = {
                                 'start': dia_seg['start'],
                                 'end': dia_seg['end'],
                                 'text': '[inaudível]',
-                                'speaker': best_match,
+                                'speaker': final_spk,
                                 'avg_logprob': -1.0,
                                 'words': []
                             }
                             transcription_segments.append(synthetic_segment)
                         continue
 
-                # Fallback: add as [inaudível] with original speaker
+                # Fallback: add as [inaudível] with final mapping
+                mapped_spk = speaker_mapping.get(speaker, speaker)
+                final_spk = final_mapping.get(mapped_spk, mapped_spk)
                 synthetic_segment = {
                     'start': dia_seg['start'],
                     'end': dia_seg['end'],
                     'text': '[inaudível]',
-                    'speaker': speaker_mapping.get(speaker, speaker),
+                    'speaker': final_spk,
                     'avg_logprob': -1.0,
                     'words': []
                 }
                 transcription_segments.append(synthetic_segment)
-                logger.info(f"  Added [inaudível] for {speaker_mapping.get(speaker, speaker)} at {dia_seg['start']:.2f}-{dia_seg['end']:.2f}s")
+                logger.info(f"  Added [inaudível] for {final_spk} at {dia_seg['start']:.2f}-{dia_seg['end']:.2f}s")
 
         # Sort segments by start time
         transcription_segments.sort(key=lambda x: x['start'])
@@ -282,11 +309,13 @@ def align_speakers_by_word(transcription_segments: List[Dict[str, Any]], diariza
         for speaker in sorted(unassigned_speakers):
             speaker_segments = [seg for seg in diarization_segments if seg['speaker'] == speaker]
             for dia_seg in speaker_segments:
+                mapped_spk = speaker_mapping.get(speaker, speaker)
+                final_spk = final_mapping.get(mapped_spk, mapped_spk)
                 synthetic_segment = {
                     'start': dia_seg['start'],
                     'end': dia_seg['end'],
                     'text': '[inaudível]',
-                    'speaker': speaker_mapping.get(speaker, speaker),
+                    'speaker': final_spk,
                     'avg_logprob': -1.0,
                     'words': []
                 }

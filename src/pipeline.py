@@ -13,7 +13,7 @@ from src.dependencies import (
 logger = logging.getLogger(__name__)
 
 async def process_audio_pipeline(audio_path: str, session_id: str) -> None:
-    """Non-blocking pipeline via directio inhections for processing single audio file"""
+    """Non-blocking pipeline via direct injections for processing single audio file"""
     transcription_service = get_transcription_service()
     diarization_service = get_diarization_service()
     file_manager = get_file_manager()
