@@ -5,21 +5,11 @@ Enhanced for the new unified pipeline architecture.
 """
 
 import pytest
-import asyncio
 from pathlib import Path
 from typing import Iterator
 import shutil
 import tempfile
 
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the session."""
-    try:
-        loop = asyncio.get_event_loop_policy().new_event_loop()
-        yield loop
-    finally:
-        loop.close()
 
 @pytest.fixture(scope="module")
 def sample_recordings_path() -> Path:

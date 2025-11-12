@@ -55,9 +55,10 @@ def server_process():
 def reset_rate_limits():
     """Reset rate limits before each test"""
     yield  # Run test first
-    # Reset after test completes
+    # Reset after test completes - direct internal reset (no HTTP endpoint needed)
     try:
-        requests.post(f"{SERVER_URL}/test/reset-rate-limit", timeout=2)
+        from main import ws_connection_tracker
+        ws_connection_tracker.clear()
     except:
         pass
 

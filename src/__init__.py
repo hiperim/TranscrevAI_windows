@@ -12,8 +12,6 @@ Core modules:
 - file_manager: File operations and caching
 - subtitle_generator: SRT subtitle generation
 - logging_setup: Professional logging configuration
-
-Note: models.py removed - model management now handled by dual_whisper_system.py
 """
 
 # Core modules
@@ -21,7 +19,6 @@ from . import audio_processing
 from . import diarization
 from . import file_manager
 from . import logging_setup
-# models removed - now using dual_whisper_system.py directly
 from . import subtitle_generator
 from . import transcription
 
@@ -29,7 +26,6 @@ __all__ = [
     'transcription',
     'audio_processing',
     'diarization',
-    # 'models',  # Removed
     'file_manager',
     'subtitle_generator',
     'logging_setup',

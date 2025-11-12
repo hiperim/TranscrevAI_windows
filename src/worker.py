@@ -63,16 +63,8 @@ def transcription_worker(
                 else:
                     logger.warning(f"No WAV path provided for session {session_id}, skipping processing")
 
-            elif job_type == "echo":
-                payload = job.get("payload")
-                message = {"type": "echo_response", "payload": payload}
-                asyncio.run_coroutine_threadsafe(
-                    _send_message(session_manager, session_id, message),
-                    loop
-                )
-
             else:
-                logger.debug(f"Unhandled job type '{job_type}' for session {session_id}, skipping.")
+                logger.warning(f"Unhandled job type '{job_type}' for session {session_id}, skipping.")
 
             transcription_queue.task_done()
 

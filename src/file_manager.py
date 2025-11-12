@@ -5,27 +5,11 @@ import tempfile
 from pathlib import Path
 from typing import Union, Optional
 
-try:
-    from .logging_setup import setup_app_logging
-except ImportError:
-    try:
-        from logging_setup import setup_app_logging
-    except ImportError:
-        def setup_app_logging(level=logging.INFO, logger_name=None):
-            logger = logging.getLogger(logger_name or __name__)
-            if not logger.handlers:
-                handler = logging.StreamHandler()
-                handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-                handler.setLevel(level)
-                logger.addHandler(handler)
-                logger.setLevel(level)
-            return logger
-
 import aiofiles
 from fastapi import UploadFile
 
-# Use proper logging setup
-logger = setup_app_logging(logger_name="transcrevai.file_manager")
+# Simple logging setup
+logger = logging.getLogger("transcrevai.file_manager")
 
 
 class SecurityError(RuntimeError):

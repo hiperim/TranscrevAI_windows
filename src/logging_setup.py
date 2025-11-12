@@ -36,41 +36,15 @@ def setup_app_logging(level=logging.INFO, logger_name=None):
     logger.addHandler(console_handler)
     
     try:
-        # Multiple import strategies for robust 'data_dir' access
+        # Simple config import with fallback
         data_dir = None
-        
+
         try:
             from config.app_config import get_config
             config = get_config()
-            data_dir = getattr(config, "data_dir", None)
+            data_dir = Path(config.data_dir) if config.data_dir else None
         except Exception:
-            try:
-                import importlib
-                app_config = importlib.import_module("config.app_config")
-                data_dir = getattr(app_config, "DATA_DIR", None) or getattr(app_config, "data_dir", None)
-                if isinstance(data_dir, str):
-                    data_dir = Path(data_dir)
-            except Exception:
-                try:
-                    import os
-                    import sys
-                    config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'app_config.py')
-                    if os.path.exists(config_path):
-                        sys.path.insert(0, os.path.dirname(config_path))
-                        import importlib
-                        app_config = importlib.import_module("config.app_config")
-                        data_dir = getattr(app_config, "data_dir", None) or getattr(app_config, "DATA_DIR", None)
-                        if isinstance(data_dir, str):
-                            data_dir = Path(data_dir)
-                except Exception:
-                    pass
-        
-        if data_dir:
-            try:
-                data_dir = Path(data_dir)
-            except Exception:
-                # If conversion fails - ignore and fall back
-                data_dir = None
+            pass
 
         if data_dir:
             log_dir = data_dir / "logs"

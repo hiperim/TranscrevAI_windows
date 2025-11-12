@@ -50,7 +50,7 @@ class WebSocketHandler:
 
     async def handle_start(self, data: Dict[str, Any], session_id: str, websocket: WebSocket):
         """Handles the 'start' action and returns the initial recording state"""
-        logger.info(f"▶️ Starting recording for session {session_id}")
+        logger.info(f"Starting recording for session {session_id}")
 
         session = await self.session_manager.get_session(session_id)
         if not session:
@@ -71,7 +71,7 @@ class WebSocketHandler:
 
     async def handle_stop(self, session_id: str, websocket: WebSocket):
         """Handles the 'stop' action, finalizing the recording and starting the background processing"""
-        logger.info(f"⏹️ Stopping recording for session {session_id}")
+        logger.info(f"Stopping recording for session {session_id}")
 
         session = await self.session_manager.get_session(session_id)
         if not session:

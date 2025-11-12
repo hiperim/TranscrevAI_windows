@@ -114,7 +114,7 @@ async def _process_single_audio(
     audio_duration = get_audio_duration(audio_path)
 
     logger.info(f"📁 Audio file: {audio_path}")
-    logger.info(f"⏱️  Audio duration: {audio_duration:.3f}s")
+    logger.info(f"  Audio duration: {audio_duration:.3f}s")
     logger.info(f"📄 Ground truth: {len(ground_truth)} chars, {len(ground_truth.split())} words\n")
 
     # Use context manager for memory monitoring
@@ -129,7 +129,7 @@ async def _process_single_audio(
         )
 
         transcription_time = time.time() - transcription_start
-        logger.info(f"✅ Transcription complete: {transcription_time:.2f}s")
+        logger.info(f" Transcription complete: {transcription_time:.2f}s")
         logger.info(f"📝 Transcribed text: {transcription_result.text[:100]}...")
         logger.info(f"📊 Confidence: {transcription_result.confidence:.4f}\n")
 
@@ -144,7 +144,7 @@ async def _process_single_audio(
 
         diarization_time = time.time() - diarization_start
         speakers_detected = diarization_result['num_speakers']
-        logger.info(f"✅ Diarization complete: {diarization_time:.2f}s")
+        logger.info(f" Diarization complete: {diarization_time:.2f}s")
         logger.info(f"👥 Speakers detected: {speakers_detected}\n")
 
     # Get peak memory after context exits

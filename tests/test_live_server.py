@@ -18,45 +18,37 @@ STARTUP_TIMEOUT = 60  # seconds - increased for DI initialization
 @pytest.fixture(scope="module")
 def server_process():
     """Start the real uvicorn server for testing"""
-    print("\n🚀 Starting real server...")
-
-    # Use sys.executable to get the correct Python interpreter (from venv)
     import sys
     python_exe = sys.executable
 
-    # Start server process - let it print to console for debugging
+    # Start server process
     process = subprocess.Popen(
         [python_exe, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"],
-        # Don't capture stdout/stderr so we can see what's happening
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
     )
 
     # Wait for server to be ready
     start_time = time.time()
     server_ready = False
 
-    print("⏳ Waiting for server to become ready...")
     while time.time() - start_time < STARTUP_TIMEOUT:
         try:
             import requests
             response = requests.get("http://localhost:8000/health", timeout=1)
             if response.status_code == 200:
                 server_ready = True
-                print("✅ Server is ready")
                 break
-        except Exception as e:
-            elapsed = time.time() - start_time
-            if elapsed % 5 < 0.5:  # Print every 5 seconds
-                print(f"   Still waiting... ({elapsed:.1f}s) - {type(e).__name__}")
+        except Exception:
             time.sleep(0.5)
 
     if not server_ready:
         process.kill()
-        pytest.fail("Server failed to start within timeout. Check output above for errors.")
+        pytest.fail("Server failed to start within timeout")
 
     yield process
 
     # Cleanup
-    print("\n🛑 Stopping server...")
     process.terminate()
     process.wait(timeout=5)
 

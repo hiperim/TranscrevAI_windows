@@ -284,17 +284,6 @@ ws_connection_tracker = defaultdict(list)
 WS_RATE_LIMIT = 20  # connections per min
 WS_RATE_WINDOW = 60  # sec
 
-@app.post("/test/reset-rate-limit", status_code=200)
-async def reset_rate_limit_for_testing():
-    """Reset rate limiters - FOR TESTING ONLY"""
-    ws_connection_tracker.clear()
-    # Reset slowapi limiter storage
-    try:
-        limiter.reset()
-    except:
-        pass
-    return {"status": "rate limits reset"}
-
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -407,7 +396,7 @@ async def websocket_endpoint(
                 await websocket.send_json({"type": "state_change", "data": {"status": "recording"}})
 
             elif action == "stop":
-                logger.info(f"⏹️ Stop action received for session {session_id}")
+                logger.info(f"Stop action received for session {session_id}")
 
                 # Update session status
                 current_session_data.status = "processing"

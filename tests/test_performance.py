@@ -10,18 +10,6 @@ import requests
 from pathlib import Path
 
 
-def kill_orphan_servers():
-    """Kill any orphan uvicorn processes on port 8000"""
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            cmdline = proc.info.get('cmdline') or []
-            if any('uvicorn' in str(arg) and '8000' in str(arg) for arg in cmdline):
-                proc.kill()
-                proc.wait(timeout=3)
-        except:
-            pass
-
-
 @pytest.fixture(scope="module")
 def server_process():
     """Shared server process for all performance tests"""

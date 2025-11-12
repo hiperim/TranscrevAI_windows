@@ -39,7 +39,11 @@ def get_transcription_service() -> TranscriptionService:
     """Get or create TranscriptionService instance"""
     with _lock:
         if 'transcription_service' not in _services:
-            _services['transcription_service'] = TranscriptionService(model_name="medium", device="cpu")
+            config = get_config_cached()
+            _services['transcription_service'] = TranscriptionService(
+                model_name=config.model_name,
+                device=config.device
+            )
         return _services['transcription_service']
 
 
@@ -47,7 +51,8 @@ def get_diarization_service() -> PyannoteDiarizer:
     """Get or create PyannoteDiarizer instance"""
     with _lock:
         if 'diarization_service' not in _services:
-            _services['diarization_service'] = PyannoteDiarizer(device="cpu")
+            config = get_config_cached()
+            _services['diarization_service'] = PyannoteDiarizer(device=config.device)
         return _services['diarization_service']
 
 

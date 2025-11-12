@@ -225,7 +225,7 @@ class AudioQualityAnalyzer:
             clarity = 1.0 - min(1.0, np.std(spectral_centroids) / centroid_mean) if centroid_mean > 0 else 0.5
 
             if clarity < self.poor_clarity_threshold:
-                warnings.append("⚠️ Qualidade de áudio ruim detectada. Verifique o ambiente e o microfone.")
+                warnings.append("AVISO: Qualidade de áudio ruim detectada. Verifique o ambiente e o microfone.")
                 has_issues = True
 
             # Noise estimation - simple SNR estimate using energy ratio - calculate energy in high-frequency bands (noise) vs. low-frequency (speech)
@@ -576,11 +576,11 @@ class SessionManager:
                         if data.status == "completed" and data.completed_at:
                             if (now - data.completed_at).total_seconds() > one_hour_in_seconds:
                                 expired_sessions.append(sid)
-                                logger.info(f"⏰ Marking completed session for cleanup (1h expired): {sid}")
+                                logger.info(f"Marking completed session for cleanup (1h expired): {sid}")
                         # Rule 2: Cleanup any other session older than 24 hours (failsafe)
                         elif (now - data.started_at).total_seconds() > twenty_four_hours_in_seconds:
                             expired_sessions.append(sid)
-                            logger.info(f"⏰ Marking old session for cleanup (24h expired): {sid}")
+                            logger.info(f"Marking old session for cleanup (24h expired): {sid}")
 
                 for session_id in set(expired_sessions): # Use set to avoid duplicates
                     await self.remove_session(session_id)
