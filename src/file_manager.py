@@ -48,7 +48,7 @@ class FileManager:
 
     def _ensure_directory_structure(self) -> None:
         
-        subdirs = ["uploads", "transcripts", "srt", "subtitles", "recordings", "temp", "inputs"]
+        subdirs = ["subtitles", "temp", "inputs"]
         for subdir in subdirs:
             path = self.data_dir / subdir
             path.mkdir(parents=True, exist_ok=True)

@@ -46,6 +46,7 @@ ENV/
 .tox/
 .cache
 htmlcov/
+tests/logs/
 
 # Data directories (will be created in container)
 data/
