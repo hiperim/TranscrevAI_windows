@@ -46,35 +46,27 @@ ENV/
 .tox/
 .cache
 htmlcov/
-tests/
 
 # Data directories (will be created in container)
 data/
 temp/
 logs/
 models/
-recordings/
-transcripts/
-inputs/
-outputs/
 
 # Windows-specific files
 *.lnk
 thumbs.db
 Desktop.ini
 
-# Development documentation
-README.md
-docs/
+# Development documentation (allow README.md and pipeline_workflow.md)
 *.md
+!README.md
+!pipeline_workflow.md
 
 # Docker files (except the present)
 Dockerfile
 docker-compose.yml
 docker-compose.dev.yml
-
-# Node modules (if any)
-node_modules/
 
 # OS generated files
 .DS_Store

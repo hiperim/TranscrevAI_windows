@@ -14,9 +14,10 @@ dist/
 .venv
 env/
 venv/
-venvpyvenv.cfg
+venv/pyvenv.cfg
 .myenv/
 myenv/
+ENV/
 
 # IDE / Editor files
 .idea/
@@ -44,8 +45,8 @@ htmlcov/
 /archive/
 /.claude/
 /certs/
-/recordings/
-/transcripts/
+inputs/
+outputs/
 
 # Media and output files
 *.wav
@@ -55,9 +56,20 @@ htmlcov/
 
 # Sensitive & local config
 *.log
-*.json
-transcrevai-windows-3089b18f1ba0.json
-mcp_settings.json
 .env
 .env.local
 .aider*
+
+# Sensitive JSON files (allow pyrightconfig.json, package.json, etc.)
+*credentials*.json
+*-key.json
+*-service-account.json
+transcrevai-windows-*.json
+mcp_settings.json
+.claude/*.json
+.vscode/*.json
+
+# Temporary files
+*~
+*.tmp
+*.temp
