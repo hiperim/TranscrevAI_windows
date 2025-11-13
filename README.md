@@ -26,7 +26,7 @@ Toda a transcrição ocorre localmente na máquina onde o servidor está rodando
 - **Comunicação em Tempo Real:** WebSockets
 - **Processamento de Áudio/Vídeo:** FFmpeg, librosa
 - **Deployment:** Docker, Gunicorn/Uvicorn
-- **SSL/HTTPS:** Suporte completo para desenvolvimento (mkcert) e produção (Caddy)
+- **SSL/HTTPS:** Suporte completo para desenvolvimento e produção
 
 ## Arquitetura
 
@@ -53,7 +53,7 @@ A aplicação é construída sobre o FastAPI e segue uma arquitetura moderna bas
 
 ### Opção 1: Docker Hub (Recomendado - Modelos Incluídos)
 
-**Sem necessidade de token Hugging Face. Modelos já embedded na imagem.**
+**Sem necessidade de token Hugging Face. Modelos já na imagem.**
 
 ```bash
 # Pull da imagem (primeira vez, ~17GB)
@@ -184,10 +184,6 @@ Execute o script automatizado:
 
 Este script instala mkcert e gera certificados locais confiáveis.
 
-### Produção
-
-A aplicação inclui configuração Caddy para gerenciamento automático de certificados Let's Encrypt.
-
 **Documentação completa:**
 - [SSL_SETUP.md](./SETUPs_certs_SSL_ModelsCache/SSL_SETUP.md) - Guia completo de configuração HTTPS
 
@@ -195,16 +191,16 @@ A aplicação inclui configuração Caddy para gerenciamento automático de cert
 
 ## Testes
 
-A aplicação inclui suite completa de testes (1630+ linhas):
+A aplicação inclui suite completa de testes:
 
 ```bash
 # Todos os testes
 pytest
 
 # Testes específicos
-pytest tests/test_services.py          # Testes unitários
-pytest tests/test_performance.py       # Testes de performance
-pytest tests/test_edge_cases.py        # Casos extremos
+pytest tests/test_services.py
+pytest tests/test_performance.py
+pytest tests/test_edge_cases.py
 
 # Com coverage
 pytest --cov=src tests/
@@ -328,39 +324,9 @@ TRANSCREVAI_LOG_LEVEL=INFO
 
 - **WS** `/ws/{session_id}` - Conexão para gravação ao vivo
 
-**Ações suportadas:**
-- `start` - Iniciar gravação (formato: wav/mp4)
-- `audio_chunk` - Enviar chunk de áudio (base64)
-- `pause` - Pausar gravação
-- `resume` - Retomar gravação
-- `stop` - Finalizar e processar
-- `ping` - Heartbeat (keep-alive)
-
 **Rate Limiting:**
 - HTTP endpoints: 10 requests/minuto por IP
 - WebSocket: 20 conexões/minuto por IP
-
----
-
-## Licença
-
-[Especificar licença do projeto]
-
----
-
-## Contribuindo
-
-Pull requests são bem-vindos. Para mudanças maiores, por favor abra uma issue primeiro para discutir o que você gostaria de mudar.
-
-Certifique-se de atualizar os testes conforme apropriado.
-
----
-
-## Contato e Suporte
-
-Para problemas, dúvidas ou sugestões:
-- Abra uma issue no repositório
-- Consulte a documentação em `SETUPs_certs_SSL_ModelsCache/`
 
 ---
 ---
@@ -393,7 +359,7 @@ All transcription occurs locally on the machine where the server is running, wit
 - **Real-time Communication:** WebSockets
 - **Audio/Video Processing:** FFmpeg, librosa
 - **Deployment:** Docker, Gunicorn/Uvicorn
-- **SSL/HTTPS:** Full support for development (mkcert) and production (Caddy)
+- **SSL/HTTPS:** Full support for development and production
 
 ## Architecture
 
@@ -551,10 +517,6 @@ Run the automated script:
 
 This script installs mkcert and generates trusted local certificates.
 
-### Production
-
-The application includes Caddy configuration for automatic Let's Encrypt certificate management.
-
 **Complete documentation:**
 - [SSL_SETUP.md](./SETUPs_certs_SSL_ModelsCache/SSL_SETUP.md) - Complete HTTPS configuration guide
 
@@ -562,16 +524,16 @@ The application includes Caddy configuration for automatic Let's Encrypt certifi
 
 ## Tests
 
-The application includes a complete test suite (1630+ lines):
+The application includes a complete test suite:
 
 ```bash
 # All tests
 pytest
 
 # Specific tests
-pytest tests/test_services.py          # Unit tests
-pytest tests/test_performance.py       # Performance tests
-pytest tests/test_edge_cases.py        # Edge cases
+pytest tests/test_services.py
+pytest tests/test_performance.py
+pytest tests/test_edge_cases.py
 
 # With coverage
 pytest --cov=src tests/
@@ -594,6 +556,75 @@ pytest --cov=src tests/
 
 ---
 
+## Project Structure
+
+```
+transcrevai_windows/
+├── src/                          # Main source code
+│   ├── transcription.py          # Transcription service (faster-whisper)
+│   ├── diarization.py            # Diarization service (pyannote)
+│   ├── audio_processing.py       # Audio processing and sessions
+│   ├── pipeline.py               # Complete pipeline orchestration
+│   ├── dependencies.py           # Dependency injection
+│   ├── exceptions.py             # Custom exception hierarchy
+│   └── websocket_handler.py      # WebSocket validation
+├── tests/                        # Test suite (1630+ lines)
+│   ├── test_services.py          # Unit tests
+│   ├── test_performance.py       # Performance tests
+│   ├── test_edge_cases.py        # Edge cases
+│   ├── metrics.py                # WER/CER calculations
+│   └── conftest.py               # Pytest fixtures
+├── config/                       # Application configuration
+│   └── app_config.py             # AppConfig with validation
+├── static/                       # Frontend (JavaScript, CSS)
+├── templates/                    # HTML templates (Jinja2)
+├── SETUPs_certs_SSL_ModelsCache/ # Setup scripts
+│   ├── download_models.py        # Automatic model download
+│   ├── build.ps1                 # Docker build (Windows)
+│   ├── build-docker.sh           # Docker build (Linux/Mac)
+│   └── setup_dev_certs.bat       # SSL setup for development
+├── Dockerfile                    # Optimized Docker image (~17GB)
+├── docker-compose.yml            # Local build
+├── docker-compose.pull.yml       # Pull from Docker Hub
+├── docker-compose.dev.yml        # Development (hot-reload)
+├── pytest.ini                    # Pytest configuration
+├── pyrightconfig.json            # Type checking
+└── main.py                       # Application entry point
+```
+
+---
+
+## Configuration via Environment Variables
+
+The application supports configuration via `.env` file or environment variables:
+
+```bash
+# Server
+TRANSCREVAI_HOST=0.0.0.0
+TRANSCREVAI_PORT=8000
+
+# SSL (optional)
+TRANSCREVAI_SSL_CERT=certs/localhost.pem
+TRANSCREVAI_SSL_KEY=certs/localhost-key.pem
+
+# Model
+TRANSCREVAI_MODEL_NAME=medium
+TRANSCREVAI_DEVICE=cpu
+TRANSCREVAI_COMPUTE_TYPE=int8
+
+# Diarization (fine-tuning)
+TRANSCREVAI_DIARIZATION_THRESHOLD=0.335
+TRANSCREVAI_DIARIZATION_MIN_CLUSTER_SIZE=12
+TRANSCREVAI_DIARIZATION_MIN_SPEAKERS=
+TRANSCREVAI_DIARIZATION_MAX_SPEAKERS=
+
+# Performance
+TRANSCREVAI_MAX_MEMORY=2.0
+TRANSCREVAI_LOG_LEVEL=INFO
+```
+
+---
+
 ## System Requirements
 
 ### Minimum (basic functionality)
@@ -612,22 +643,20 @@ pytest --cov=src tests/
 
 ---
 
-## License
+## API Endpoints
 
-[Specify project license]
+### HTTP Endpoints
 
----
+- **GET** `/` - Main web interface
+- **GET** `/health` - Health check endpoint
+- **POST** `/upload` - Upload audio file (max 500MB, 60min)
+- **GET** `/download-srt/{session_id}` - Download SRT file
+- **GET** `/api/download/{session_id}/{file_type}` - Generic download (audio/transcript/subtitles)
 
-## Contributing
+### WebSocket Endpoint
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+- **WS** `/ws/{session_id}` - Connection for live recording
 
-Please make sure to update tests as appropriate.
-
----
-
-## Contact and Support
-
-For issues, questions or suggestions:
-- Open an issue on the repository
-- Check documentation in `SETUPs_certs_SSL_ModelsCache/`
+**Rate Limiting:**
+- HTTP endpoints: 10 requests/minute per IP
+- WebSocket: 20 connections/minute per IP
