@@ -1,19 +1,29 @@
 # =====================================================================================
-# Single-Stage Dockerfile - Optimized for 8GB RAM Systems
-# - All dependencies and models in one stage
-# - PyTorch CPU from requirements.txt via --index-url
+# Multi-Architecture Dockerfile - Supports AMD64 (x86_64) and ARM64 (Apple Silicon)
+# - Works on Intel/AMD CPUs and Apple M1/M2/M3
+# - PyTorch CPU with platform-specific optimizations
 # - ~17GB final image
 # =====================================================================================
-FROM python:3.11-slim
+
+# Use platform-specific base image
+FROM --platform=$TARGETPLATFORM python:3.11-slim
+
+# Build arguments for multi-arch support
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+ARG TARGETOS
+ARG TARGETARCH
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
     DEBIAN_FRONTEND=noninteractive \
-    HF_HOME=/root/.cache/huggingface
+    HF_HOME=/root/.cache/huggingface \
+    PLATFORM_ARCH=${TARGETARCH}
 
-# Install all system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies
+RUN echo "Building for platform: $TARGETPLATFORM (OS: $TARGETOS, ARCH: $TARGETARCH)" && \
+    apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     git \
@@ -28,21 +38,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set working directory
 WORKDIR /app
 
-# Copy and install Python dependencies (includes PyTorch CPU at top)
+# Copy requirements
 COPY requirements.txt .
+
+# Install Python dependencies with platform-specific optimizations
+# PyTorch CPU works on both x86_64 and ARM64
 RUN pip install --no-cache-dir --upgrade pip && \
+    echo "Installing packages for $TARGETARCH architecture..." && \
     pip install --no-cache-dir -r requirements.txt
 
 # Download Whisper model (public, no token needed)
+# Works on all architectures
 RUN python -c "from huggingface_hub import snapshot_download; \
-    print('Downloading Whisper model...'); \
+    print('Downloading Whisper model for $TARGETARCH...'); \
     snapshot_download(repo_id='Systran/faster-whisper-medium')"
 
 # Download Pyannote models (requires token at build-time)
 ARG HUGGING_FACE_HUB_TOKEN
 COPY SETUPs_certs_SSL_ModelsCache/download_models.py .
 RUN if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then \
-    echo "Downloading Pyannote models with token..." && \
+    echo "Downloading Pyannote models with token for $TARGETARCH..." && \
     python3 download_models.py && \
     rm download_models.py; \
     else \
@@ -57,7 +72,7 @@ COPY config/ ./config/
 COPY static/ ./static/
 COPY templates/ ./templates/
 
-# Create necessary directories for the application
+# Create necessary directories
 RUN mkdir -p data/uploads data/transcripts data/srt data/recordings temp
 
 # Set proper permissions

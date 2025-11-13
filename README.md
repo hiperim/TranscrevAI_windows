@@ -54,9 +54,11 @@ A aplicação é construída sobre o FastAPI e segue uma arquitetura moderna bas
 ### Opção 1: Docker Hub (Recomendado - Modelos Incluídos)
 
 **Sem necessidade de token Hugging Face. Modelos já na imagem.**
+**✅ Suporta AMD64 (Intel/AMD) e ARM64 (Apple Silicon)**
 
 ```bash
 # Pull da imagem (primeira vez, ~17GB)
+# Docker seleciona automaticamente a arquitetura correta
 docker pull hiperim/transcrevai:latest
 
 # Executar aplicação
@@ -94,17 +96,20 @@ docker rm transcrevai
    HUGGING_FACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
    ```
 
-3. Build da imagem:
+3. Build da imagem multi-arquitetura (AMD64 + ARM64):
 
    **Windows:**
    ```powershell
-   .\SETUPs_certs_SSL_ModelsCache\build.ps1
+   .\SETUPs_certs_SSL_ModelsCache\build-multiarch.ps1
    ```
 
    **Linux/Mac:**
    ```bash
-   ./SETUPs_certs_SSL_ModelsCache/build-docker.sh
+   chmod +x ./SETUPs_certs_SSL_ModelsCache/build-multiarch.sh
+   ./SETUPs_certs_SSL_ModelsCache/build-multiarch.sh
    ```
+
+   **Nota:** Build multi-arch requer Docker Desktop e faz push automático para Docker Hub.
 
 4. Executar:
    ```bash
@@ -247,10 +252,12 @@ transcrevai_windows/
 ├── templates/                    # Templates HTML (Jinja2)
 ├── SETUPs_certs_SSL_ModelsCache/ # Scripts de setup
 │   ├── download_models.py        # Download automático de modelos
-│   ├── build.ps1                 # Build Docker (Windows)
-│   ├── build-docker.sh           # Build Docker (Linux/Mac)
-│   └── setup_dev_certs.bat       # Setup SSL desenvolvimento
-├── Dockerfile                    # Imagem Docker otimizada (~17GB)
+│   ├── build-multiarch.ps1       # Build Docker multi-arch (Windows)
+│   ├── build-multiarch.sh        # Build Docker multi-arch (Linux/Mac)
+│   ├── setup_dev_certs.bat       # Setup SSL desenvolvimento
+│   └── ARM_COMPATIBILITY.md      # Guia de compatibilidade ARM
+├── Dockerfile                    # Imagem Docker single-arch (~17GB)
+├── Dockerfile.multiarch          # Imagem Docker multi-arch (AMD64+ARM64)
 ├── docker-compose.yml            # Build local
 ├── docker-compose.pull.yml       # Pull do Docker Hub
 ├── docker-compose.dev.yml        # Desenvolvimento (hot-reload)
@@ -387,9 +394,11 @@ The application is built on FastAPI and follows a modern Dependency Injection (D
 ### Option 1: Docker Hub (Recommended - Models Included)
 
 **No Hugging Face token needed. Models already embedded in the image.**
+**✅ Supports AMD64 (Intel/AMD) and ARM64 (Apple Silicon)**
 
 ```bash
 # Pull image (first time, ~17GB)
+# Docker automatically selects the correct architecture
 docker pull hiperim/transcrevai:latest
 
 # Run application
@@ -427,17 +436,20 @@ docker rm transcrevai
    HUGGING_FACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
    ```
 
-3. Build image:
+3. Build multi-architecture image (AMD64 + ARM64):
 
    **Windows:**
    ```powershell
-   .\SETUPs_certs_SSL_ModelsCache\build.ps1
+   .\SETUPs_certs_SSL_ModelsCache\build-multiarch.ps1
    ```
 
    **Linux/Mac:**
    ```bash
-   ./SETUPs_certs_SSL_ModelsCache/build-docker.sh
+   chmod +x ./SETUPs_certs_SSL_ModelsCache/build-multiarch.sh
+   ./SETUPs_certs_SSL_ModelsCache/build-multiarch.sh
    ```
+
+   **Note:** Multi-arch build requires Docker Desktop and automatically pushes to Docker Hub.
 
 4. Run:
    ```bash
@@ -580,10 +592,12 @@ transcrevai_windows/
 ├── templates/                    # HTML templates (Jinja2)
 ├── SETUPs_certs_SSL_ModelsCache/ # Setup scripts
 │   ├── download_models.py        # Automatic model download
-│   ├── build.ps1                 # Docker build (Windows)
-│   ├── build-docker.sh           # Docker build (Linux/Mac)
-│   └── setup_dev_certs.bat       # SSL setup for development
-├── Dockerfile                    # Optimized Docker image (~17GB)
+│   ├── build-multiarch.ps1       # Multi-arch Docker build (Windows)
+│   ├── build-multiarch.sh        # Multi-arch Docker build (Linux/Mac)
+│   ├── setup_dev_certs.bat       # SSL setup for development
+│   └── ARM_COMPATIBILITY.md      # ARM compatibility guide
+├── Dockerfile                    # Single-arch Docker image (~17GB)
+├── Dockerfile.multiarch          # Multi-arch Docker image (AMD64+ARM64)
 ├── docker-compose.yml            # Local build
 ├── docker-compose.pull.yml       # Pull from Docker Hub
 ├── docker-compose.dev.yml        # Development (hot-reload)

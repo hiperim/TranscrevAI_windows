@@ -2,7 +2,7 @@ services:
   transcrevai:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.multiarch
       args:
         HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
     ports:

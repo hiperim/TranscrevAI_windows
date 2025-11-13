@@ -2,12 +2,45 @@
 
 Este guia fornece instruções para configurar e rodar a aplicação TranscrevAI usando Docker. A abordagem utiliza um cache de modelos local para garantir que a aplicação seja autossuficiente e funcione 100% offline no runtime.
 
+**✅ Suporte Multi-Arquitetura:** TranscrevAI suporta AMD64 (Intel/AMD) e ARM64 (Apple Silicon) através de imagens Docker multi-arch.
+
 ## Pré-requisitos
 
-- Docker e Docker Compose
+- Docker e Docker Compose (Docker Desktop recomendado para multi-arch builds)
 - Git
 - Python 3.11+
 - Um token de acesso do Hugging Face (para o download inicial dos modelos)
+
+## 🌍 Opções de Build
+
+### Opção A: Build Multi-Arquitetura (Recomendado)
+
+Para criar imagens que funcionam em **Intel/AMD (x86_64)** e **Apple Silicon (ARM64)**:
+
+**Windows:**
+```powershell
+.\SETUPs_certs_SSL_ModelsCache\build-multiarch.ps1
+```
+
+**Linux/Mac:**
+```bash
+chmod +x ./SETUPs_certs_SSL_ModelsCache/build-multiarch.sh
+./SETUPs_certs_SSL_ModelsCache/build-multiarch.sh
+```
+
+**Nota:** Requer Docker Desktop e faz push automático para Docker Hub.
+
+Para mais detalhes, consulte: [ARM_COMPATIBILITY.md](./ARM_COMPATIBILITY.md)
+
+### Opção B: Build Local Simples
+
+Para build local em sua arquitetura nativa (sem push para Docker Hub):
+
+```bash
+docker-compose up -d --build
+```
+
+---
 
 ## 🚀 Passo 1: Setup Inicial (Apenas uma vez)
 
