@@ -11,14 +11,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Configuration
-LOCAL_CACHE_DIR = Path(__file__).parent / "models" / ".cache"
+LOCAL_CACHE_DIR = Path(__file__).parent.parent / "models" / ".cache"
 os.environ['HF_HOME'] = str(LOCAL_CACHE_DIR)
 
 print(f"Target local cache directory set via HF_HOME: {LOCAL_CACHE_DIR}")
 
 # List of all models required
 MODELS_TO_DOWNLOAD = [
-    "guillaumekln/faster-whisper-medium",
+    "Systran/faster-whisper-medium",
     "pyannote/speaker-diarization-3.1",
     "pyannote/segmentation-3.0",
     "pyannote/wespeaker-voxceleb-resnet34-LM",

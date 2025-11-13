@@ -1,95 +1,366 @@
 # TranscrevAI
 
 ## Visão Geral
+
 O TranscrevAI é uma aplicação de alto desempenho para transcrição de áudio e diarização de locutores. Ele recebe um áudio como entrada e fornece uma transcrição completa, identificando quem disse o quê e quando. Foi projetado para ser uma ferramenta poderosa para quem precisa de transcrições rápidas e precisas de conversas, reuniões ou gravações.
 
 Toda a transcrição ocorre localmente na máquina onde o servidor está rodando, sem o uso de nenhuma API externa, garantindo a privacidade dos dados. Esta arquitetura offline alinha-se fortemente com os princípios de segurança e minimização de dados expostos da Lei Geral de Proteção de Dados brasileira (LGPD).
 
 ## Funcionalidades
-- **Transcrição de Alto Desempenho:** Utiliza o modelo faster-whisper para transcrição local e rápida (implementação otimizada do Whisper da OpenAI para CPU);
-- **Diarização de Locutores:** Identifica diferentes locutores no áudio usando pyannote.audio;
-- **Gravação ao Vivo:** Permite a gravação de áudio diretamente no navegador, com buffering em disco para suportar gravações longas sem consumir excesso de RAM;
-- **Upload de Ficheiros:** Suporta o upload de ficheiros de áudio pré-gravados;
-- **Geração de Legendas .srt:** Cria arquivos de legenda para vídeos;
-- **Geração de Vídeos .mp4:** Produz vídeos com legendas embutidas sobre um fundo preto;
-- **Atualizações de Progresso na UI:** Possui uma interface WebSocket com interação e monitoramento do progresso pelo usuário.
+
+- **Transcrição de Alto Desempenho:** Utiliza o modelo faster-whisper para transcrição local e rápida (implementação otimizada do Whisper da OpenAI para CPU)
+- **Diarização de Locutores:** Identifica diferentes locutores no áudio usando pyannote.audio com algoritmo word-level alignment
+- **Gravação ao Vivo:** Permite a gravação de áudio diretamente no navegador, com buffering em disco para suportar gravações longas sem consumir excesso de RAM
+- **Upload de Ficheiros:** Suporta o upload de ficheiros de áudio pré-gravados
+- **Geração de Legendas .srt:** Cria arquivos de legenda para vídeos
+- **Geração de Vídeos .mp4:** Produz vídeos com legendas embutidas sobre um fundo preto
+- **Atualizações de Progresso em Tempo Real:** Interface WebSocket com monitoramento do progresso pelo usuário
 
 ## Tecnologias Utilizadas
+
 - **Backend:** Python 3.11, FastAPI
 - **Modelos de IA/ML:**
-    - **Transcrição:** faster-whisper
-    - **Diarização:** pyannote.audio
-- **Biblioteca Principal de ML:** PyTorch
+    - **Transcrição:** faster-whisper (Whisper medium otimizado para CPU)
+    - **Diarização:** pyannote.audio 3.1
+- **Biblioteca Principal de ML:** PyTorch (CPU-only, INT8 quantization)
 - **Comunicação em Tempo Real:** WebSockets
-- **Processamento de Áudio/Vídeo:** FFmpeg, Pydub
+- **Processamento de Áudio/Vídeo:** FFmpeg, librosa
+- **Deployment:** Docker, Gunicorn/Uvicorn
+- **SSL/HTTPS:** Suporte completo para desenvolvimento (mkcert) e produção (Caddy)
 
 ## Arquitetura
+
 A aplicação é construída sobre o FastAPI e segue uma arquitetura moderna baseada em Injeção de Dependência (DI), garantindo que os componentes sejam modulares, estáveis e geridos de forma eficiente.
 
-   - Serviços Modulares: Cada funcionalidade principal é encapsulada num serviço (TranscriptionService, PyannoteDiarizer, LiveAudioProcessor).
-   - Gestão de Sessões ('SessionManager'): Gere o ciclo de vida de cada sessão de utilizador (upload ou gravação ao vivo), incluindo a limpeza automática de sessões antigas para libertar recursos.
-   - Processamento em Background: Tarefas pesadas (transcrição, diarização) são executadas num worker thread separado para não bloquear o servidor principal, garantindo que a interface permaneça responsiva.
-   - Buffering em Disco: Durante a gravação ao vivo, os pedaços de áudio são armazenados temporariamente em disco, permitindo gravações longas com baixo consumo de memória.
-   
+- **Serviços Modulares:** Cada funcionalidade principal é encapsulada num serviço (TranscriptionService, PyannoteDiarizer, LiveAudioProcessor, SessionManager)
+- **Gestão de Sessões:** Ciclo de vida completo de cada sessão de utilizador com limpeza automática (timeout de 24h)
+- **Processamento Assíncrono:** Tarefas pesadas executadas em worker threads separados para não bloquear o servidor principal
+- **Buffering em Disco:** Gravações longas armazenadas temporariamente em disco, permitindo baixo consumo de memória
+- **Otimização Adaptativa:** Detecção automática de hardware (CPU cores, RAM) e alocação dinâmica de threads
+
 ## Performance
-O TranscrevAI inclui funcionalidade de Otimização Adaptativa de Threads. No arranque, a aplicação deteta o hardware da máquina (núcleos de CPU, RAM) e aloca dinamicamente o número ideal de threads para as tarefas de transcrição e diarização, otimizando o desempenho para a sua configuração específica.
 
-## Instalação
+**Métricas alcançadas:**
+- **Startup time:** <30s com pre-loading de modelos
+- **Memory usage:** ~2GB peak (otimizado para sistemas com 8GB RAM)
+- **Processing ratio:** ~1.5x realtime
+- **Accuracy PT-BR:** 90%+ com correções linguísticas pós-processamento
+- **Architecture:** CPU-only com INT8 quantization para compatibilidade universal
 
-1.  **Clone o repositório:**
-    ```bash
-    git clone <repository-url>
-    cd transcrevai_windows
-    ```
+---
 
-2.  **Crie e ative um ambiente virtual:**
-    ```bash
-    python -m venv venv
-    .\venv\Scripts\activate
-    ```
+## Instalação e Uso
 
-3.  **Instale as dependências de produção:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+### Opção 1: Docker Hub (Recomendado - Modelos Incluídos)
 
-4.  **Para desenvolvimento, instale as dependências de desenvolvimento:**
-    ```bash
-    pip install -r requirements-dev.txt
-    ```
+**Sem necessidade de token Hugging Face. Modelos já embedded na imagem.**
 
-5. **Descarregue os modelos de IA/ML:**
-    Execute o seguinte script para descarregar os modelos de transcrição e diarização para a pasta local models/.cache.
-
-    ```bash
-    python setups_certs_SSL_ModelsCache/download_models.py
-    ```
-
-6. **(Ambiente de Desenvolvimento) Configuração Local com '.env':**
-    Para configurações personalizadas, como usar HTTPS localmente, crie um ficheiro .env na raiz do projeto. Copie o exemplo abaixo e ajuste se
-    necessário.
-
-    `.env.example`
-    ```
-    # Exemplo de configuração para HTTPS local
-    # TRANSCREVAI_SSL_CERT=certs/localhost+2.pem
-    # TRANSCREVAI_SSL_KEY=certs/localhost+2-key.pem
-    ```
-
-## Como Usar
-
-Para executar a aplicação, use o seguinte comando na raiz do projeto:
 ```bash
-python main.py
+# Pull da imagem (primeira vez, ~17GB)
+docker pull hiperim/transcrevai:latest
+
+# Executar aplicação
+docker run -d -p 8000:8000 --name transcrevai hiperim/transcrevai:latest
+
+# Acessar
+# http://localhost:8000
 ```
-O servidor irá iniciar e o log indicará se está a ser executado em `http` ou `https` e em que endereço (normalmente `http://localhost:8000`).
 
-## Desenvolvimento
-
-Para executar os testes, use `pytest`:
+**Usando docker-compose:**
 ```bash
+docker-compose -f docker-compose.pull.yml up -d
+```
+
+**Parar aplicação:**
+```bash
+docker stop transcrevai
+docker rm transcrevai
+```
+
+---
+
+### Opção 2: Build Local com Docker
+
+**Requer token Hugging Face para download dos modelos.**
+
+1. Clone o repositório:
+   ```bash
+   git clone <repository-url>
+   cd transcrevai_windows
+   ```
+
+2. Crie arquivo `.env` com seu token:
+   ```bash
+   HUGGING_FACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   ```
+
+3. Build da imagem:
+
+   **Windows:**
+   ```powershell
+   .\SETUPs_certs_SSL_ModelsCache\build.ps1
+   ```
+
+   **Linux/Mac:**
+   ```bash
+   ./SETUPs_certs_SSL_ModelsCache/build-docker.sh
+   ```
+
+4. Executar:
+   ```bash
+   docker-compose up -d
+   ```
+
+5. Acessar: `http://localhost:8000`
+
+---
+
+### Opção 3: Instalação Local (Desenvolvimento)
+
+**Requer Python 3.11+, FFmpeg e token Hugging Face.**
+
+1. Clone o repositório:
+   ```bash
+   git clone <repository-url>
+   cd transcrevai_windows
+   ```
+
+2. Crie e ative ambiente virtual:
+   ```bash
+   python -m venv venv
+
+   # Windows
+   .\venv\Scripts\activate
+
+   # Linux/Mac
+   source venv/bin/activate
+   ```
+
+3. Instale dependências:
+   ```bash
+   # Produção
+   pip install -r requirements.txt
+
+   # Desenvolvimento (inclui pytest, etc)
+   pip install -r requirements-dev.txt
+   ```
+
+4. Configure token no `.env`:
+   ```bash
+   HUGGING_FACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   ```
+
+5. Download dos modelos de IA/ML:
+   ```bash
+   python SETUPs_certs_SSL_ModelsCache/download_models.py
+   ```
+
+   Este comando baixa (~3-5GB):
+   - faster-whisper-medium (transcrição)
+   - pyannote/speaker-diarization-3.1
+   - pyannote/segmentation-3.0
+   - pyannote/wespeaker embeddings
+
+6. Executar aplicação:
+   ```bash
+   python main.py
+   ```
+
+7. Acessar: `http://localhost:8000`
+
+---
+
+## Configuração HTTPS (Opcional)
+
+A aplicação suporta HTTPS para desenvolvimento e produção. HTTPS é necessário para a funcionalidade de gravação ao vivo devido aos requisitos da API `getUserMedia()` do navegador.
+
+### Desenvolvimento (localhost)
+
+Execute o script automatizado:
+```batch
+# Windows (como Administrador)
+.\SETUPs_certs_SSL_ModelsCache\setup_dev_certs.bat
+```
+
+Este script instala mkcert e gera certificados locais confiáveis.
+
+### Produção
+
+A aplicação inclui configuração Caddy para gerenciamento automático de certificados Let's Encrypt.
+
+**Documentação completa:**
+- [SSL_SETUP.md](./SETUPs_certs_SSL_ModelsCache/SSL_SETUP.md) - Guia completo de configuração HTTPS
+
+---
+
+## Testes
+
+A aplicação inclui suite completa de testes (1630+ linhas):
+
+```bash
+# Todos os testes
 pytest
+
+# Testes específicos
+pytest tests/test_services.py          # Testes unitários
+pytest tests/test_performance.py       # Testes de performance
+pytest tests/test_edge_cases.py        # Casos extremos
+
+# Com coverage
+pytest --cov=src tests/
 ```
+
+**Testes incluem:**
+- Testes unitários com mocks
+- Testes de integração
+- Testes de performance (startup time, memory usage)
+- Testes de edge cases (rate limiting, corrupted files, etc)
+- Métricas de qualidade (WER/CER)
+
+---
+
+## Documentação Técnica
+
+- **[DOCKER_DEPLOYMENT.md](./SETUPs_certs_SSL_ModelsCache/DOCKER_DEPLOYMENT.md)** - Guia completo de deployment Docker (produção, desenvolvimento, testes)
+- **[SSL_SETUP.md](./SETUPs_certs_SSL_ModelsCache/SSL_SETUP.md)** - Configuração HTTPS para desenvolvimento e produção
+- **[pipeline_workflow.md](./pipeline_workflow.md)** - Diagrama detalhado do fluxo de processamento
+
+---
+
+## Estrutura do Projeto
+
+```
+transcrevai_windows/
+├── src/                          # Código fonte principal
+│   ├── transcription.py          # Serviço de transcrição (faster-whisper)
+│   ├── diarization.py            # Serviço de diarização (pyannote)
+│   ├── audio_processing.py       # Processamento de áudio e sessões
+│   ├── pipeline.py               # Orquestração do pipeline completo
+│   ├── dependencies.py           # Injeção de dependências
+│   ├── exceptions.py             # Hierarquia de exceções customizadas
+│   └── websocket_handler.py      # Validação WebSocket
+├── tests/                        # Suite de testes (1630+ linhas)
+│   ├── test_services.py          # Testes unitários
+│   ├── test_performance.py       # Testes de performance
+│   ├── test_edge_cases.py        # Casos extremos
+│   ├── metrics.py                # WER/CER calculations
+│   └── conftest.py               # Pytest fixtures
+├── config/                       # Configuração da aplicação
+│   └── app_config.py             # AppConfig com validação
+├── static/                       # Frontend (JavaScript, CSS)
+├── templates/                    # Templates HTML (Jinja2)
+├── SETUPs_certs_SSL_ModelsCache/ # Scripts de setup
+│   ├── download_models.py        # Download automático de modelos
+│   ├── build.ps1                 # Build Docker (Windows)
+│   ├── build-docker.sh           # Build Docker (Linux/Mac)
+│   └── setup_dev_certs.bat       # Setup SSL desenvolvimento
+├── Dockerfile                    # Imagem Docker otimizada (~17GB)
+├── docker-compose.yml            # Build local
+├── docker-compose.pull.yml       # Pull do Docker Hub
+├── docker-compose.dev.yml        # Desenvolvimento (hot-reload)
+├── pytest.ini                    # Configuração pytest
+├── pyrightconfig.json            # Type checking
+└── main.py                       # Entry point da aplicação
+```
+
+---
+
+## Configuração via Variáveis de Ambiente
+
+A aplicação suporta configuração via arquivo `.env` ou variáveis de ambiente:
+
+```bash
+# Servidor
+TRANSCREVAI_HOST=0.0.0.0
+TRANSCREVAI_PORT=8000
+
+# SSL (opcional)
+TRANSCREVAI_SSL_CERT=certs/localhost.pem
+TRANSCREVAI_SSL_KEY=certs/localhost-key.pem
+
+# Modelo
+TRANSCREVAI_MODEL_NAME=medium
+TRANSCREVAI_DEVICE=cpu
+TRANSCREVAI_COMPUTE_TYPE=int8
+
+# Diarização (fine-tuning)
+TRANSCREVAI_DIARIZATION_THRESHOLD=0.335
+TRANSCREVAI_DIARIZATION_MIN_CLUSTER_SIZE=12
+TRANSCREVAI_DIARIZATION_MIN_SPEAKERS=
+TRANSCREVAI_DIARIZATION_MAX_SPEAKERS=
+
+# Performance
+TRANSCREVAI_MAX_MEMORY=2.0
+TRANSCREVAI_LOG_LEVEL=INFO
+```
+
+---
+
+## Requisitos de Sistema
+
+### Mínimo (funcionamento básico)
+- **OS:** Windows 10/11 (64-bit), Linux, macOS
+- **CPU:** 4+ cores (qualquer processador x86-64 moderno)
+- **RAM:** 8GB (aplicação usa ~2GB em pico)
+- **Storage:** 5GB disponível
+- **Network:** Apenas para download inicial de modelos (se build local)
+
+### Recomendado (melhor performance)
+- **CPU:** 8+ cores
+- **RAM:** 16GB
+- **Storage:** SSD
+
+**Nota:** A aplicação é 100% CPU-only. Não requer GPU.
+
+---
+
+## API Endpoints
+
+### HTTP Endpoints
+
+- **GET** `/` - Interface web principal
+- **GET** `/health` - Health check endpoint
+- **POST** `/upload` - Upload de arquivo de áudio (max 500MB, 60min)
+- **GET** `/download-srt/{session_id}` - Download de arquivo SRT
+- **GET** `/api/download/{session_id}/{file_type}` - Download genérico (audio/transcript/subtitles)
+
+### WebSocket Endpoint
+
+- **WS** `/ws/{session_id}` - Conexão para gravação ao vivo
+
+**Ações suportadas:**
+- `start` - Iniciar gravação (formato: wav/mp4)
+- `audio_chunk` - Enviar chunk de áudio (base64)
+- `pause` - Pausar gravação
+- `resume` - Retomar gravação
+- `stop` - Finalizar e processar
+- `ping` - Heartbeat (keep-alive)
+
+**Rate Limiting:**
+- HTTP endpoints: 10 requests/minuto por IP
+- WebSocket: 20 conexões/minuto por IP
+
+---
+
+## Licença
+
+[Especificar licença do projeto]
+
+---
+
+## Contribuindo
+
+Pull requests são bem-vindos. Para mudanças maiores, por favor abra uma issue primeiro para discutir o que você gostaria de mudar.
+
+Certifique-se de atualizar os testes conforme apropriado.
+
+---
+
+## Contato e Suporte
+
+Para problemas, dúvidas ou sugestões:
+- Abra uma issue no repositório
+- Consulte a documentação em `SETUPs_certs_SSL_ModelsCache/`
 
 ---
 ---
@@ -97,91 +368,266 @@ pytest
 # TranscrevAI (English)
 
 ## Overview
+
 TranscrevAI is a high-performance application for audio transcription and speaker diarization. It takes an audio input and provides a complete transcription, identifying who said what and when. It is designed to be a powerful tool for anyone who needs fast and accurate transcriptions of conversations, meetings, or recordings.
 
-All transcription occurs locally on the machine where the server is running, without the use of any external APIs, ensuring data privacy. This offline architecture strongly aligns with the security and data minimization principles of the brazilian General Data Protection Law (LGPD).
+All transcription occurs locally on the machine where the server is running, without the use of any external APIs, ensuring data privacy. This offline architecture strongly aligns with the security and data minimization principles of the Brazilian General Data Protection Law (LGPD).
 
 ## Features
-- **High-Performance Transcription:** Uses the faster-whisper model for fast, local transcription (a CPU-optimized implementation of OpenAI's Whisper).
-- **Speaker Diarization:** Identifies different speakers in the audio using pyannote.audio.
-- **Live Recording:** Allows audio recording directly in the browser, with disk buffering to support long recordings without consuming excess RAM.
-- **File Upload:** Supports uploading pre-recorded audio files.
-- **.srt Subtitle Generation:** Creates subtitle files for videos.
-- **.mp4 Video Generation:** Produces videos with embedded subtitles over a black background.
-- **UI Progress Updates:** Features a WebSocket interface for user interaction and progress monitoring.
+
+- **High-Performance Transcription:** Uses the faster-whisper model for fast, local transcription (CPU-optimized implementation of OpenAI's Whisper)
+- **Speaker Diarization:** Identifies different speakers in the audio using pyannote.audio with word-level alignment algorithm
+- **Live Recording:** Allows audio recording directly in the browser, with disk buffering to support long recordings without consuming excess RAM
+- **File Upload:** Supports uploading pre-recorded audio files
+- **SRT Subtitle Generation:** Creates subtitle files for videos
+- **MP4 Video Generation:** Produces videos with embedded subtitles over a black background
+- **Real-time Progress Updates:** WebSocket interface with user progress monitoring
 
 ## Tech Stack
+
 - **Backend:** Python 3.11, FastAPI
 - **AI/ML Models:**
-    - **Transcription:** faster-whisper
-    - **Diarization:** pyannote.audio
-- **Core ML Library:** PyTorch
+    - **Transcription:** faster-whisper (Whisper medium optimized for CPU)
+    - **Diarization:** pyannote.audio 3.1
+- **Core ML Library:** PyTorch (CPU-only, INT8 quantization)
 - **Real-time Communication:** WebSockets
-- **Audio/Video Processing:** FFmpeg, Pydub
+- **Audio/Video Processing:** FFmpeg, librosa
+- **Deployment:** Docker, Gunicorn/Uvicorn
+- **SSL/HTTPS:** Full support for development (mkcert) and production (Caddy)
 
 ## Architecture
+
 The application is built on FastAPI and follows a modern Dependency Injection (DI) based architecture, ensuring that components are modular, stable, and efficiently managed.
 
-   - **Modular Services:** Each core functionality is encapsulated in a service (TranscriptionService, PyannoteDiarizer, LiveAudioProcessor).
-   - **Session Management ('SessionManager'):** Manages the lifecycle of each user session (upload or live recording), including automatic cleanup of old sessions to free up resources.
-   - **Background Processing:** Heavy tasks (transcription, diarization) are executed in a separate worker thread to avoid blocking the main server, ensuring the interface remains responsive.
-   - **Disk Buffering:** During live recording, audio chunks are temporarily stored on disk, allowing for long recordings with low memory consumption.
-   
+- **Modular Services:** Each core functionality is encapsulated in a service (TranscriptionService, PyannoteDiarizer, LiveAudioProcessor, SessionManager)
+- **Session Management:** Complete lifecycle of each user session with automatic cleanup (24h timeout)
+- **Asynchronous Processing:** Heavy tasks executed in separate worker threads to avoid blocking the main server
+- **Disk Buffering:** Long recordings temporarily stored on disk, allowing low memory consumption
+- **Adaptive Optimization:** Automatic hardware detection (CPU cores, RAM) and dynamic thread allocation
+
 ## Performance
-TranscrevAI includes an Adaptive Thread Optimization feature. On startup, the application detects the machine's hardware (CPU cores, RAM) and dynamically allocates the optimal number of threads for transcription and diarization tasks, optimizing performance for your specific setup.
 
-## Installation
+**Achieved metrics:**
+- **Startup time:** <30s with model pre-loading
+- **Memory usage:** ~2GB peak (optimized for 8GB RAM systems)
+- **Processing ratio:** ~1.5x realtime
+- **Accuracy PT-BR:** 90%+ with post-processing linguistic corrections
+- **Architecture:** CPU-only with INT8 quantization for universal compatibility
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository-url>
-    cd transcrevai_windows
-    ```
+---
 
-2.  **Create and activate a virtual environment:**
-    ```bash
-    python -m venv venv
-    .\venv\Scripts\activate
-    ```
+## Installation and Usage
 
-3.  **Install production dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+### Option 1: Docker Hub (Recommended - Models Included)
 
-4.  **For development, install development dependencies:**
-    ```bash
-    pip install -r requirements-dev.txt
-    ```
+**No Hugging Face token needed. Models already embedded in the image.**
 
-5. **Download the AI/ML models:**
-    Run the following script to download the transcription and diarization models to the local `models/.cache` folder.
-
-    ```bash
-    python setups_certs_SSL_ModelsCache/download_models.py
-    ```
-
-6. **(Development Environment) Local Configuration with '.env':
-    For custom settings, such as using HTTPS locally, create a `.env` file in the project root. Copy the example below and adjust as needed.
-
-    `.env.example`
-    ```
-    # Example configuration for local HTTPS
-    # TRANSCREVAI_SSL_CERT=certs/localhost+2.pem
-    # TRANSCREVAI_SSL_KEY=certs/localhost+2-key.pem
-    ```
-
-## Usage
-
-To run the application, use the following command from the project root:
 ```bash
-python main.py
+# Pull image (first time, ~17GB)
+docker pull hiperim/transcrevai:latest
+
+# Run application
+docker run -d -p 8000:8000 --name transcrevai hiperim/transcrevai:latest
+
+# Access
+# http://localhost:8000
 ```
-The server will start, and the log will indicate whether it is running on `http` or `https` and at what address (usually `http://localhost:8000`).
 
-## Development
-
-To run the tests, use `pytest`:
+**Using docker-compose:**
 ```bash
+docker-compose -f docker-compose.pull.yml up -d
+```
+
+**Stop application:**
+```bash
+docker stop transcrevai
+docker rm transcrevai
+```
+
+---
+
+### Option 2: Local Build with Docker
+
+**Requires Hugging Face token for model download.**
+
+1. Clone repository:
+   ```bash
+   git clone <repository-url>
+   cd transcrevai_windows
+   ```
+
+2. Create `.env` file with your token:
+   ```bash
+   HUGGING_FACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   ```
+
+3. Build image:
+
+   **Windows:**
+   ```powershell
+   .\SETUPs_certs_SSL_ModelsCache\build.ps1
+   ```
+
+   **Linux/Mac:**
+   ```bash
+   ./SETUPs_certs_SSL_ModelsCache/build-docker.sh
+   ```
+
+4. Run:
+   ```bash
+   docker-compose up -d
+   ```
+
+5. Access: `http://localhost:8000`
+
+---
+
+### Option 3: Local Installation (Development)
+
+**Requires Python 3.11+, FFmpeg and Hugging Face token.**
+
+1. Clone repository:
+   ```bash
+   git clone <repository-url>
+   cd transcrevai_windows
+   ```
+
+2. Create and activate virtual environment:
+   ```bash
+   python -m venv venv
+
+   # Windows
+   .\venv\Scripts\activate
+
+   # Linux/Mac
+   source venv/bin/activate
+   ```
+
+3. Install dependencies:
+   ```bash
+   # Production
+   pip install -r requirements.txt
+
+   # Development (includes pytest, etc)
+   pip install -r requirements-dev.txt
+   ```
+
+4. Configure token in `.env`:
+   ```bash
+   HUGGING_FACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   ```
+
+5. Download AI/ML models:
+   ```bash
+   python SETUPs_certs_SSL_ModelsCache/download_models.py
+   ```
+
+   This command downloads (~3-5GB):
+   - faster-whisper-medium (transcription)
+   - pyannote/speaker-diarization-3.1
+   - pyannote/segmentation-3.0
+   - pyannote/wespeaker embeddings
+
+6. Run application:
+   ```bash
+   python main.py
+   ```
+
+7. Access: `http://localhost:8000`
+
+---
+
+## HTTPS Configuration (Optional)
+
+The application supports HTTPS for development and production. HTTPS is required for the live recording functionality due to the browser's `getUserMedia()` API requirements.
+
+### Development (localhost)
+
+Run the automated script:
+```batch
+# Windows (as Administrator)
+.\SETUPs_certs_SSL_ModelsCache\setup_dev_certs.bat
+```
+
+This script installs mkcert and generates trusted local certificates.
+
+### Production
+
+The application includes Caddy configuration for automatic Let's Encrypt certificate management.
+
+**Complete documentation:**
+- [SSL_SETUP.md](./SETUPs_certs_SSL_ModelsCache/SSL_SETUP.md) - Complete HTTPS configuration guide
+
+---
+
+## Tests
+
+The application includes a complete test suite (1630+ lines):
+
+```bash
+# All tests
 pytest
+
+# Specific tests
+pytest tests/test_services.py          # Unit tests
+pytest tests/test_performance.py       # Performance tests
+pytest tests/test_edge_cases.py        # Edge cases
+
+# With coverage
+pytest --cov=src tests/
 ```
+
+**Tests include:**
+- Unit tests with mocks
+- Integration tests
+- Performance tests (startup time, memory usage)
+- Edge case tests (rate limiting, corrupted files, etc)
+- Quality metrics (WER/CER)
+
+---
+
+## Technical Documentation
+
+- **[DOCKER_DEPLOYMENT.md](./SETUPs_certs_SSL_ModelsCache/DOCKER_DEPLOYMENT.md)** - Complete Docker deployment guide (production, development, tests)
+- **[SSL_SETUP.md](./SETUPs_certs_SSL_ModelsCache/SSL_SETUP.md)** - HTTPS configuration for development and production
+- **[pipeline_workflow.md](./pipeline_workflow.md)** - Detailed processing flow diagram
+
+---
+
+## System Requirements
+
+### Minimum (basic functionality)
+- **OS:** Windows 10/11 (64-bit), Linux, macOS
+- **CPU:** 4+ cores (any modern x86-64 processor)
+- **RAM:** 8GB (application uses ~2GB at peak)
+- **Storage:** 5GB available
+- **Network:** Only for initial model download (if local build)
+
+### Recommended (better performance)
+- **CPU:** 8+ cores
+- **RAM:** 16GB
+- **Storage:** SSD
+
+**Note:** The application is 100% CPU-only. No GPU required.
+
+---
+
+## License
+
+[Specify project license]
+
+---
+
+## Contributing
+
+Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+
+Please make sure to update tests as appropriate.
+
+---
+
+## Contact and Support
+
+For issues, questions or suggestions:
+- Open an issue on the repository
+- Check documentation in `SETUPs_certs_SSL_ModelsCache/`

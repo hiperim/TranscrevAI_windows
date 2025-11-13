@@ -27,7 +27,7 @@ Após clonar o repositório, o passo mais importante é popular o cache de model
 3.  **Execute o script de download:**
     Este comando irá baixar todos os modelos necessários para a pasta `models/.cache/`.
     ```bash
-    python download_models.py
+    python SETUPs_certs_SSL_ModelsCache/download_models.py
     ```
 
 Com os modelos baixados localmente, você está pronto para rodar a aplicação em qualquer um dos modos abaixo.

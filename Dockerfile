@@ -16,7 +16,6 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
-    wget \
     git \
     build-essential \
     cmake \
@@ -41,7 +40,7 @@ RUN python -c "from huggingface_hub import snapshot_download; \
 
 # Download Pyannote models (requires token at build-time)
 ARG HUGGING_FACE_HUB_TOKEN
-COPY download_models.py .
+COPY SETUPs_certs_SSL_ModelsCache/download_models.py .
 RUN if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then \
     echo "Downloading Pyannote models with token..." && \
     python3 download_models.py && \
