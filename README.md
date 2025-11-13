@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-O TranscrevAI é uma aplicação de alto desempenho para transcrição de áudio e diarização de locutores. Ele recebe um áudio como entrada e fornece uma transcrição completa, identificando quem disse o quê e quando. Foi projetado para ser uma ferramenta poderosa para quem precisa de transcrições rápidas e precisas de conversas, reuniões ou gravações.
+O TranscrevAI é uma aplicação de alto desempenho para transcrição de áudio e diarização de locutores. Ela recebe um áudio como entrada e fornece uma transcrição completa, identificando quem disse o quê e quando. Foi projetada para ser uma ferramenta poderosa para quem precisa de transcrições rápidas e precisas de conversas, reuniões ou gravações.
 
 Toda a transcrição ocorre localmente na máquina onde o servidor está rodando, sem o uso de nenhuma API externa, garantindo a privacidade dos dados. Esta arquitetura offline alinha-se fortemente com os princípios de segurança e minimização de dados expostos da Lei Geral de Proteção de Dados brasileira (LGPD).
 
