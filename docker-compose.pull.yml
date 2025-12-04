@@ -1,14 +1,15 @@
+# TranscrevAI - Pull and Run (no build required)
+# Usage: docker compose -f docker-compose.pull.yml up
+
 services:
   transcrevai:
     image: hiperim/transcrevai:latest
     ports:
       - "8000:8000"
     volumes:
-      # Persistent data storage
       - transcrevai_data:/app/data
     environment:
       - TRANSCREVAI_LOG_LEVEL=INFO
-      - TRANSCREVAI_MAX_MEMORY=2.0
       - TRANSCREVAI_DEVICE=cpu
       - TRANSCREVAI_COMPUTE_TYPE=int8
     restart: unless-stopped
@@ -17,15 +18,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-          cpus: '2.0'
-        reservations:
-          memory: 2G
-          cpus: '1.0'
+      start_period: 60s
+    # No resource limits - auto-detects available hardware for optimal performance
 
 volumes:
   transcrevai_data:

@@ -49,78 +49,39 @@ A aplicação é construída sobre o FastAPI e segue uma arquitetura moderna bas
 
 ---
 
-## Instalação e Uso
+## Instalacao e Uso
 
-### Opção 1: Docker Hub (Recomendado - Modelos Incluídos)
-
-**Sem necessidade de token Hugging Face. Modelos já na imagem.**
-**✅ Suporta AMD64 (Intel/AMD) e ARM64 (Apple Silicon)**
+### Quick Start (Recomendado)
 
 ```bash
-# Pull da imagem (primeira vez, ~17GB)
-# Docker seleciona automaticamente a arquitetura correta
-docker pull hiperim/transcrevai:latest
-
-# Executar aplicação
-docker run -d -p 8000:8000 --name transcrevai hiperim/transcrevai:latest
-
-# Acessar
-# http://localhost:8000
+git clone https://github.com/hiperim/transcrevai.git
+cd transcrevai
+docker compose -f docker-compose.pull.yml up
 ```
 
-**Usando docker-compose:**
-```bash
-docker-compose -f docker-compose.pull.yml up -d
-```
+Acesso: http://localhost:8000
 
-**Parar aplicação:**
+**Detalhes:**
+- Imagem ~20GB baixa automaticamente do Docker Hub
+- Modelos ML embedded - sem necessidade de token Hugging Face
+- Suporta AMD64 (Intel/AMD) e ARM64 (Apple Silicon)
+- Hardware auto-detectado para performance otima
+
+**Comandos uteis:**
 ```bash
-docker stop transcrevai
-docker rm transcrevai
+# Rodar em background
+docker compose -f docker-compose.pull.yml up -d
+
+# Ver logs
+docker compose -f docker-compose.pull.yml logs -f
+
+# Parar
+docker compose -f docker-compose.pull.yml down
 ```
 
 ---
 
-### Opção 2: Build Local com Docker
-
-**Requer token Hugging Face para download dos modelos.**
-
-1. Clone o repositório:
-   ```bash
-   git clone <repository-url>
-   cd transcrevai_windows
-   ```
-
-2. Crie arquivo `.env` com seu token:
-   ```bash
-   HUGGING_FACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-   ```
-
-3. Build da imagem multi-arquitetura (AMD64 + ARM64):
-
-   **Windows:**
-   ```powershell
-   .\SETUPs_certs_SSL_ModelsCache\build-multiarch.ps1
-   ```
-
-   **Linux/Mac:**
-   ```bash
-   chmod +x ./SETUPs_certs_SSL_ModelsCache/build-multiarch.sh
-   ./SETUPs_certs_SSL_ModelsCache/build-multiarch.sh
-   ```
-
-   **Nota:** Build multi-arch requer Docker Desktop e faz push automático para Docker Hub.
-
-4. Executar:
-   ```bash
-   docker-compose up -d
-   ```
-
-5. Acessar: `http://localhost:8000`
-
----
-
-### Opção 3: Instalação Local (Desenvolvimento)
+### Instalacao Local (Desenvolvimento)
 
 **Requer Python 3.11+, FFmpeg e token Hugging Face.**
 
@@ -391,76 +352,37 @@ The application is built on FastAPI and follows a modern Dependency Injection (D
 
 ## Installation and Usage
 
-### Option 1: Docker Hub (Recommended - Models Included)
-
-**No Hugging Face token needed. Models already embedded in the image.**
-**✅ Supports AMD64 (Intel/AMD) and ARM64 (Apple Silicon)**
+### Quick Start (Recommended)
 
 ```bash
-# Pull image (first time, ~17GB)
-# Docker automatically selects the correct architecture
-docker pull hiperim/transcrevai:latest
-
-# Run application
-docker run -d -p 8000:8000 --name transcrevai hiperim/transcrevai:latest
-
-# Access
-# http://localhost:8000
+git clone https://github.com/hiperim/transcrevai.git
+cd transcrevai
+docker compose -f docker-compose.pull.yml up
 ```
 
-**Using docker-compose:**
-```bash
-docker-compose -f docker-compose.pull.yml up -d
-```
+Access: http://localhost:8000
 
-**Stop application:**
+**Details:**
+- ~20GB image downloads automatically from Docker Hub
+- ML models embedded - no Hugging Face token required
+- Supports AMD64 (Intel/AMD) and ARM64 (Apple Silicon)
+- Hardware auto-detected for optimal performance
+
+**Useful commands:**
 ```bash
-docker stop transcrevai
-docker rm transcrevai
+# Run in background
+docker compose -f docker-compose.pull.yml up -d
+
+# View logs
+docker compose -f docker-compose.pull.yml logs -f
+
+# Stop
+docker compose -f docker-compose.pull.yml down
 ```
 
 ---
 
-### Option 2: Local Build with Docker
-
-**Requires Hugging Face token for model download.**
-
-1. Clone repository:
-   ```bash
-   git clone <repository-url>
-   cd transcrevai_windows
-   ```
-
-2. Create `.env` file with your token:
-   ```bash
-   HUGGING_FACE_HUB_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-   ```
-
-3. Build multi-architecture image (AMD64 + ARM64):
-
-   **Windows:**
-   ```powershell
-   .\SETUPs_certs_SSL_ModelsCache\build-multiarch.ps1
-   ```
-
-   **Linux/Mac:**
-   ```bash
-   chmod +x ./SETUPs_certs_SSL_ModelsCache/build-multiarch.sh
-   ./SETUPs_certs_SSL_ModelsCache/build-multiarch.sh
-   ```
-
-   **Note:** Multi-arch build requires Docker Desktop and automatically pushes to Docker Hub.
-
-4. Run:
-   ```bash
-   docker-compose up -d
-   ```
-
-5. Access: `http://localhost:8000`
-
----
-
-### Option 3: Local Installation (Development)
+### Local Installation (Development)
 
 **Requires Python 3.11+, FFmpeg and Hugging Face token.**
 

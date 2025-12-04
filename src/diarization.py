@@ -9,8 +9,12 @@ import logging
 from typing import Dict, Any, List, Optional
 
 # Set HF_HOME before importing pyannote.audio or torch - forces the library to use local embedded cache directory
-MODELS_CACHE_DIR = Path(__file__).parent.parent / "models" / ".cache"
-os.environ['HF_HOME'] = str(MODELS_CACHE_DIR)
+# Use HF_HOME if already set (e.g., in Docker), otherwise use project-local cache
+if 'HF_HOME' in os.environ:
+    MODELS_CACHE_DIR = Path(os.environ['HF_HOME'])
+else:
+    MODELS_CACHE_DIR = Path(__file__).parent.parent / "models" / ".cache"
+    os.environ['HF_HOME'] = str(MODELS_CACHE_DIR)
 
 import torch
 from pyannote.audio import Pipeline
@@ -32,9 +36,12 @@ class PyannoteDiarizer:
         self.pipeline: Optional[Pipeline] = None
 
         try:
-            # Load pipeline from pretrained repo ID - pyannote automatically uses the cache defined by HF_HOME
+            # Load pipeline from cache (already initialized during build)
+            os.environ['HF_HUB_OFFLINE'] = '1'
+            os.environ['TRANSFORMERS_OFFLINE'] = '1'
             self.pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
-            logger.info("Pipeline loaded from cache.")
+            logger.info("Pipeline loaded from local cache.")
+
 
             # Instantiate with custom hyperparameters from config
             instantiate_params = {

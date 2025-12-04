@@ -67,7 +67,6 @@ Desktop.ini
 # Docker files (except the present)
 Dockerfile
 docker-compose.yml
-docker-compose.dev.yml
 
 # OS generated files
 .DS_Store

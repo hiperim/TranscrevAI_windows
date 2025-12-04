@@ -2,7 +2,7 @@
 # Multi-Architecture Dockerfile - Supports AMD64 (x86_64) and ARM64 (Apple Silicon)
 # - Works on Intel/AMD CPUs and Apple M1/M2/M3
 # - PyTorch CPU with platform-specific optimizations
-# - ~17GB final image
+# - ~20GB final image
 # =====================================================================================
 
 # Use platform-specific base image
@@ -18,7 +18,7 @@ ARG TARGETARCH
 ENV PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
     DEBIAN_FRONTEND=noninteractive \
-    HF_HOME=/root/.cache/huggingface \
+    HF_HOME=/app/models/.cache \
     PLATFORM_ARCH=${TARGETARCH}
 
 # Install system dependencies
@@ -47,6 +47,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
     echo "Installing packages for $TARGETARCH architecture..." && \
     pip install --no-cache-dir -r requirements.txt
 
+# Create models cache directory
+RUN mkdir -p /app/models/.cache
+
 # Download Whisper model (public, no token needed)
 # Works on all architectures
 RUN python -c "from huggingface_hub import snapshot_download; \
@@ -55,14 +58,17 @@ RUN python -c "from huggingface_hub import snapshot_download; \
 
 # Download Pyannote models (requires token at build-time)
 ARG HUGGING_FACE_HUB_TOKEN
-COPY SETUPs_certs_SSL_ModelsCache/download_models.py .
+COPY SETUPs_certs_SSL_ModelsCache/download_models.py /tmp/download_models.py
+
 RUN if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then \
     echo "Downloading Pyannote models with token for $TARGETARCH..." && \
-    python3 download_models.py && \
-    rm download_models.py; \
+    HUGGING_FACE_HUB_TOKEN="$HUGGING_FACE_HUB_TOKEN" python3 /tmp/download_models.py && \
+    echo "Initializing pipeline for offline use..." && \
+    HUGGING_FACE_HUB_TOKEN="$HUGGING_FACE_HUB_TOKEN" python3 -c "from pyannote.audio import Pipeline; p = Pipeline.from_pretrained('pyannote/speaker-diarization-3.1'); print('OK')" && \
+    rm /tmp/download_models.py; \
     else \
     echo "WARNING: HUGGING_FACE_HUB_TOKEN not provided. Pyannote models will not be embedded." && \
-    rm download_models.py; \
+    rm /tmp/download_models.py; \
     fi
 
 # Copy application source code
